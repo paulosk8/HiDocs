@@ -28,6 +28,7 @@ export function TopBar(): React.JSX.Element {
     error,
     applyEngineState,
     setProjectsOpen,
+    setHelpOpen,
     theme,
     toggleTheme,
     setViewportActive
@@ -154,6 +155,14 @@ export function TopBar(): React.JSX.Element {
           aria-label={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
         >
           {theme === 'dark' ? '☀' : '☾'}
+        </button>
+        <button
+          className="btn btn-icon"
+          onClick={() => setHelpOpen(true)}
+          title="Ayuda: cómo usar la aplicación"
+          aria-label="Abrir la ayuda"
+        >
+          ?
         </button>
       </div>
 

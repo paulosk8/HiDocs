@@ -714,6 +714,28 @@ try {
     themeAfter.saved
   )
 
+  // --- Centro de ayuda ---
+  await gui.getByRole('button', { name: 'Abrir la ayuda' }).click()
+  await gui.waitForSelector('.help-modal', { timeout: 5000 })
+  const navCount = await gui.locator('.help-nav button').count()
+  const sectionCount = await gui.locator('.help-content section').count()
+  check(
+    navCount === sectionCount && navCount >= 10,
+    'Ayuda: cada tema de la navegación tiene su sección',
+    `${navCount} temas / ${sectionCount} secciones`
+  )
+  // Navegar a un tema debe moverlo al estado activo (scroll-spy + clic).
+  await gui.getByRole('button', { name: 'Salida y Docusaurus' }).click()
+  await gui.waitForTimeout(600)
+  check(
+    (await gui.locator('.help-nav button.active').textContent()) === 'Salida y Docusaurus' &&
+      (await gui.locator('.help-tree').first().isVisible()),
+    'Ayuda: navegar a un tema lo resalta y muestra su contenido'
+  )
+  await gui.keyboard.press('Escape')
+  await gui.waitForSelector('.help-modal', { state: 'detached', timeout: 3000 })
+  check(true, 'Ayuda: se cierra con Escape')
+
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)
   process.exitCode = failed.length ? 1 : 0

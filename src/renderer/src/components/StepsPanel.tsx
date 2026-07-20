@@ -33,6 +33,7 @@ export function StepsPanel(): React.JSX.Element {
   const collapsed = useSession((s) => s.panelCollapsed)
   const togglePanel = useSession((s) => s.togglePanel)
   const projectsOpen = useSession((s) => s.projectsOpen)
+  const helpOpen = useSession((s) => s.helpOpen)
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
@@ -133,7 +134,12 @@ export function StepsPanel(): React.JSX.Element {
   // el explorador de proyectos: si no, la página nativa lo tapa y solo asoma su
   // borde derecho, que parece un recuadro vacío sin sentido.
   const modalOpen =
-    shot !== null || pendingSave !== null || result !== null || problem !== null || projectsOpen
+    shot !== null ||
+    pendingSave !== null ||
+    result !== null ||
+    problem !== null ||
+    projectsOpen ||
+    helpOpen
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])

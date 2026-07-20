@@ -4,6 +4,7 @@ import { ViewportSlot } from './components/ViewportSlot'
 import { StepsPanel } from './components/StepsPanel'
 import { ProjectStatus } from './components/ProjectStatus'
 import { ProjectsModal } from './components/ProjectsModal'
+import { HelpModal } from './components/HelpModal'
 import { ipc } from './ipc'
 import { useSession } from './store'
 import { useRepoInspection } from './useRepoInspection'
@@ -13,6 +14,8 @@ export function App(): React.JSX.Element {
   const addStep = useSession((s) => s.addStep)
   const projectsOpen = useSession((s) => s.projectsOpen)
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
+  const helpOpen = useSession((s) => s.helpOpen)
+  const setHelpOpen = useSession((s) => s.setHelpOpen)
   const theme = useSession((s) => s.theme)
 
   // Mantiene `gitRepo` al día aunque el panel (y su sección Git) esté colapsado.
@@ -43,6 +46,7 @@ export function App(): React.JSX.Element {
         <StepsPanel />
       </main>
       {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}
+      {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>
   )
 }

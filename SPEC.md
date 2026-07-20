@@ -210,7 +210,13 @@ Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 420p
 
 **Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite dos acciones: usar otro proyecto para la sesión (cambia la carpeta de salida) y elegir la rama base de la próxima grabación. "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
 
-Diseño limpio, denso en información, modo claro; tipografía del sistema. Sin librerías UI pesadas (CSS propio o Tailwind).
+**Centro de ayuda** (botón "?"): modal con navegación de temas a la izquierda y contenido desplazable a la derecha (con resaltado del tema activo al desplazar). Documenta el uso, cada control, la integración con Git y con Docusaurus, y la solución de problemas.
+
+**Estado inicial**: mientras no hay página cargada, la vista nativa se mantiene oculta y el hueco del visor muestra un onboarding (qué es la app y los tres pasos para empezar), en vez de un `about:blank` vacío.
+
+**Modales y vista nativa**: el `WebContentsView` siempre se pinta sobre el HTML, así que cualquier superposición propia (diálogos, explorador, ayuda) oculta la vista nativa mientras está abierta.
+
+Diseño limpio, denso en información, con **modo claro y oscuro** (interruptor en la barra; preferencia persistida, por defecto la del sistema); tipografía del sistema. Sin librerías UI pesadas (CSS propio con tokens de tema).
 
 ## 9. Seguridad y calidad
 

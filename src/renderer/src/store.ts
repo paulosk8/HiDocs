@@ -38,6 +38,8 @@ interface SessionState {
   gitBaseBranch: string | null
   /** el explorador de repositorios está abierto */
   projectsOpen: boolean
+  /** la sección de ayuda está abierta */
+  helpOpen: boolean
   /** tema de la interfaz; se aplica a <html data-theme> y se persiste */
   theme: 'light' | 'dark'
   /**
@@ -69,6 +71,7 @@ interface SessionState {
   setGitMessage: (value: string | null) => void
   setGitBaseBranch: (value: string | null) => void
   setProjectsOpen: (open: boolean) => void
+  setHelpOpen: (open: boolean) => void
   togglePanel: () => void
   toggleTheme: () => void
   setViewportActive: (active: boolean) => void
@@ -111,6 +114,7 @@ export const useSession = create<SessionState>((set) => ({
   gitMessageOverride: null,
   gitBaseBranch: null,
   projectsOpen: false,
+  helpOpen: false,
   theme: initialTheme(),
   panelCollapsed: false,
   viewportActive: false,
@@ -169,6 +173,7 @@ export const useSession = create<SessionState>((set) => ({
   setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
   setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
+  setHelpOpen: (helpOpen) => set({ helpOpen }),
   togglePanel: () => set((s) => ({ panelCollapsed: !s.panelCollapsed })),
   toggleTheme: () =>
     set((s) => {
