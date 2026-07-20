@@ -72,7 +72,7 @@ export function StepsPanel(): React.JSX.Element {
         git: s.gitEnabled
           ? {
               enabled: true,
-              branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module, s.meta.feature),
+              branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
               message:
                 s.gitMessageOverride ??
                 suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),

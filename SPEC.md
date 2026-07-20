@@ -234,7 +234,9 @@ Diseño limpio, denso en información, con **modo claro y oscuro** (interruptor 
 
 ## 10. Integración Git (GitHub Flow)
 
-La documentación se registra en el repositorio Docusaurus **clonado** por quien documenta (§1). El objetivo es que cada funcionalidad documentada produzca una rama y un PR independientes, siguiendo GitHub Flow.
+La documentación se registra en el repositorio Docusaurus **clonado** por quien documenta (§1), siguiendo GitHub Flow.
+
+**Estrategia de ramas: una por módulo.** La rama sugerida es `docs/<módulo>` (`suggestBranchName`), y todas las funcionalidades de ese módulo se acumulan en ella (la app reutiliza una rama existente y añade el commit encima), de modo que el **módulo es la unidad de PR**. El mensaje de commit sí distingue funcionalidad: `docs(<módulo>): <título>`. La categorización del manual la da la estructura de carpetas `<módulo>/<funcionalidad>/` y el `_category_.json` (§7), no la rama; por eso agrupar por módulo en la rama no afecta a cómo se organiza el sitio. El campo Rama es editable: para un PR por funcionalidad, basta escribir `docs/<módulo>-<funcionalidad>`. Salvedad de GitHub Flow: las ramas son de vida corta (crear → PR → fusionar → borrar); tras fusionar el PR de un módulo conviene borrar su rama local para que una funcionalidad posterior nazca limpia de `main`.
 
 ### Principio de diseño: escribimos en un repositorio ajeno
 

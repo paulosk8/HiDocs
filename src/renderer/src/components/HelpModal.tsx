@@ -244,12 +244,13 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </p>
               <ul className="help-defs">
                 <li>
-                  <b>Rama</b> · se sugiere <code>docs/&lt;módulo&gt;-&lt;funcionalidad&gt;</code>;
-                  puedes elegir una rama existente de la lista o escribir una nueva.
+                  <b>Rama</b> · se sugiere <code>docs/&lt;módulo&gt;</code>, una por módulo: todas
+                  las funcionalidades del mismo módulo se acumulan en su rama (un PR por módulo).
+                  Puedes elegir una rama existente de la lista o escribir otra.
                 </li>
                 <li>
                   <b>Mensaje del commit</b> · se sugiere{' '}
-                  <code>docs(&lt;módulo&gt;): &lt;título&gt;</code>.
+                  <code>docs(&lt;módulo&gt;): &lt;título&gt;</code>, distinto por funcionalidad.
                 </li>
                 <li>
                   <b>Rama base</b> · las ramas nacen de la rama por defecto del repositorio (

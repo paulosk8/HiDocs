@@ -57,7 +57,7 @@ export function GitSection(): React.JSX.Element | null {
     ) : null
   }
 
-  const branch = branchOverride ?? suggestBranchName(meta.module, meta.feature)
+  const branch = branchOverride ?? suggestBranchName(meta.module)
   const message = messageOverride ?? suggestCommitMessage(meta.module, meta.feature, meta.title)
   const switching = repo.branch !== branch
 

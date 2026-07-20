@@ -294,8 +294,8 @@ try {
   await gui.waitForSelector('.git-fields', { timeout: 5000 })
   const suggested = await gui.locator('.git-fields .field input').first().inputValue()
   check(
-    suggested === 'docs/matriculas-crear-matricula',
-    'Git: rama sugerida a partir de módulo y funcionalidad',
+    suggested === 'docs/matriculas',
+    'Git: rama sugerida = una por módulo (docs/<módulo>)',
     suggested
   )
   const suggestedMsg = await gui.locator('.git-fields .field input').nth(1).inputValue()
@@ -391,7 +391,7 @@ try {
 
   // --- Fase Git: rama, commit y salvaguardas ---
   const branchNow = g('rev-parse --abbrev-ref HEAD')
-  check(branchNow === 'docs/matriculas-crear-matricula', 'Git: rama creada y activa', branchNow)
+  check(branchNow === 'docs/matriculas', 'Git: rama creada y activa', branchNow)
 
   const subject = g('log -1 --pretty=%s')
   check(
@@ -471,15 +471,16 @@ try {
     'Git: el paquete en disco se escribe aunque el commit falle'
   )
 
-  // Regrabar la misma funcionalidad debe reutilizar la rama existente.
+  // Otra funcionalidad del MISMO módulo reutiliza su rama (docs/<módulo>) y
+  // acumula el commit encima: es la estrategia por módulo.
   g('reset -q HEAD AJENO.md')
   const reuse = await gui.evaluate(
     (dir) =>
       window.docrecorder.invoke('session:save', {
         meta: {
           module: 'matriculas',
-          feature: 'crear-matricula',
-          title: 'Crear una matrícula',
+          feature: 'editar-matricula',
+          title: 'Editar una matrícula',
           role: 'secretaria',
           baseUrl: 'http://x'
         },
@@ -490,8 +491,8 @@ try {
         steps: [],
         git: {
           enabled: true,
-          branch: 'docs/matriculas-crear-matricula',
-          message: 'docs(matriculas): regrabación',
+          branch: 'docs/matriculas',
+          message: 'docs(matriculas): Editar una matrícula',
           push: false
         }
       }),
@@ -499,13 +500,13 @@ try {
   )
   check(
     !reuse.gitError && reuse.git?.createdBranch === false,
-    'Git: regrabar reutiliza la rama existente en vez de fallar',
+    'Git: otra funcionalidad del módulo reutiliza y acumula en su rama',
     reuse.gitError ?? reuse.git?.message
   )
 
-  // Documentar una SEGUNDA funcionalidad debe abrir una rama hermana desde main,
-  // no encadenarla sobre la anterior: si se encadena, su PR arrastra la
-  // documentación de la funcionalidad previa y los dos quedan enredados.
+  // Una rama DISTINTA (aquí forzada con nombre explícito, como sería otro módulo)
+  // debe nacer de main, no encadenarse sobre la rama activa: si se encadenara, su
+  // PR arrastraría la documentación anterior y los dos quedarían enredados.
   const second = await gui.evaluate(
     (dir) =>
       window.docrecorder.invoke('session:save', {
@@ -554,7 +555,7 @@ try {
   )
   const byName = Object.fromEntries(branches.map((b) => [b.name, b]))
   check(
-    !!byName['main'] && !!byName['docs/matriculas-crear-matricula'],
+    !!byName['main'] && !!byName['docs/matriculas'],
     'Explorador: lista las ramas locales del repositorio',
     branches.map((b) => b.name).join(', ')
   )

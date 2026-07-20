@@ -17,10 +17,16 @@ export function slug(value: string): string {
   return normalized
 }
 
-/** Rama sugerida: `docs/<modulo>-<funcionalidad>`. */
-export function suggestBranchName(module: string, feature: string): string {
-  const parts = [slug(module), slug(feature)].filter(Boolean)
-  return `docs/${parts.join('-') || 'sesion'}`
+/**
+ * Rama sugerida: `docs/<modulo>`, una por módulo.
+ *
+ * Todas las funcionalidades de un mismo módulo se acumulan en su rama (la app
+ * reutiliza una rama existente y añade el commit encima), de modo que el módulo
+ * es la unidad de PR. La categorización del manual la da la estructura de
+ * carpetas `<modulo>/<funcionalidad>/`, no la rama.
+ */
+export function suggestBranchName(module: string): string {
+  return `docs/${slug(module) || 'sesion'}`
 }
 
 /** Mensaje de commit sugerido, en el mismo estilo semántico del repositorio. */
