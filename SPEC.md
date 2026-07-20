@@ -4,6 +4,8 @@
 
 Herramienta de escritorio para documentar paso a paso los módulos de un sistema web (frontend en **Next.js**, al cual NO se tiene acceso de código fuente — solo acceso como usuario vía navegador). La documentación final vivirá en un proyecto **Docusaurus** mantenido por otro desarrollador.
 
+**Flujo de trabajo esperado:** el repositorio Docusaurus ya existe y lo mantiene esa otra persona. Quien documenta **clona** ese repositorio en su máquina y, en la app, elige como **carpeta de salida** una carpeta situada dentro de ese clon. La app nunca crea ni clona repositorios: solo detecta el que ya contiene la carpeta elegida (ver §10).
+
 **Objetivo del MVP (esta etapa):** una app Electron donde el usuario:
 
 1. Abre el sistema web en un viewport embebido.
@@ -12,9 +14,12 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
 4. Puede editar, reordenar y eliminar pasos.
 5. Al guardar, exporta un paquete portable a disco: `steps.json` + capturas PNG + un `flow.json` reproducible.
 
-**Fuera de alcance del MVP** (etapas futuras, pero el diseño debe dejarlas fáciles):
+**Ya implementado tras el MVP:**
 
-- Integración Git (ramas, commits).
+- **Integración Git** (ramas, commits, explorador de repositorios). Se planificó como fuera de alcance, pero está construida; ver §10.
+
+**Fuera de alcance** (etapas futuras, pero el diseño debe dejarlas fáciles):
+
 - Generación de MDX para Docusaurus.
 - Runner de regeneración headless con Playwright.
 - Asistencia de IA para redactar descripciones.
@@ -121,6 +126,56 @@ interface SelectorCandidate {
 }
 ```
 
+**Tipos de la integración Git** (ver §10). Todos viven en `src/shared/types.ts`:
+
+```typescript
+// Estado del repositorio que contiene la carpeta de salida; null si no hay.
+interface GitRepoInfo {
+  root: string
+  branch: string // rama activa
+  hasCommits: boolean // un repo recién inicializado aún no tiene HEAD
+  remoteUrl: string | null
+  stagedPaths: string[] // cambios ya en el índice
+  dirtyPaths: string[] // seguidos y modificados en el árbol de trabajo
+  untrackedPaths: string[] // sin seguimiento (no impiden cambiar de rama)
+  defaultBranch: string | null // rama de la que nacen las de documentación
+}
+
+// Lo que la GUI envía al guardar cuando activa el registro en Git.
+interface GitSaveOptions {
+  enabled: boolean
+  branch: string
+  message: string
+  push: boolean
+  baseBranch?: string // elegida en el explorador; sin ella, la por defecto
+}
+
+// Solo lectura, para el explorador de repositorios.
+interface GitBranchInfo {
+  name: string
+  current: boolean
+  lastCommitSubject: string
+  lastCommitDate: string
+  aheadOfDefault: number // commits por delante de la rama por defecto
+}
+
+interface GitCommitInfo {
+  hash: string
+  subject: string
+  author: string
+  date: string
+}
+
+// Registro de repositorios ya usados (userData/projects.json, ver §7).
+interface ProjectEntry {
+  root: string
+  label: string // la carpeta raíz
+  lastUsedAt: string // ISO; ordena la lista por uso más reciente
+  lastOutputDir: string
+  missing?: boolean // la carpeta se movió o borró desde la última vez
+}
+```
+
 ## 7. Estructura de salida en disco
 
 ```
@@ -137,17 +192,23 @@ interface SelectorCandidate {
 
 Nomenclatura: kebab-case en carpetas, `paso-NN.png` con cero a la izquierda. Al reordenar pasos en la GUI, renombrar las imágenes al guardar para que el orden en disco siempre coincida.
 
+**Registro de proyectos.** La lista de repositorios ya usados se guarda **fuera** del paquete de documentación, en `app.getPath('userData')/projects.json`: es una preferencia de la máquina, no del repositorio, y escribir estado dentro de un repositorio ajeno sería justo lo que las salvaguardas de §10 evitan. La escritura es atómica (archivo temporal + `rename`) para que un cierre a medias no lo corrompa.
+
 ## 8. GUI (renderer)
 
 Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 420px).
 
-**Barra superior de sesión:** campos módulo/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, indicador de estado (Listo / Grabando / Pausado).
+**Barra superior de sesión:** campos módulo/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, botón "Proyectos…" (abre el explorador de repositorios), indicador de estado (Listo / Grabando / Pausado).
 
 **Controles:** ● Grabar, ⏸ Pausar, ■ Detener y guardar. Atajo global `Ctrl+Shift+R` para pausar/reanudar sin tocar el panel.
 
 **Panel de pasos:** lista scrolleable de tarjetas. Cada tarjeta: miniatura clicable (abre la captura a tamaño real en modal), badge de número, título (input), descripción (textarea auto-resize), chip con el selector preferido y su estrategia, toggle "incluir en docs", botones eliminar y arrastrar para reordenar (dnd-kit). Al llegar un paso nuevo durante la grabación, hacer scroll automático y enfocar el campo título para escribir la descripción al vuelo.
 
 **Validación al guardar:** avisar si hay pasos sin título; permitir guardar de todos modos.
+
+**Sección Git** (dentro del panel, ver §10): aparece cuando la carpeta de salida está dentro de un repositorio. Casilla "Registrar en Git al guardar", campos de rama y mensaje (prerrellenados a partir de los metadatos), casilla de push (deshabilitada si no hay remoto `origin`), y avisos: de qué rama nacerá la nueva, cambios sin guardar que impedirían el cambio de rama, o archivos ajenos ya indexados. Cuando la carpeta **no** está en un repositorio, la sección lo explica en vez de desaparecer sin más.
+
+**Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite dos acciones: usar otro proyecto para la sesión (cambia la carpeta de salida) y elegir la rama base de la próxima grabación. "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
 
 Diseño limpio, denso en información, modo claro; tipografía del sistema. Sin librerías UI pesadas (CSS propio o Tailwind).
 
@@ -159,7 +220,41 @@ Diseño limpio, denso en información, modo claro; tipografía del sistema. Sin 
 - TypeScript estricto. ESLint + Prettier.
 - Estructura de código: `src/main/` (main + engine), `src/preload/`, `src/renderer/`, `src/shared/` (tipos y contrato IPC).
 
-## 10. Criterios de aceptación del MVP
+## 10. Integración Git (GitHub Flow)
+
+La documentación se registra en el repositorio Docusaurus **clonado** por quien documenta (§1). El objetivo es que cada funcionalidad documentada produzca una rama y un PR independientes, siguiendo GitHub Flow.
+
+### Principio de diseño: escribimos en un repositorio ajeno
+
+Todo este módulo escribe en un repositorio que mantiene otra persona, así que las salvaguardas son parte del contrato, no un extra. Se invoca el `git` del sistema (no una implementación embebida) para respetar su configuración, credenciales y hooks.
+
+- **Solo se indexan las rutas que escribe DocRecorder.** Nunca `git add -A`: barrería trabajo en curso ajeno hacia nuestro commit. Si hay cambios ajenos ya indexados, se aborta con un mensaje claro.
+- **No se cambia de rama con archivos seguidos y modificados** que no sean nuestros: viajarían a la rama nueva y mezclarían trabajo en curso con la documentación.
+- **No se hace push** salvo petición explícita, y **nunca** con `--force`.
+- La detección es **local, sin red**: no hay `fetch`, `clone` ni llamadas a la API de GitHub. La app no crea repositorios.
+
+### Rama base (corregido)
+
+Cada rama de documentación nace de la **rama por defecto** del repositorio, no de `HEAD`. Con `git checkout -b <rama>` a secas, documentar dos funcionalidades seguidas encadenaba la segunda rama sobre la primera, y su PR arrastraba la documentación de la anterior. La base se resuelve así:
+
+1. La rama elegida en el explorador (`GitSaveOptions.baseBranch`), si la hay.
+2. Si no, `origin/HEAD` (lo que el repositorio declara como rama por defecto).
+3. Respaldo: `main`, luego `master`.
+
+Se ramifica desde la copia **local** de esa rama: partir de `origin/main` exigiría red y credenciales en cada guardado, y un PR desactualizado se rebasa igual en GitHub. Si no hay base reconocible, se conserva el comportamiento anterior (ramificar desde HEAD) y se avisa, antes que bloquear el guardado. Regrabar una funcionalidad **reutiliza** su rama y añade el commit encima.
+
+### Registro de repositorios y explorador
+
+- El repositorio se recuerda **al commitear con éxito**, no al detectarlo: así la lista no se llena de intentos fallidos (persistencia en §7).
+- El explorador (§8) lee ramas locales (`for-each-ref`) e historial (`log`), ambos de solo lectura, y no lista ramas remotas: la app no habla con la red.
+
+### Canales IPC (todos de solo lectura salvo el guardado)
+
+`git:inspect` (repo de la carpeta de salida), `git:branches`, `git:commits`, `projects:list`, `projects:forget`. El commit ocurre dentro de `session:save`. Ante cualquier fallo, los canales de lectura devuelven vacío en vez de propagar el error: la vista queda sin datos, que es un estado inocuo.
+
+## 11. Criterios de aceptación
+
+**MVP:**
 
 1. Puedo abrir cualquier URL (con login manual dentro del viewport) y la sesión persiste al reabrir la app.
 2. Con la grabación activa, cada clic e input relevante genera una tarjeta con captura resaltada correcta (incluso en modales y tras navegación cliente de Next).
@@ -169,7 +264,14 @@ Diseño limpio, denso en información, modo claro; tipografía del sistema. Sin 
 6. Cada paso guarda ≥1 selector candidato que NO depende de clases CSS hasheadas.
 7. La app corre en Windows y Linux (desarrollo principal en el SO del autor).
 
-## 11. Sugerencia de plan de implementación (para el agente)
+**Integración Git (§10):**
+
+8. Al elegir una carpeta dentro de un repositorio, la sección Git aparece sola; fuera de un repositorio, lo explica.
+9. Documentar dos funcionalidades seguidas produce dos ramas hermanas desde la rama por defecto; la segunda no arrastra los archivos de la primera.
+10. Nunca se indexan ni se comprometen archivos ajenos; sin remoto, el push no se intenta.
+11. El explorador muestra repositorios, ramas e historial, y permite elegir la rama base de la próxima grabación sin escribir nada en el repositorio.
+
+## 12. Sugerencia de plan de implementación (para el agente)
 
 1. Scaffold electron-vite + React + TS, ventana con layout dividido y `WebContentsView` navegable.
 2. Conexión CDP: lanzar con remote debugging, adjuntar Playwright al target del viewport, verificar `page.title()`.
