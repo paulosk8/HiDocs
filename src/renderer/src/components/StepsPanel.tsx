@@ -32,6 +32,7 @@ export function StepsPanel(): React.JSX.Element {
   const applyEngineState = useSession((s) => s.applyEngineState)
   const collapsed = useSession((s) => s.panelCollapsed)
   const togglePanel = useSession((s) => s.togglePanel)
+  const projectsOpen = useSession((s) => s.projectsOpen)
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
@@ -128,8 +129,11 @@ export function StepsPanel(): React.JSX.Element {
   )
 
   // El WebContentsView se pinta por encima del HTML del renderer, así que
-  // cualquier diálogo propio exige ocultarlo mientras esté abierto.
-  const modalOpen = shot !== null || pendingSave !== null || result !== null || problem !== null
+  // cualquier superposición propia exige ocultarlo mientras esté abierta. Incluye
+  // el explorador de proyectos: si no, la página nativa lo tapa y solo asoma su
+  // borde derecho, que parece un recuadro vacío sin sentido.
+  const modalOpen =
+    shot !== null || pendingSave !== null || result !== null || problem !== null || projectsOpen
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])

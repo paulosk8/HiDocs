@@ -1,4 +1,7 @@
+import { useEffect, useState } from 'react'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
+import type { GitBranchInfo } from '../../../shared/types'
+import { ipc } from '../ipc'
 import { useSession } from '../store'
 
 /**
@@ -24,6 +27,20 @@ export function GitSection(): React.JSX.Element | null {
   // La inspección del repositorio vive en App (useRepoInspection), no aquí: esta
   // sección se desmonta al colapsar el panel y dejaría sin datos a la franja de
   // estado. Aquí solo se lee `gitRepo` del store.
+
+  // Ramas existentes, para ofrecerlas como sugerencia en el campo. Se leen en
+  // vivo al cambiar de repositorio, así que una rama creada por fuera aparece la
+  // próxima vez que se inspecciona la carpeta. Se guardan junto a su repositorio
+  // para descartar una respuesta que llegue tras cambiar de carpeta.
+  const [branchData, setBranchData] = useState<{ root: string; items: GitBranchInfo[] } | null>(
+    null
+  )
+  const root = repo?.root
+  const branches = branchData && branchData.root === root ? branchData.items : []
+  useEffect(() => {
+    if (!root) return
+    void ipc.invoke('git:branches', root).then((items) => setBranchData({ root, items }))
+  }, [root])
 
   // Antes esto devolvía null y la sección desaparecía sin más: con una carpeta
   // fuera de un repositorio parecía que la integración Git no existía. Decirlo
@@ -64,11 +81,22 @@ export function GitSection(): React.JSX.Element | null {
         <div className="git-fields">
           <label className="field">
             <span>Rama</span>
+            {/* `list` ofrece las ramas existentes como sugerencia sin dejar de ser
+                un campo de texto: se puede elegir una o escribir una nueva. */}
             <input
               value={branch}
               onChange={(e) => setGitBranch(e.target.value)}
               spellCheck={false}
+              list="git-branches"
+              placeholder="docs/…"
             />
+            <datalist id="git-branches">
+              {branches.map((b) => (
+                <option key={b.name} value={b.name}>
+                  {b.current ? 'rama actual' : b.lastCommitSubject}
+                </option>
+              ))}
+            </datalist>
           </label>
           <label className="field">
             <span>Mensaje del commit</span>

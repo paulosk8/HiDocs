@@ -283,6 +283,23 @@ try {
   const pushDisabled = await gui.locator('.git-toggle.small input').isDisabled()
   check(pushDisabled, 'Git: el push queda deshabilitado sin remoto «origin»')
 
+  // El campo Rama ofrece las ramas existentes como sugerencia (aquí solo `main`).
+  await gui.waitForFunction(
+    () => document.querySelectorAll('#git-branches option').length > 0,
+    null,
+    {
+      timeout: 5000
+    }
+  )
+  const branchOptions = await gui
+    .locator('#git-branches option')
+    .evaluateAll((os) => os.map((o) => o.value))
+  check(
+    branchOptions.includes('main'),
+    'Git: el campo Rama lista las ramas existentes del repositorio',
+    branchOptions.join(', ')
+  )
+
   await gui.click('.ctrl:nth-child(3)')
   await gui.waitForSelector('.dialog', { timeout: 20000 })
   const dialogTitle = await gui.locator('.dialog h3').textContent()
