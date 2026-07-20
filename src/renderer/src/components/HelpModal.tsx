@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSession } from '../store'
 
 /**
  * Centro de ayuda de la aplicación.
@@ -26,6 +27,7 @@ const SECTIONS = [
 export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Element {
   const [active, setActive] = useState('intro')
   const contentRef = useRef<HTMLDivElement>(null)
+  const openDocusaurusIntro = useSession((s) => s.openDocusaurusIntro)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -294,6 +296,16 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <code>npm run start</code>) y navega a la página; o abre un Pull Request para que
                 esa persona lo integre. DocRecorder no crea ni clona repositorios: solo detecta el
                 que ya contiene la carpeta.
+              </p>
+              <p>
+                <a
+                  onClick={() => {
+                    onClose()
+                    openDocusaurusIntro()
+                  }}
+                >
+                  Volver a ver el aviso de inicio
+                </a>
               </p>
             </section>
 

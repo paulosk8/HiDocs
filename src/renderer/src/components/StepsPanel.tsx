@@ -34,6 +34,7 @@ export function StepsPanel(): React.JSX.Element {
   const togglePanel = useSession((s) => s.togglePanel)
   const projectsOpen = useSession((s) => s.projectsOpen)
   const helpOpen = useSession((s) => s.helpOpen)
+  const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
@@ -139,7 +140,8 @@ export function StepsPanel(): React.JSX.Element {
     result !== null ||
     problem !== null ||
     projectsOpen ||
-    helpOpen
+    helpOpen ||
+    docusaurusIntroOpen
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])

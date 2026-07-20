@@ -22,6 +22,7 @@ import { DEFAULT_VIEWPORT, type EngineState } from '../shared/types'
 import { saveSession } from './storage'
 import { inspectRepo, listBranches, listCommits } from './git'
 import { listProjects, forgetProject } from './projects'
+import { suggestDocsDir } from './docusaurus'
 
 /**
  * El puerto de depuración remota debe quedar fijado ANTES de `app.whenReady`:
@@ -232,6 +233,10 @@ function registerIpc(): void {
   ipcMain.handle('projects:forget', async (_e, repoRoot: string) => {
     await forgetProject(repoRoot).catch(() => {})
     return listProjects().catch(() => [])
+  })
+
+  ipcMain.handle('docusaurus:suggest-docs', async (_e, dir: string) => {
+    return suggestDocsDir(dir).catch(() => null)
   })
 }
 

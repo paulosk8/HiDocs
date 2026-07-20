@@ -73,6 +73,11 @@ export interface IpcInvokeMap {
   'projects:list': () => ProjectEntry[]
   /** quita el repositorio del registro; no toca nada en disco */
   'projects:forget': (repoRoot: string) => ProjectEntry[]
+  /**
+   * Si la carpeta es la raíz de un proyecto Docusaurus, devuelve su carpeta
+   * `docs/` (donde la documentación sí se renderiza); si no, `null`.
+   */
+  'docusaurus:suggest-docs': (dir: string) => string | null
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -106,7 +111,8 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'git:branches',
   'git:commits',
   'projects:list',
-  'projects:forget'
+  'projects:forget',
+  'docusaurus:suggest-docs'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [

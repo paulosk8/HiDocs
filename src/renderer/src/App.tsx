@@ -5,6 +5,7 @@ import { StepsPanel } from './components/StepsPanel'
 import { ProjectStatus } from './components/ProjectStatus'
 import { ProjectsModal } from './components/ProjectsModal'
 import { HelpModal } from './components/HelpModal'
+import { DocusaurusIntroModal } from './components/DocusaurusIntroModal'
 import { ipc } from './ipc'
 import { useSession } from './store'
 import { useRepoInspection } from './useRepoInspection'
@@ -16,6 +17,7 @@ export function App(): React.JSX.Element {
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
   const helpOpen = useSession((s) => s.helpOpen)
   const setHelpOpen = useSession((s) => s.setHelpOpen)
+  const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
   const theme = useSession((s) => s.theme)
 
   // Mantiene `gitRepo` al día aunque el panel (y su sección Git) esté colapsado.
@@ -47,6 +49,7 @@ export function App(): React.JSX.Element {
       </main>
       {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {docusaurusIntroOpen && <DocusaurusIntroModal />}
     </div>
   )
 }

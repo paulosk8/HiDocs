@@ -13,10 +13,13 @@ import { useSession } from '../store'
  */
 export function ProjectStatus(): React.JSX.Element {
   const repo = useSession((s) => s.gitRepo)
+  const outputDir = useSession((s) => s.outputDir)
+  const setOutputDir = useSession((s) => s.setOutputDir)
   const baseBranch = useSession((s) => s.gitBaseBranch)
   const projectsOpen = useSession((s) => s.projectsOpen)
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
   const [projectCount, setProjectCount] = useState<number | null>(null)
+  const [docsDir, setDocsDir] = useState<string | null>(null)
 
   // Se recuenta al cambiar de repositorio y al cerrar el explorador (donde se
   // pueden olvidar proyectos). Mientras está abierto no: el número no cambia a la
@@ -26,6 +29,12 @@ export function ProjectStatus(): React.JSX.Element {
     void ipc.invoke('projects:list').then((list) => setProjectCount(list.length))
   }, [repo?.root, projectsOpen])
 
+  // ¿La carpeta elegida es la raíz de un Docusaurus? Entonces la documentación
+  // caería fuera de `docs/` y no se renderizaría.
+  useEffect(() => {
+    void ipc.invoke('docusaurus:suggest-docs', outputDir).then(setDocsDir)
+  }, [outputDir])
+
   const projectsChip =
     projectCount !== null && projectCount > 0 ? (
       <button className="status-link" onClick={() => setProjectsOpen(true)}>
@@ -33,12 +42,28 @@ export function ProjectStatus(): React.JSX.Element {
       </button>
     ) : null
 
+  // Aviso prioritario: apuntar a la raíz de un Docusaurus es el error más común.
+  const docsWarning = docsDir ? (
+    <div className="docs-warning">
+      <span>
+        Esta carpeta es la raíz de un proyecto Docusaurus. La documentación solo se renderiza dentro
+        de <code>docs/</code>.
+      </span>
+      <button className="docs-warning-btn" onClick={() => setOutputDir(docsDir)}>
+        Usar la carpeta docs/
+      </button>
+    </div>
+  ) : null
+
   if (!repo) {
     return (
-      <div className="project-status muted">
-        <span>La carpeta de salida no está en un repositorio Git.</span>
-        {projectsChip}
-      </div>
+      <>
+        {docsWarning}
+        <div className="project-status muted">
+          <span>La carpeta de salida no está en un repositorio Git.</span>
+          {projectsChip}
+        </div>
+      </>
     )
   }
 
@@ -50,36 +75,39 @@ export function ProjectStatus(): React.JSX.Element {
   const clean = pending === 0
 
   return (
-    <div className="project-status">
-      <span className={`status-dot ${clean ? 'ok' : 'warn'}`} aria-hidden />
-      <span className="status-repo" title={repo.root}>
-        {repo.root.split('/').pop()}
-      </span>
-      <span className="status-sep">·</span>
-      <span>
-        rama <code>{repo.branch}</code>
-      </span>
-      <span className="status-sep">·</span>
-      <span>
-        próxima grabación desde <code>{nextBase}</code>
-        {baseBranch && baseBranch !== repo.defaultBranch && (
-          <em className="status-tag" title="Base elegida en el explorador">
-            elegida
-          </em>
+    <>
+      {docsWarning}
+      <div className="project-status">
+        <span className={`status-dot ${clean ? 'ok' : 'warn'}`} aria-hidden />
+        <span className="status-repo" title={repo.root}>
+          {repo.root.split('/').pop()}
+        </span>
+        <span className="status-sep">·</span>
+        <span>
+          rama <code>{repo.branch}</code>
+        </span>
+        <span className="status-sep">·</span>
+        <span>
+          próxima grabación desde <code>{nextBase}</code>
+          {baseBranch && baseBranch !== repo.defaultBranch && (
+            <em className="status-tag" title="Base elegida en el explorador">
+              elegida
+            </em>
+          )}
+        </span>
+        <span className="status-sep">·</span>
+        <span className={clean ? 'status-clean' : 'status-pending'}>
+          {clean ? 'sin cambios pendientes' : `${pending} cambio(s) pendiente(s)`}
+        </span>
+        {!repo.remoteUrl && (
+          <>
+            <span className="status-sep">·</span>
+            <span className="muted">sin remoto</span>
+          </>
         )}
-      </span>
-      <span className="status-sep">·</span>
-      <span className={clean ? 'status-clean' : 'status-pending'}>
-        {clean ? 'sin cambios pendientes' : `${pending} cambio(s) pendiente(s)`}
-      </span>
-      {!repo.remoteUrl && (
-        <>
-          <span className="status-sep">·</span>
-          <span className="muted">sin remoto</span>
-        </>
-      )}
-      <span className="status-spacer" />
-      {projectsChip}
-    </div>
+        <span className="status-spacer" />
+        {projectsChip}
+      </div>
+    </>
   )
 }

@@ -214,6 +214,10 @@ Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 420p
 
 **Centro de ayuda** (botón "?"): modal con navegación de temas a la izquierda y contenido desplazable a la derecha (con resaltado del tema activo al desplazar). Documenta el uso, cada control, la integración con Git y con Docusaurus, y la solución de problemas.
 
+**Aviso inicial de Docusaurus**: al arrancar se muestra un modal con lo esencial para que la documentación se vea en Docusaurus (elegir `docs/`, cambiar de rama para previsualizar). Incluye "No volver a mostrar" (persistido en `localStorage`) y es reabrible desde la ayuda.
+
+**Aviso de raíz de Docusaurus**: si la carpeta de salida es la raíz de un proyecto Docusaurus (tiene `docusaurus.config.*` y una carpeta `docs/`), una franja avisa de que la documentación no se renderizaría ahí, con un atajo para cambiar a `docs/`. Es el error más común (§10).
+
 **Estado inicial**: mientras no hay página cargada, la vista nativa se mantiene oculta y el hueco del visor muestra un onboarding (qué es la app y los tres pasos para empezar), en vez de un `about:blank` vacío.
 
 **Modales y vista nativa**: el `WebContentsView` siempre se pinta sobre el HTML, así que cualquier superposición propia (diálogos, explorador, ayuda) oculta la vista nativa mientras está abierta.

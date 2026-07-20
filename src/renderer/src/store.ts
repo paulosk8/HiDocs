@@ -40,6 +40,8 @@ interface SessionState {
   projectsOpen: boolean
   /** la sección de ayuda está abierta */
   helpOpen: boolean
+  /** el aviso inicial sobre el uso con Docusaurus está abierto */
+  docusaurusIntroOpen: boolean
   /** tema de la interfaz; se aplica a <html data-theme> y se persiste */
   theme: 'light' | 'dark'
   /**
@@ -72,12 +74,26 @@ interface SessionState {
   setGitBaseBranch: (value: string | null) => void
   setProjectsOpen: (open: boolean) => void
   setHelpOpen: (open: boolean) => void
+  /** cierra el aviso inicial; si `remember`, no se vuelve a mostrar */
+  dismissDocusaurusIntro: (remember: boolean) => void
+  /** reabre el aviso inicial (desde la ayuda) */
+  openDocusaurusIntro: () => void
   togglePanel: () => void
   toggleTheme: () => void
   setViewportActive: (active: boolean) => void
 }
 
 const THEME_KEY = 'docrecorder.theme'
+const HIDE_INTRO_KEY = 'docrecorder.hideDocusaurusIntro'
+
+/** El aviso inicial se muestra salvo que el usuario haya pedido no verlo más. */
+function initialIntroOpen(): boolean {
+  try {
+    return localStorage.getItem(HIDE_INTRO_KEY) !== '1'
+  } catch {
+    return true
+  }
+}
 
 /** Preferencia guardada; si no hay, la del sistema; por defecto, claro. */
 function initialTheme(): 'light' | 'dark' {
@@ -115,6 +131,7 @@ export const useSession = create<SessionState>((set) => ({
   gitBaseBranch: null,
   projectsOpen: false,
   helpOpen: false,
+  docusaurusIntroOpen: initialIntroOpen(),
   theme: initialTheme(),
   panelCollapsed: false,
   viewportActive: false,
@@ -174,6 +191,17 @@ export const useSession = create<SessionState>((set) => ({
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
   setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
+  dismissDocusaurusIntro: (remember) => {
+    if (remember) {
+      try {
+        localStorage.setItem(HIDE_INTRO_KEY, '1')
+      } catch {
+        // sin persistencia el aviso reaparecerá; no es crítico
+      }
+    }
+    set({ docusaurusIntroOpen: false })
+  },
+  openDocusaurusIntro: () => set({ docusaurusIntroOpen: true }),
   togglePanel: () => set((s) => ({ panelCollapsed: !s.panelCollapsed })),
   toggleTheme: () =>
     set((s) => {

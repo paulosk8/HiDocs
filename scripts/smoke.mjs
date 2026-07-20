@@ -8,7 +8,14 @@
  *   npm run build && node scripts/smoke.mjs
  */
 import { spawn, execSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  existsSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import electronPath from 'electron'
@@ -82,6 +89,15 @@ try {
     throw new Error('No apareció la GUI')
   })()
   check(true, 'Etapa 1: GUI con barra superior y panel de pasos')
+
+  // El aviso de inicio de Docusaurus puede estar abierto (según la preferencia
+  // guardada); si lo está, bloquea la barra, así que se cierra antes de seguir.
+  if (await gui.locator('.intro-modal').count()) {
+    check(true, 'Etapa 1: el aviso inicial de Docusaurus aparece al arrancar')
+    await gui.getByRole('button', { name: 'Entendido' }).click()
+    await gui.waitForSelector('.intro-modal', { state: 'detached', timeout: 3000 })
+  }
+
   check(
     ctx.pages().some((p) => p.url() === 'about:blank'),
     'Etapa 1: el WebContentsView existe como target CDP'
@@ -750,6 +766,29 @@ try {
   await gui.keyboard.press('Escape')
   await gui.waitForSelector('.help-modal', { state: 'detached', timeout: 3000 })
   check(true, 'Ayuda: se cierra con Escape')
+
+  // --- Aviso: carpeta = raíz de un Docusaurus ---
+  const dsRoot = mkdtempSync(join(tmpdir(), 'docusaurus-'))
+  writeFileSync(join(dsRoot, 'docusaurus.config.js'), 'module.exports = {}\n')
+  mkdirSync(join(dsRoot, 'docs'), { recursive: true })
+  const suggestedDocs = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('docusaurus:suggest-docs', dir),
+    dsRoot
+  )
+  check(
+    suggestedDocs === join(dsRoot, 'docs'),
+    'Docusaurus: apuntar a la raíz sugiere la carpeta docs/',
+    suggestedDocs
+  )
+  const noSuggest = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('docusaurus:suggest-docs', dir),
+    join(dsRoot, 'docs')
+  )
+  check(
+    noSuggest === null,
+    'Docusaurus: apuntar ya dentro de docs/ no genera aviso',
+    String(noSuggest)
+  )
 
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)
