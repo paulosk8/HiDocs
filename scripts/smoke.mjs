@@ -389,12 +389,27 @@ try {
     .filter(Boolean)
     .sort()
   check(
-    committed.length === 6 &&
-      committed.includes('matriculas/crear-matricula/session.json') &&
+    committed.includes('matriculas/crear-matricula/session.json') &&
       committed.includes('matriculas/crear-matricula/flow.json') &&
       committed.filter((f) => f.endsWith('.png')).length === 4,
     'Git: el commit contiene session.json, flow.json y las 4 capturas',
     committed.join(' ')
+  )
+  check(
+    committed.includes('matriculas/crear-matricula/index.mdx') &&
+      committed.includes('matriculas/_category_.json'),
+    'Docusaurus: el commit incluye la página MDX y la categoría del módulo',
+    committed.filter((f) => f.endsWith('.mdx') || f.endsWith('_category_.json')).join(' ')
+  )
+  // La página MDX debe tener frontmatter y un encabezado numerado por paso.
+  const mdx = g('show HEAD:matriculas/crear-matricula/index.mdx')
+  check(
+    /^---[\s\S]*title:/.test(mdx) &&
+      /## 1\. /.test(mdx) &&
+      mdx.includes('![') &&
+      mdx.includes('](./img/'),
+    'Docusaurus: la página MDX tiene frontmatter, pasos numerados y capturas',
+    mdx.split('\n').slice(0, 6).join(' | ')
   )
 
   const cleanAfter = g('status --porcelain')

@@ -17,10 +17,10 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
 **Ya implementado tras el MVP:**
 
 - **Integración Git** (ramas, commits, explorador de repositorios). Se planificó como fuera de alcance, pero está construida; ver §10.
+- **Generación de MDX para Docusaurus**. Cada grabación produce, además del paquete JSON, la página del manual en `.mdx` (con su categoría de módulo) que Docusaurus renderiza directamente; ver §7 y §10.
 
 **Fuera de alcance** (etapas futuras, pero el diseño debe dejarlas fáciles):
 
-- Generación de MDX para Docusaurus.
 - Runner de regeneración headless con Playwright.
 - Asistencia de IA para redactar descripciones.
 
@@ -179,18 +179,20 @@ interface ProjectEntry {
 ## 7. Estructura de salida en disco
 
 ```
-<carpeta-elegida>/
+<carpeta-elegida>/          # idealmente la carpeta docs/ del proyecto Docusaurus
 └── <module>/
+    ├── _category_.json      # etiqueta del módulo en la barra lateral (solo si falta)
     └── <feature>/
-        ├── session.json      # DocSession completa
-        ├── flow.json         # solo acciones + selectores (insumo del runner futuro)
+        ├── index.mdx        # página del manual que renderiza Docusaurus (§10)
+        ├── session.json     # DocSession completa
+        ├── flow.json        # solo acciones + selectores (insumo del runner futuro)
         └── img/
             ├── paso-01.png
             ├── paso-02.png
             └── ...
 ```
 
-Nomenclatura: kebab-case en carpetas, `paso-NN.png` con cero a la izquierda. Al reordenar pasos en la GUI, renombrar las imágenes al guardar para que el orden en disco siempre coincida.
+Nomenclatura: kebab-case en carpetas, `paso-NN.png` con cero a la izquierda. Al reordenar pasos en la GUI, renombrar las imágenes al guardar para que el orden en disco siempre coincida. Los `.json` conviven con el `.mdx` sin estorbar: Docusaurus solo procesa `.md`/`.mdx` y `_category_.json`.
 
 **Registro de proyectos.** La lista de repositorios ya usados se guarda **fuera** del paquete de documentación, en `app.getPath('userData')/projects.json`: es una preferencia de la máquina, no del repositorio, y escribir estado dentro de un repositorio ajeno sería justo lo que las salvaguardas de §10 evitan. La escritura es atómica (archivo temporal + `rename`) para que un cierre a medias no lo corrompa.
 
@@ -253,6 +255,18 @@ Se ramifica desde la copia **local** de esa rama: partir de `origin/main` exigir
 
 - El repositorio se recuerda **al commitear con éxito**, no al detectarlo: así la lista no se llena de intentos fallidos (persistencia en §7).
 - El explorador (§8) lee ramas locales (`for-each-ref`) e historial (`log`), ambos de solo lectura, y no lista ramas remotas: la app no habla con la red.
+
+### Salida para Docusaurus (renderizable)
+
+Docusaurus renderiza `.md`/`.mdx`, no los JSON del grabador. Por eso, además del paquete reproducible, cada grabación genera la **página del manual en `index.mdx`** (`src/main/mdx.ts`): frontmatter (`title`, `sidebar_label`, `description`), un encabezado numerado por paso —que alimenta el índice lateral de Docusaurus— y su captura co-localizada (`![](./img/paso-NN.png)`). Los pasos marcados «no incluir en docs» se omiten y la numeración visible sigue siendo correlativa.
+
+Detalles que hacen que el build de Docusaurus no falle:
+
+- **Escape MDX**: el texto libre del usuario escapa `<`, `>`, `{`, `}` (Docusaurus v3 compila `.md`/`.mdx` con MDX; sin escape, un `<` rompería el build entero).
+- **Sin enlaces rotos**: solo se referencia la captura de un paso si el archivo se llegó a escribir; una imagen inexistente abortaría el build.
+- **`_category_.json`** por módulo para la etiqueta de la barra lateral, creado **solo si falta** (no se pisa la personalización del mantenedor).
+
+La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o una subcarpeta suya). Verificado con un `docusaurus build` real sobre la salida generada: compila y renderiza el manual con sus pasos e imágenes.
 
 ### Canales IPC (todos de solo lectura salvo el guardado)
 

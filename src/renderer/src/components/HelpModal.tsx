@@ -271,22 +271,29 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <h3>Salida en disco e integración con Docusaurus</h3>
               <p>Cada grabación produce esta estructura dentro de la carpeta de salida:</p>
               <pre className="help-tree">
-                {`<carpeta-de-salida>/
+                {`<carpeta-de-salida>/   (idealmente la carpeta docs/ de Docusaurus)
 └── <módulo>/
+    ├── _category_.json    (etiqueta del módulo en la barra lateral)
     └── <funcionalidad>/
+        ├── index.mdx      (la página del manual que Docusaurus muestra)
         ├── session.json   (la sesión completa)
         ├── flow.json      (acciones + selectores)
-        └── img/
-            ├── paso-01.png
-            └── …`}
+        └── img/paso-01.png …`}
               </pre>
               <p>
-                El flujo con Docusaurus: el repositorio de documentación <b>ya existe</b> y lo
-                mantiene otra persona. Tú lo <b>clonas</b>, eliges como carpeta de salida una
-                carpeta dentro de ese clon, y al guardar se crea una rama con el paquete. Desde ahí
-                se abre un Pull Request y esa persona integra la documentación en el sitio
-                Docusaurus. DocRecorder no crea ni clona repositorios: solo detecta el que ya
-                contiene la carpeta.
+                La página <b>index.mdx</b> es el manual ya listo para Docusaurus: título, un
+                apartado numerado por paso (que alimenta el índice lateral) y su captura. Los pasos
+                sin «incluir en docs» se omiten. Los <code>.json</code> conviven sin estorbar:
+                Docusaurus solo renderiza <code>.md</code> / <code>.mdx</code>.
+              </p>
+              <p>
+                Flujo completo: el repositorio de documentación <b>ya existe</b> y lo mantiene otra
+                persona. Lo <b>clonas</b>, eliges como carpeta de salida la carpeta{' '}
+                <code>docs/</code> (o una subcarpeta) de ese clon, y al guardar se crea una rama con
+                el manual. Para <b>ver cómo va quedando</b>, arranca Docusaurus en el repositorio (
+                <code>npm run start</code>) y navega a la página; o abre un Pull Request para que
+                esa persona lo integre. DocRecorder no crea ni clona repositorios: solo detecta el
+                que ya contiene la carpeta.
               </p>
             </section>
 
