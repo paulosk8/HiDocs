@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <title>Sistema de prueba — Matrículas</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        color: #1b1f24;
+      }
+      .Layout_shell__x7f2a {
+        display: flex;
+        min-height: 100vh;
+      }
+      .Sidebar_root__9k2ld {
+        width: 200px;
+        background: #101828;
+        color: #fff;
+        padding: 16px;
+      }
+      .Sidebar_root__9k2ld a {
+        display: block;
+        color: #cbd5e1;
+        padding: 8px 0;
+        cursor: pointer;
+        text-decoration: none;
+      }
+      .Main_content__aa91z {
+        flex: 1;
+        padding: 24px;
+      }
+      button {
+        padding: 8px 14px;
+        border-radius: 6px;
+        border: 1px solid #cbd5e1;
+        background: #fff;
+        cursor: pointer;
+        font: inherit;
+      }
+      .Button_primary__b3n1q {
+        background: #1d64d8;
+        color: #fff;
+        border-color: #1d64d8;
+      }
+      label {
+        display: block;
+        margin: 12px 0 4px;
+        font-size: 13px;
+      }
+      input,
+      select {
+        padding: 6px 8px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        font: inherit;
+        width: 260px;
+      }
+      .backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgb(0 0 0 / 0.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .modal {
+        background: #fff;
+        padding: 24px;
+        border-radius: 10px;
+        width: 420px;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="Layout_shell__x7f2a">
+      <nav class="Sidebar_root__9k2ld">
+        <strong>Instituto</strong>
+        <a id="nav-matriculas" data-view="matriculas">Matrículas</a>
+        <a id="nav-alumnos" data-view="alumnos">Alumnos</a>
+      </nav>
+
+      <main class="Main_content__aa91z">
+        <!-- Vista "matrículas": se muestra/oculta sin cambiar la URL,
+             como haría el App Router de Next con navegación cliente. -->
+        <section id="view-matriculas">
+          <h1>Matrículas</h1>
+          <button data-testid="nueva-matricula" class="Button_primary__b3n1q">
+            Nueva matrícula
+          </button>
+          <button aria-label="Exportar listado">⤓</button>
+        </section>
+
+        <section id="view-alumnos" class="hidden">
+          <h1>Alumnos</h1>
+          <p>Listado de alumnos.</p>
+          <button>Añadir alumno</button>
+        </section>
+      </main>
+    </div>
+
+    <!-- Contenedor de portal fuera del árbol principal, al estilo Radix. -->
+    <div id="portal-root"></div>
+
+    <template id="modal-template">
+      <div class="backdrop" data-portal-backdrop>
+        <div class="modal" role="dialog" aria-label="Nueva matrícula">
+          <h2>Nueva matrícula</h2>
+          <form id="matricula-form">
+            <label for="alumno">Alumno</label>
+            <input id="alumno" name="alumno" placeholder="Nombre del alumno" />
+
+            <label for="clave">Clave de acceso</label>
+            <input id="clave" name="clave" type="password" />
+
+            <label for="curso">Curso</label>
+            <select id="curso" name="curso">
+              <option value="">Selecciona…</option>
+              <option value="1a">1º A</option>
+              <option value="2b">2º B</option>
+            </select>
+
+            <p>
+              <button type="submit" class="Button_primary__b3n1q">Guardar matrícula</button>
+              <button type="button" data-testid="cancelar">Cancelar</button>
+            </p>
+          </form>
+        </div>
+      </div>
+    </template>
+
+    <script>
+      const portalRoot = document.getElementById('portal-root')
+
+      document.querySelectorAll('[data-view]').forEach((link) => {
+        link.addEventListener('click', () => {
+          const view = link.dataset.view
+          // Navegación cliente: cambia la vista sin recargar ni tocar la URL.
+          document
+            .getElementById('view-matriculas')
+            .classList.toggle('hidden', view !== 'matriculas')
+          document.getElementById('view-alumnos').classList.toggle('hidden', view !== 'alumnos')
+        })
+      })
+
+      document.querySelector('[data-testid="nueva-matricula"]').addEventListener('click', () => {
+        const tpl = document.getElementById('modal-template')
+        // Retraso deliberado: simula la hidratación/animación de un modal real,
+        // para comprobar que el grabador espera a que el DOM se estabilice.
+        setTimeout(() => {
+          portalRoot.appendChild(tpl.content.cloneNode(true))
+        }, 250)
+      })
+
+      portalRoot.addEventListener('click', (e) => {
+        if (e.target.closest('[data-testid="cancelar"]')) portalRoot.replaceChildren()
+      })
+
+      portalRoot.addEventListener('submit', (e) => {
+        e.preventDefault()
+        portalRoot.replaceChildren()
+      })
+    </script>
+  </body>
+</html>
