@@ -86,10 +86,18 @@ try {
     ctx.pages().some((p) => p.url() === 'about:blank'),
     'Etapa 1: el WebContentsView existe como target CDP'
   )
+  // Sin página, el hueco muestra el onboarding (no un about:blank vacío).
+  check(
+    await gui.locator('.viewport-empty').isVisible(),
+    'Etapa 1: el estado inicial muestra la guía de inicio'
+  )
 
   // --- Etapa 2: abrir la URL y adjuntar el motor por CDP ---
   await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', fixture.url)
   await gui.click('button:has-text("Abrir")')
+  // Al abrir, el visor se activa y el onboarding deja paso a la página.
+  await gui.waitForSelector('.viewport-empty', { state: 'detached', timeout: 10000 })
+  check(true, 'Etapa 2: al abrir una URL, el onboarding se oculta y aparece el visor')
 
   const target = await (async () => {
     for (let i = 0; i < 60; i++) {

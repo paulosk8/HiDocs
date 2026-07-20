@@ -11,7 +11,6 @@ import { useRepoInspection } from './useRepoInspection'
 export function App(): React.JSX.Element {
   const applyEngineState = useSession((s) => s.applyEngineState)
   const addStep = useSession((s) => s.addStep)
-  const attached = useSession((s) => s.attached)
   const projectsOpen = useSession((s) => s.projectsOpen)
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
   const theme = useSession((s) => s.theme)
@@ -40,13 +39,7 @@ export function App(): React.JSX.Element {
       <TopBar />
       <ProjectStatus />
       <main className="workspace">
-        <ViewportSlot
-          hint={
-            attached
-              ? 'Cargando…'
-              : 'Escribe la URL del sistema arriba y pulsa «Abrir». Puedes iniciar sesión normalmente: la sesión se conserva entre usos.'
-          }
-        />
+        <ViewportSlot />
         <StepsPanel />
       </main>
       {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}

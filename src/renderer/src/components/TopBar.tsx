@@ -29,7 +29,8 @@ export function TopBar(): React.JSX.Element {
     applyEngineState,
     setProjectsOpen,
     theme,
-    toggleTheme
+    toggleTheme,
+    setViewportActive
   } = useSession()
   const [opening, setOpening] = useState(false)
 
@@ -38,8 +39,16 @@ export function TopBar(): React.JSX.Element {
     if (!url) return
     setMeta({ baseUrl: url })
     setOpening(true)
+    // Se muestra el visor de inmediato (aunque la carga tarde): así al pulsar
+    // «Abrir» el onboarding da paso a la página en curso, no se queda plantado.
+    setViewportActive(true)
     try {
       applyEngineState(await ipc.invoke('viewport:navigate', url))
+    } catch (err) {
+      // Si la navegación falla, se vuelve al estado inicial en vez de dejar un
+      // visor activo pero vacío.
+      setViewportActive(false)
+      throw err
     } finally {
       setOpening(false)
     }

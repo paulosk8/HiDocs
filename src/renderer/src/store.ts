@@ -46,6 +46,12 @@ interface SessionState {
    * escritorio (su menú lateral se oculta si el viewport es estrecho).
    */
   panelCollapsed: boolean
+  /**
+   * Hay (o se está cargando) una página en el visor. Mientras es `false`, la
+   * vista nativa se mantiene oculta y el hueco muestra el estado inicial del
+   * DOM: si no, `about:blank` taparía ese onboarding con un rectángulo vacío.
+   */
+  viewportActive: boolean
 
   setMeta: (patch: Partial<SessionMeta>) => void
   setOutputDir: (dir: string) => void
@@ -65,6 +71,7 @@ interface SessionState {
   setProjectsOpen: (open: boolean) => void
   togglePanel: () => void
   toggleTheme: () => void
+  setViewportActive: (active: boolean) => void
 }
 
 const THEME_KEY = 'docrecorder.theme'
@@ -106,17 +113,21 @@ export const useSession = create<SessionState>((set) => ({
   projectsOpen: false,
   theme: initialTheme(),
   panelCollapsed: false,
+  viewportActive: false,
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
   setOutputDir: (outputDir) => set({ outputDir }),
 
   applyEngineState: (state) =>
-    set({
+    set((s) => ({
       status: state.status,
       attached: state.attached,
       currentUrl: state.url,
-      error: state.error ?? null
-    }),
+      error: state.error ?? null,
+      // Una vez adjunto el motor hay página real: el visor debe cubrir el hueco
+      // aunque la navegación se haya iniciado por otra vía (historial, recarga).
+      viewportActive: s.viewportActive || state.attached
+    })),
 
   addStep: (step) =>
     set((s) => ({
@@ -168,5 +179,6 @@ export const useSession = create<SessionState>((set) => ({
         // sin persistencia: el cambio vale para esta sesión igualmente
       }
       return { theme }
-    })
+    }),
+  setViewportActive: (viewportActive) => set({ viewportActive })
 }))

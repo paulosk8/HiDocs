@@ -385,18 +385,89 @@ select {
 .viewport-slot {
   flex: 1;
   min-width: 0;
-  background: var(--viewport-bg);
+  /* Un degradado muy suave da profundidad al hueco vacío sin competir con el
+     contenido. Solo se ve en el estado inicial: al cargar una página, la vista
+     nativa cubre todo el rectángulo. */
+  background: radial-gradient(120% 90% at 50% 0%, var(--tint), var(--viewport-bg) 70%);
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 24px;
+  overflow: auto;
 }
 
-.viewport-hint {
-  max-width: 380px;
+/* ---------- estado inicial del visor (onboarding) ---------- */
+
+.viewport-empty {
+  max-width: 440px;
+  width: 100%;
   text-align: center;
+  color: var(--text);
+}
+
+.ve-badge {
+  width: 60px;
+  height: 60px;
+  margin: 0 auto 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 16px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--warn-border);
+}
+
+.viewport-empty h2 {
+  margin: 0 0 8px;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.ve-lead {
+  margin: 0 auto 22px;
+  max-width: 380px;
   color: var(--muted);
+  line-height: 1.55;
+}
+
+/* Los pasos se alinean a la izquierda: se leen como una secuencia, no como
+   texto centrado suelto. */
+.ve-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.ve-steps li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
   line-height: 1.5;
-  padding: 0 24px;
+  color: var(--muted);
+}
+
+.ve-steps li b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ve-num {
+  flex: 0 0 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--blue);
+  background: var(--info-bg);
+  border: 1px solid var(--info-border);
 }
 
 /* ---------- panel de pasos ---------- */

@@ -271,8 +271,7 @@ export function StepsPanel(): React.JSX.Element {
       <div className="panel-body">
         {!attached && status === 'idle' && steps.length === 0 && (
           <p className="empty">
-            Abre primero la URL del sistema. Después pulsa <b>●</b> y navega con normalidad: cada
-            interacción se convertirá en un paso.
+            Los pasos que captures aparecerán aquí, cada uno con su captura y su selector.
           </p>
         )}
         {attached && steps.length === 0 && (
