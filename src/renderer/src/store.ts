@@ -30,6 +30,14 @@ interface SessionState {
   /** null = usar el nombre sugerido a partir de los metadatos de la sesión */
   gitBranchOverride: string | null
   gitMessageOverride: string | null
+  /**
+   * Rama desde la que nacerá la rama de documentación, elegida en el explorador.
+   * `null` = usar la rama por defecto del repositorio, que es lo correcto salvo
+   * que se quiera continuar una línea de documentación ya empezada.
+   */
+  gitBaseBranch: string | null
+  /** el explorador de repositorios está abierto */
+  projectsOpen: boolean
 
   setMeta: (patch: Partial<SessionMeta>) => void
   setOutputDir: (dir: string) => void
@@ -45,6 +53,8 @@ interface SessionState {
   setGit: (patch: Partial<Pick<SessionState, 'gitEnabled' | 'gitPush'>>) => void
   setGitBranch: (value: string | null) => void
   setGitMessage: (value: string | null) => void
+  setGitBaseBranch: (value: string | null) => void
+  setProjectsOpen: (open: boolean) => void
 }
 
 function renumber(steps: RecordedStep[]): RecordedStep[] {
@@ -68,6 +78,8 @@ export const useSession = create<SessionState>((set) => ({
   gitPush: false,
   gitBranchOverride: null,
   gitMessageOverride: null,
+  gitBaseBranch: null,
+  projectsOpen: false,
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
   setOutputDir: (outputDir) => set({ outputDir }),
@@ -107,8 +119,17 @@ export const useSession = create<SessionState>((set) => ({
 
   // Detectar un repositorio activa la integración por defecto, pero nunca el
   // push: subir cambios al repositorio de otra persona se pide a mano.
-  setGitRepo: (gitRepo) => set((s) => ({ gitRepo, gitEnabled: gitRepo ? s.gitEnabled : false })),
+  // Cambiar de repositorio invalida la base elegida: esa rama pertenecía al
+  // repositorio anterior y aquí puede no existir.
+  setGitRepo: (gitRepo) =>
+    set((s) => ({
+      gitRepo,
+      gitEnabled: gitRepo ? s.gitEnabled : false,
+      gitBaseBranch: gitRepo?.root === s.gitRepo?.root ? s.gitBaseBranch : null
+    })),
   setGit: (patch) => set(patch),
   setGitBranch: (gitBranchOverride) => set({ gitBranchOverride }),
-  setGitMessage: (gitMessageOverride) => set({ gitMessageOverride })
+  setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
+  setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
+  setProjectsOpen: (projectsOpen) => set({ projectsOpen })
 }))

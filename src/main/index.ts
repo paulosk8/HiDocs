@@ -20,7 +20,8 @@ import {
 } from '../shared/ipc-contract'
 import { DEFAULT_VIEWPORT, type EngineState } from '../shared/types'
 import { saveSession } from './storage'
-import { inspectRepo } from './git'
+import { inspectRepo, listBranches, listCommits } from './git'
+import { listProjects, forgetProject } from './projects'
 
 /**
  * El puerto de depuración remota debe quedar fijado ANTES de `app.whenReady`:
@@ -213,6 +214,24 @@ function registerIpc(): void {
     // Devuelve null tanto si no hay repositorio como si `git` no está
     // instalado: en ambos casos la GUI simplemente no ofrece la integración.
     return inspectRepo(outputDir).catch(() => null)
+  })
+
+  // El explorador es de solo lectura: estos tres canales no escriben nada en el
+  // repositorio, así que ante cualquier fallo devuelven vacío en vez de
+  // propagar el error. La vista queda sin datos, que es un estado inocuo.
+  ipcMain.handle('git:branches', async (_e, repoRoot: string) => {
+    return listBranches(repoRoot).catch(() => [])
+  })
+
+  ipcMain.handle('git:commits', async (_e, args: { repoRoot: string; branch: string }) => {
+    return listCommits(args.repoRoot, args.branch).catch(() => [])
+  })
+
+  ipcMain.handle('projects:list', async () => listProjects().catch(() => []))
+
+  ipcMain.handle('projects:forget', async (_e, repoRoot: string) => {
+    await forgetProject(repoRoot).catch(() => {})
+    return listProjects().catch(() => [])
   })
 }
 

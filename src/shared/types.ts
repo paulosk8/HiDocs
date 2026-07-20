@@ -131,6 +131,31 @@ export interface GitRepoInfo {
   dirtyPaths: string[]
   /** rutas sin seguimiento (no impiden cambiar de rama) */
   untrackedPaths: string[]
+  /**
+   * Rama de la que nacen las ramas de documentación (`main` habitualmente), o
+   * `null` si el repositorio no declara ninguna reconocible.
+   */
+  defaultBranch: string | null
+}
+
+/** Una rama local, para el explorador de repositorios (solo lectura). */
+export interface GitBranchInfo {
+  name: string
+  /** rama activa en el árbol de trabajo */
+  current: boolean
+  /** resumen del último commit, para situar la rama de un vistazo */
+  lastCommitSubject: string
+  lastCommitDate: string
+  /** commits que tiene por delante de la rama por defecto */
+  aheadOfDefault: number
+}
+
+/** Un commit del historial de una rama (solo lectura). */
+export interface GitCommitInfo {
+  hash: string
+  subject: string
+  author: string
+  date: string
 }
 
 export interface GitCommitOptions {
@@ -140,6 +165,12 @@ export interface GitCommitOptions {
   /** rutas absolutas de los archivos escritos por DocRecorder */
   files: string[]
   push: boolean
+  /**
+   * Rama desde la que crear la rama nueva. Si se omite, se usa la rama por
+   * defecto del repositorio: cada documentación debe abrir su propio PR, no
+   * encadenarse sobre la anterior.
+   */
+  baseBranch?: string
 }
 
 export interface GitCommitResult {
@@ -160,4 +191,26 @@ export interface GitSaveOptions {
   branch: string
   message: string
   push: boolean
+  /** elegida en el explorador de repositorios; sin ella se usa la por defecto */
+  baseBranch?: string
+}
+
+/**
+ * Repositorio de documentación que el usuario ya ha usado.
+ *
+ * El registro solo recuerda carpetas locales: la app no clona ni crea nada en
+ * GitHub. Sirve para volver a un repositorio sin tener que buscarlo otra vez en
+ * el disco.
+ */
+export interface ProjectEntry {
+  /** raíz del repositorio */
+  root: string
+  /** nombre mostrado: la carpeta raíz */
+  label: string
+  /** ISO; ordena la lista por uso más reciente */
+  lastUsedAt: string
+  /** última carpeta de salida usada dentro de ese repositorio */
+  lastOutputDir: string
+  /** el repositorio puede haberse movido o borrado desde la última vez */
+  missing?: boolean
 }

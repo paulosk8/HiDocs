@@ -2,7 +2,13 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { relative, isAbsolute, join } from 'node:path'
 import { realpath } from 'node:fs/promises'
-import type { GitCommitOptions, GitCommitResult, GitRepoInfo } from '../shared/types'
+import type {
+  GitBranchInfo,
+  GitCommitInfo,
+  GitCommitOptions,
+  GitCommitResult,
+  GitRepoInfo
+} from '../shared/types'
 export { suggestBranchName, suggestCommitMessage } from '../shared/naming'
 
 const run = promisify(execFile)
@@ -135,7 +141,8 @@ export async function inspectRepo(dir: string): Promise<GitRepoInfo | null> {
     remoteUrl: remoteUrl || null,
     stagedPaths: status.staged,
     dirtyPaths: status.modified,
-    untrackedPaths: status.untracked
+    untrackedPaths: status.untracked,
+    defaultBranch: hasCommits ? await detectBaseBranch(root) : null
   }
 }
 
@@ -174,6 +181,85 @@ async function detectBaseBranch(root: string): Promise<string | null> {
   return null
 }
 
+/**
+ * Separador para los formatos `--format` de Git.
+ *
+ * Se usa un carácter de control (unit separator) en vez de algo como `|` porque
+ * un asunto de commit puede contener cualquier carácter imprimible, y entonces
+ * la línea se partiría por donde no toca.
+ */
+const FIELD = '\x1f'
+
+/**
+ * Ramas locales del repositorio, para el explorador (solo lectura).
+ *
+ * Deliberadamente NO se listan las ramas remotas: la app no habla con la red, y
+ * mezclar `origin/...` en la lista sugeriría acciones que no existen.
+ */
+export async function listBranches(root: string): Promise<GitBranchInfo[]> {
+  const defaultBranch = await detectBaseBranch(root)
+  const raw = await git(root, [
+    'for-each-ref',
+    '--sort=-committerdate',
+    `--format=%(refname:short)${FIELD}%(HEAD)${FIELD}%(contents:subject)${FIELD}%(committerdate:iso8601)`,
+    'refs/heads'
+  ]).catch(() => '')
+  if (!raw) return []
+
+  const branches: GitBranchInfo[] = []
+  for (const line of raw.split('\n').filter(Boolean)) {
+    const [name, head, subject, date] = line.split(FIELD)
+    // `rev-list a..b` cuenta lo que tiene `b` y no `a`: los commits de
+    // documentación que esta rama aporta sobre la rama por defecto.
+    const ahead =
+      defaultBranch && name !== defaultBranch
+        ? await git(root, ['rev-list', '--count', `${defaultBranch}..${name}`]).catch(() => '0')
+        : '0'
+    branches.push({
+      name,
+      current: head === '*',
+      lastCommitSubject: subject ?? '',
+      lastCommitDate: date ?? '',
+      aheadOfDefault: Number(ahead) || 0
+    })
+  }
+  return branches
+}
+
+/**
+ * Historial de una rama, del commit más reciente hacia atrás.
+ *
+ * `limit` acota la lectura porque el repositorio Docusaurus es ajeno y puede
+ * tener años de historia que no aportan nada a esta vista.
+ */
+export async function listCommits(
+  root: string,
+  branch: string,
+  limit = 50
+): Promise<GitCommitInfo[]> {
+  const invalid = validateBranchName(branch)
+  if (invalid) return []
+  const raw = await git(root, [
+    'log',
+    `--max-count=${limit}`,
+    `--format=%h${FIELD}%s${FIELD}%an${FIELD}%ad`,
+    '--date=iso8601',
+    branch,
+    // Corta la ambigüedad entre una rama y un archivo que se llamen igual: sin
+    // esto Git aborta pidiendo que se desambigüe.
+    '--'
+  ]).catch(() => '')
+  if (!raw) return []
+
+  return raw
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => {
+      const [hash, subject, author, date] = line.split(FIELD)
+      return { hash, subject: subject ?? '', author: author ?? '', date: date ?? '' }
+    })
+}
+
 /** Git rechaza estos patrones en `check-ref-format`; se avisa antes de intentarlo. */
 export function validateBranchName(name: string): string | null {
   if (!name.trim()) return 'El nombre de la rama no puede estar vacío.'
@@ -191,7 +277,7 @@ export function validateBranchName(name: string): string | null {
  * relativas porque es lo que espera `git add` desde la raíz.
  */
 export async function commitDocs(options: GitCommitOptions): Promise<GitCommitResult> {
-  const { repoRoot, branch, message, files, push } = options
+  const { repoRoot, branch, message, files, push, baseBranch } = options
 
   const invalid = validateBranchName(branch)
   if (invalid) throw new Error(invalid)
@@ -257,9 +343,24 @@ export async function commitDocs(options: GitCommitOptions): Promise<GitCommitRe
       await git(info.root, ['checkout', branch])
     } else if (info.hasCommits) {
       // Se ramifica desde la rama por defecto, no desde HEAD: así cada
-      // funcionalidad genera un PR independiente (GitHub Flow).
-      const base = await detectBaseBranch(info.root)
+      // funcionalidad genera un PR independiente (GitHub Flow). El usuario puede
+      // elegir otra base en el explorador de repositorios, para continuar una
+      // línea de documentación ya empezada.
+      const base = baseBranch || (await detectBaseBranch(info.root))
       if (base) {
+        // Una base inexistente haría que `checkout -b` fallara con un mensaje
+        // de Git poco claro; conviene decir exactamente qué falta.
+        const baseExists = await git(info.root, [
+          'show-ref',
+          '--verify',
+          '--quiet',
+          `refs/heads/${base}`
+        ])
+          .then(() => true)
+          .catch(() => false)
+        if (!baseExists) {
+          throw new Error(`La rama base «${base}» no existe en ${info.root}.`)
+        }
         await git(info.root, ['checkout', '-b', branch, base])
         if (base !== info.branch) baseNote = ` desde «${base}»`
       } else {

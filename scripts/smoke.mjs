@@ -490,6 +490,103 @@ try {
     secondTree.split('\n').filter(Boolean).join(' ')
   )
 
+  // --- Explorador de repositorios (solo lectura) ---
+
+  const branches = await gui.evaluate(
+    (root) => window.docrecorder.invoke('git:branches', root),
+    outDir
+  )
+  const byName = Object.fromEntries(branches.map((b) => [b.name, b]))
+  check(
+    !!byName['main'] && !!byName['docs/matriculas-crear-matricula'],
+    'Explorador: lista las ramas locales del repositorio',
+    branches.map((b) => b.name).join(', ')
+  )
+  check(
+    byName['docs/matriculas-anular-matricula']?.aheadOfDefault === 1,
+    'Explorador: cuenta los commits que la rama aporta sobre la rama por defecto',
+    String(byName['docs/matriculas-anular-matricula']?.aheadOfDefault)
+  )
+
+  const history = await gui.evaluate(
+    (root) =>
+      window.docrecorder.invoke('git:commits', {
+        repoRoot: root,
+        branch: 'docs/matriculas-anular-matricula'
+      }),
+    outDir
+  )
+  check(
+    history[0]?.subject === 'docs(matriculas): anular',
+    'Explorador: lee el historial de la rama, del commit más reciente hacia atrás',
+    history[0]?.subject
+  )
+  // El asunto de un commit puede contener el separador de campos; si el formato
+  // se parseara con `|` u otro carácter imprimible, aquí se partiría mal.
+  check(
+    history.every((c) => c.hash && c.date),
+    'Explorador: cada commit trae hash y fecha bien separados',
+    `${history.length} commit(s)`
+  )
+
+  const registered = await gui.evaluate(() => window.docrecorder.invoke('projects:list'))
+  check(
+    registered.some((p) => p.root === g('rev-parse --show-toplevel')),
+    'Explorador: el repositorio queda registrado al commitear',
+    registered.map((p) => p.label).join(', ')
+  )
+
+  // --- Rama base elegida a mano: continuar una línea ya empezada ---
+
+  const onto = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'matriculas',
+          feature: 'anular-parcial',
+          title: 'Anular parcialmente',
+          role: 'secretaria',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-base',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps: [],
+        git: {
+          enabled: true,
+          branch: 'docs/matriculas-anular-parcial',
+          message: 'docs(matriculas): anular parcial',
+          push: false,
+          baseBranch: 'docs/matriculas-anular-matricula'
+        }
+      }),
+    outDir
+  )
+  check(
+    !onto.gitError &&
+      g('rev-parse docs/matriculas-anular-parcial^') ===
+        g('rev-parse docs/matriculas-anular-matricula'),
+    'Rama base elegida: la rama nueva nace de la indicada, no de la por defecto',
+    onto.gitError ?? onto.git?.message
+  )
+
+  // Olvidar deja el registro como estaba y no toca el repositorio: si no, cada
+  // ejecución de esta prueba dejaría residuos en los datos de la aplicación.
+  const root = g('rev-parse --show-toplevel')
+  const afterForget = await gui.evaluate(
+    (r) => window.docrecorder.invoke('projects:forget', r),
+    root
+  )
+  check(
+    !afterForget.some((p) => p.root === root),
+    'Explorador: olvidar un proyecto lo quita del registro'
+  )
+  check(
+    existsSync(join(outDir, '.git')) && g('rev-parse --abbrev-ref HEAD').length > 0,
+    'Explorador: olvidar un proyecto no toca el repositorio en disco'
+  )
+
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)
   process.exitCode = failed.length ? 1 : 0

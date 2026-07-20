@@ -9,8 +9,11 @@
 import type {
   DocStep,
   EngineState,
+  GitBranchInfo,
+  GitCommitInfo,
   GitRepoInfo,
   GitSaveOptions,
+  ProjectEntry,
   SaveResult,
   SessionMeta,
   Viewport
@@ -62,6 +65,14 @@ export interface IpcInvokeMap {
   'shell:open-path': (path: string) => void
   /** inspecciona el repositorio que contenga la carpeta de salida, si lo hay */
   'git:inspect': (outputDir: string) => GitRepoInfo | null
+  /** ramas locales del repositorio, para el explorador (solo lectura) */
+  'git:branches': (repoRoot: string) => GitBranchInfo[]
+  /** historial de una rama, del commit más reciente hacia atrás (solo lectura) */
+  'git:commits': (args: { repoRoot: string; branch: string }) => GitCommitInfo[]
+  /** repositorios de documentación ya usados, del más reciente al más antiguo */
+  'projects:list': () => ProjectEntry[]
+  /** quita el repositorio del registro; no toca nada en disco */
+  'projects:forget': (repoRoot: string) => ProjectEntry[]
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -91,7 +102,11 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'dialog:pick-output-dir',
   'session:save',
   'shell:open-path',
-  'git:inspect'
+  'git:inspect',
+  'git:branches',
+  'git:commits',
+  'projects:list',
+  'projects:forget'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [

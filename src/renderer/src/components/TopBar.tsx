@@ -18,8 +18,17 @@ function normalizeUrl(input: string): string {
 }
 
 export function TopBar(): React.JSX.Element {
-  const { meta, setMeta, outputDir, setOutputDir, status, currentUrl, error, applyEngineState } =
-    useSession()
+  const {
+    meta,
+    setMeta,
+    outputDir,
+    setOutputDir,
+    status,
+    currentUrl,
+    error,
+    applyEngineState,
+    setProjectsOpen
+  } = useSession()
   const [opening, setOpening] = useState(false)
 
   const open = async (): Promise<void> => {
@@ -119,6 +128,13 @@ export function TopBar(): React.JSX.Element {
         </label>
         <button className="btn" onClick={() => void pickDir()}>
           Elegir…
+        </button>
+        <button
+          className="btn"
+          onClick={() => setProjectsOpen(true)}
+          title="Repositorios ya usados, sus ramas y su historial"
+        >
+          Proyectos…
         </button>
       </div>
 

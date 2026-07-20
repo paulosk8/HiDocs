@@ -71,7 +71,10 @@ export function StepsPanel(): React.JSX.Element {
               message:
                 s.gitMessageOverride ??
                 suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
-              push: s.gitPush
+              push: s.gitPush,
+              // Sin elección explícita se omite, y el main resuelve la rama por
+              // defecto del repositorio.
+              baseBranch: s.gitBaseBranch ?? undefined
             }
           : undefined
       })

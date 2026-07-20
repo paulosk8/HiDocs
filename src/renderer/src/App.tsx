@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { TopBar } from './components/TopBar'
 import { ViewportSlot } from './components/ViewportSlot'
 import { StepsPanel } from './components/StepsPanel'
+import { ProjectsModal } from './components/ProjectsModal'
 import { ipc } from './ipc'
 import { useSession } from './store'
 
@@ -9,6 +10,8 @@ export function App(): React.JSX.Element {
   const applyEngineState = useSession((s) => s.applyEngineState)
   const addStep = useSession((s) => s.addStep)
   const attached = useSession((s) => s.attached)
+  const projectsOpen = useSession((s) => s.projectsOpen)
+  const setProjectsOpen = useSession((s) => s.setProjectsOpen)
 
   useEffect(() => {
     const offState = ipc.on('engine:state', applyEngineState)
@@ -33,6 +36,7 @@ export function App(): React.JSX.Element {
         />
         <StepsPanel />
       </main>
+      {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}
     </div>
   )
 }

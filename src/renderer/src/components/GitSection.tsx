@@ -15,6 +15,8 @@ export function GitSection(): React.JSX.Element | null {
   const repo = useSession((s) => s.gitRepo)
   const enabled = useSession((s) => s.gitEnabled)
   const push = useSession((s) => s.gitPush)
+  const baseBranch = useSession((s) => s.gitBaseBranch)
+  const setProjectsOpen = useSession((s) => s.setProjectsOpen)
   const branchOverride = useSession((s) => s.gitBranchOverride)
   const messageOverride = useSession((s) => s.gitMessageOverride)
   const setGitRepo = useSession((s) => s.setGitRepo)
@@ -37,7 +39,20 @@ export function GitSection(): React.JSX.Element | null {
     }
   }, [outputDir, setGitRepo])
 
-  if (!repo) return null
+  // Antes esto devolvía null y la sección desaparecía sin más: con una carpeta
+  // fuera de un repositorio parecía que la integración Git no existía. Decirlo
+  // cuesta una línea y evita esa confusión.
+  if (!repo) {
+    return outputDir ? (
+      <section className="git-section">
+        <p className="git-note">
+          La carpeta de salida no está dentro de un repositorio Git, así que la documentación solo se
+          guardará en disco. Elige una carpeta dentro del repositorio Docusaurus para registrarla en
+          una rama.
+        </p>
+      </section>
+    ) : null
+  }
 
   const branch = branchOverride ?? suggestBranchName(meta.module, meta.feature)
   const message = messageOverride ?? suggestCommitMessage(meta.module, meta.feature, meta.title)
@@ -88,6 +103,18 @@ export function GitSection(): React.JSX.Element | null {
             </span>
           </label>
 
+          {/* Condicional a propósito: el renderer no sabe si la rama ya existe
+              —GitRepoInfo no lista ramas y consultarlas aquí lanzaría un proceso
+              `git` por cada tecla—, y si existe, el commit se añade encima sin
+              que la base intervenga. */}
+          <p className="git-note">
+            Si <code>{branch}</code> aún no existe, nacerá de{' '}
+            <code>{baseBranch ?? repo.defaultBranch ?? repo.branch}</code>
+            {!baseBranch && !repo.defaultBranch && ' (no se encontró la rama por defecto)'}.{' '}
+            <button className="link" onClick={() => setProjectsOpen(true)}>
+              Cambiar en Proyectos…
+            </button>
+          </p>
           {switching && (
             <p className="git-note">
               Se cambiará de <code>{repo.branch}</code> a <code>{branch}</code>

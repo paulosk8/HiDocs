@@ -2,6 +2,7 @@ import { copyFile, mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SavePayload } from '../shared/ipc-contract'
 import { commitDocs } from './git'
+import { rememberProject } from './projects'
 import { slug } from '../shared/naming'
 import type { DocSession, DocStep, Flow, FlowAction, SaveResult, Viewport } from '../shared/types'
 
@@ -123,8 +124,13 @@ export async function saveSession(
         branch: payload.git.branch,
         message: payload.git.message,
         push: payload.git.push,
+        baseBranch: payload.git.baseBranch,
         files: [sessionFile, flowFile, ...writtenImages]
       })
+      // El repositorio se recuerda solo cuando el commit sale bien: registrar un
+      // repositorio en el que no se ha llegado a escribir nada ensuciaría la
+      // lista con intentos fallidos.
+      await rememberProject(result.git.repoRoot, payload.outputDir)
     } catch (err) {
       result.gitError = err instanceof Error ? err.message : String(err)
     }
