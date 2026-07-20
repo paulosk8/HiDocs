@@ -30,6 +30,8 @@ export function StepsPanel(): React.JSX.Element {
   const attached = useSession((s) => s.attached)
   const reorderSteps = useSession((s) => s.reorderSteps)
   const applyEngineState = useSession((s) => s.applyEngineState)
+  const collapsed = useSession((s) => s.panelCollapsed)
+  const togglePanel = useSession((s) => s.togglePanel)
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
@@ -138,70 +140,42 @@ export function StepsPanel(): React.JSX.Element {
     applyEngineState(await ipc.invoke('recorder:start'))
   }
 
-  return (
-    <aside className="panel">
-      <div className="panel-header">
-        <h2>Pasos</h2>
-        <span className="count">{steps.length}</span>
-        <div className="controls">
-          <button
-            className="ctrl ctrl-record"
-            disabled={status === 'recording'}
-            title="Grabar"
-            onClick={() => void record()}
-          >
-            ●
-          </button>
-          <button
-            className="ctrl"
-            disabled={status === 'idle'}
-            title={status === 'paused' ? 'Reanudar (Ctrl+Shift+R)' : 'Pausar (Ctrl+Shift+R)'}
-            onClick={() => void toggleRecording()}
-          >
-            {status === 'paused' ? '▶' : '⏸'}
-          </button>
-          <button
-            className="ctrl"
-            disabled={busy || (status === 'idle' && steps.length === 0)}
-            title="Detener y guardar"
-            onClick={() => void stopAndSave()}
-          >
-            ■
-          </button>
-        </div>
-      </div>
+  // Los tres controles de grabación se muestran tanto en el encabezado del panel
+  // abierto (en fila) como en la tira colapsada (en columna), así que se definen
+  // una sola vez.
+  const controls = (
+    <>
+      <button
+        className="ctrl ctrl-record"
+        disabled={status === 'recording'}
+        title="Grabar"
+        onClick={() => void record()}
+      >
+        ●
+      </button>
+      <button
+        className="ctrl"
+        disabled={status === 'idle'}
+        title={status === 'paused' ? 'Reanudar (Ctrl+Shift+R)' : 'Pausar (Ctrl+Shift+R)'}
+        onClick={() => void toggleRecording()}
+      >
+        {status === 'paused' ? '▶' : '⏸'}
+      </button>
+      <button
+        className="ctrl"
+        disabled={busy || (status === 'idle' && steps.length === 0)}
+        title="Detener y guardar"
+        onClick={() => void stopAndSave()}
+      >
+        ■
+      </button>
+    </>
+  )
 
-      <div className="panel-body">
-        {!attached && status === 'idle' && steps.length === 0 && (
-          <p className="empty">
-            Abre primero la URL del sistema. Después pulsa <b>●</b> y navega con normalidad: cada
-            interacción se convertirá en un paso.
-          </p>
-        )}
-        {attached && steps.length === 0 && (
-          <p className="empty">
-            {status === 'recording'
-              ? 'Grabando… interactúa con el sistema.'
-              : 'Pulsa ● para empezar a grabar.'}
-          </p>
-        )}
-
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          modifiers={[restrictToVerticalAxis, restrictToParentElement]}
-          onDragEnd={onDragEnd}
-        >
-          <SortableContext items={steps.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-            {steps.map((step) => (
-              <StepCard key={step.id} step={step} onOpenShot={setShot} />
-            ))}
-          </SortableContext>
-        </DndContext>
-      </div>
-
-      <GitSection />
-
+  // Los diálogos se montan igual en ambos estados del panel: guardar (y sus
+  // avisos) debe funcionar también con el panel colapsado.
+  const dialogs = (
+    <>
       {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
 
       {pendingSave && (
@@ -245,6 +219,83 @@ export function StepsPanel(): React.JSX.Element {
           onCancel={() => setResult(null)}
         />
       )}
+    </>
+  )
+
+  // Colapsado: una tira estrecha con lo imprescindible para grabar sin volver a
+  // abrir el panel. El viewport recupera el ancho y la página muestra su menú
+  // lateral. Los diálogos siguen montados fuera de este condicional para que
+  // guardar desde la tira también funcione.
+  if (collapsed) {
+    return (
+      <aside className="panel collapsed">
+        <div className="panel-strip">
+          <button
+            className="strip-toggle"
+            onClick={togglePanel}
+            title="Expandir el panel de pasos"
+            aria-label="Expandir el panel de pasos"
+          >
+            «
+          </button>
+          <span className="count" title={`${steps.length} paso(s)`}>
+            {steps.length}
+          </span>
+          <div className="controls controls-vertical">{controls}</div>
+        </div>
+        {dialogs}
+      </aside>
+    )
+  }
+
+  return (
+    <aside className="panel">
+      <div className="panel-header">
+        <button
+          className="strip-toggle"
+          onClick={togglePanel}
+          title="Colapsar el panel (da ancho a la página)"
+          aria-label="Colapsar el panel de pasos"
+        >
+          »
+        </button>
+        <h2>Pasos</h2>
+        <span className="count">{steps.length}</span>
+        <div className="controls">{controls}</div>
+      </div>
+
+      <div className="panel-body">
+        {!attached && status === 'idle' && steps.length === 0 && (
+          <p className="empty">
+            Abre primero la URL del sistema. Después pulsa <b>●</b> y navega con normalidad: cada
+            interacción se convertirá en un paso.
+          </p>
+        )}
+        {attached && steps.length === 0 && (
+          <p className="empty">
+            {status === 'recording'
+              ? 'Grabando… interactúa con el sistema.'
+              : 'Pulsa ● para empezar a grabar.'}
+          </p>
+        )}
+
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          modifiers={[restrictToVerticalAxis, restrictToParentElement]}
+          onDragEnd={onDragEnd}
+        >
+          <SortableContext items={steps.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+            {steps.map((step) => (
+              <StepCard key={step.id} step={step} onOpenShot={setShot} />
+            ))}
+          </SortableContext>
+        </DndContext>
+      </div>
+
+      <GitSection />
+
+      {dialogs}
     </aside>
   )
 }

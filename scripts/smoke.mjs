@@ -628,6 +628,46 @@ try {
     'Explorador: olvidar un proyecto no toca el repositorio en disco'
   )
 
+  // --- Franja de estado y panel colapsable ---
+
+  await gui.waitForFunction(
+    () => document.querySelector('.project-status')?.textContent?.includes('rama'),
+    null,
+    { timeout: 5000 }
+  )
+  const statusText = (await gui.locator('.project-status').textContent()).replace(/\s+/g, ' ')
+  check(
+    /rama\s*main/.test(statusText) && /próxima grabación/.test(statusText),
+    'Estado: la franja resume repositorio, rama y base de la próxima grabación',
+    statusText
+  )
+
+  // El valor de la prueba está aquí: colapsar debe DEVOLVER ancho al viewport,
+  // que es lo que evita que la página responsive colapse su menú lateral.
+  const slotWidth = () =>
+    gui.locator('.viewport-slot').evaluate((n) => Math.round(n.getBoundingClientRect().width))
+  const widthOpen = await slotWidth()
+
+  await gui.locator('.panel-header .strip-toggle').click()
+  await gui.waitForSelector('.panel.collapsed', { timeout: 3000 })
+  const widthCollapsed = await slotWidth()
+  check(
+    widthCollapsed > widthOpen + 200,
+    'Panel colapsable: al colapsar, el viewport recupera ancho',
+    `abierto ${widthOpen}px → colapsado ${widthCollapsed}px`
+  )
+  check(
+    (await gui.locator('.panel-strip .ctrl').count()) === 3,
+    'Panel colapsable: la tira conserva los controles de grabación'
+  )
+
+  await gui.locator('.panel-strip .strip-toggle').click()
+  await gui.waitForSelector('.panel:not(.collapsed)', { timeout: 3000 })
+  check(
+    Math.abs((await slotWidth()) - widthOpen) < 4,
+    'Panel colapsable: al expandir, el viewport vuelve a su ancho'
+  )
+
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)
   process.exitCode = failed.length ? 1 : 0

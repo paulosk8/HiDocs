@@ -38,6 +38,12 @@ interface SessionState {
   gitBaseBranch: string | null
   /** el explorador de repositorios está abierto */
   projectsOpen: boolean
+  /**
+   * El panel de pasos está colapsado a una tira fina. Colapsarlo devuelve el
+   * ancho al viewport para que la página que se documenta muestre su layout de
+   * escritorio (su menú lateral se oculta si el viewport es estrecho).
+   */
+  panelCollapsed: boolean
 
   setMeta: (patch: Partial<SessionMeta>) => void
   setOutputDir: (dir: string) => void
@@ -55,6 +61,7 @@ interface SessionState {
   setGitMessage: (value: string | null) => void
   setGitBaseBranch: (value: string | null) => void
   setProjectsOpen: (open: boolean) => void
+  togglePanel: () => void
 }
 
 function renumber(steps: RecordedStep[]): RecordedStep[] {
@@ -80,6 +87,7 @@ export const useSession = create<SessionState>((set) => ({
   gitMessageOverride: null,
   gitBaseBranch: null,
   projectsOpen: false,
+  panelCollapsed: false,
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
   setOutputDir: (outputDir) => set({ outputDir }),
@@ -131,5 +139,6 @@ export const useSession = create<SessionState>((set) => ({
   setGitBranch: (gitBranchOverride) => set({ gitBranchOverride }),
   setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
-  setProjectsOpen: (projectsOpen) => set({ projectsOpen })
+  setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
+  togglePanel: () => set((s) => ({ panelCollapsed: !s.panelCollapsed }))
 }))

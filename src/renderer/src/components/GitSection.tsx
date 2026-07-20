@@ -1,6 +1,4 @@
-import { useEffect } from 'react'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
-import { ipc } from '../ipc'
 import { useSession } from '../store'
 
 /**
@@ -19,25 +17,13 @@ export function GitSection(): React.JSX.Element | null {
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
   const branchOverride = useSession((s) => s.gitBranchOverride)
   const messageOverride = useSession((s) => s.gitMessageOverride)
-  const setGitRepo = useSession((s) => s.setGitRepo)
   const setGit = useSession((s) => s.setGit)
   const setGitBranch = useSession((s) => s.setGitBranch)
   const setGitMessage = useSession((s) => s.setGitMessage)
 
-  // La carpeta se puede escribir a mano, así que la inspección se retrasa para
-  // no lanzar un proceso `git` por cada tecla.
-  useEffect(() => {
-    let cancelled = false
-    const timer = setTimeout(() => {
-      void ipc.invoke('git:inspect', outputDir).then((info) => {
-        if (!cancelled) setGitRepo(info)
-      })
-    }, 400)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [outputDir, setGitRepo])
+  // La inspección del repositorio vive en App (useRepoInspection), no aquí: esta
+  // sección se desmonta al colapsar el panel y dejaría sin datos a la franja de
+  // estado. Aquí solo se lee `gitRepo` del store.
 
   // Antes esto devolvía null y la sección desaparecía sin más: con una carpeta
   // fuera de un repositorio parecía que la integración Git no existía. Decirlo
@@ -46,9 +32,9 @@ export function GitSection(): React.JSX.Element | null {
     return outputDir ? (
       <section className="git-section">
         <p className="git-note">
-          La carpeta de salida no está dentro de un repositorio Git, así que la documentación solo se
-          guardará en disco. Elige una carpeta dentro del repositorio Docusaurus para registrarla en
-          una rama.
+          La carpeta de salida no está dentro de un repositorio Git, así que la documentación solo
+          se guardará en disco. Elige una carpeta dentro del repositorio Docusaurus para registrarla
+          en una rama.
         </p>
       </section>
     ) : null
