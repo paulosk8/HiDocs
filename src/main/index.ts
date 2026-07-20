@@ -20,6 +20,7 @@ import {
 } from '../shared/ipc-contract'
 import { DEFAULT_VIEWPORT, type EngineState } from '../shared/types'
 import { saveSession } from './storage'
+import { inspectRepo } from './git'
 
 /**
  * El puerto de depuración remota debe quedar fijado ANTES de `app.whenReady`:
@@ -206,6 +207,12 @@ function registerIpc(): void {
 
   ipcMain.handle('shell:open-path', async (_e, path: string) => {
     await shell.openPath(path)
+  })
+
+  ipcMain.handle('git:inspect', async (_e, outputDir: string) => {
+    // Devuelve null tanto si no hay repositorio como si `git` no está
+    // instalado: en ambos casos la GUI simplemente no ofrece la integración.
+    return inspectRepo(outputDir).catch(() => null)
   })
 }
 

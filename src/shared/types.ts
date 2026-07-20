@@ -108,4 +108,56 @@ export interface SaveResult {
   path: string
   stepsWritten: number
   imagesWritten: number
+  /** presente solo si se pidió registrar el resultado en Git */
+  git?: GitCommitResult
+  /** el commit se pidió pero falló; el paquete en disco sí se escribió */
+  gitError?: string
+}
+
+/**
+ * Estado del repositorio que contiene la carpeta de salida (§ fase Git).
+ * `null` cuando esa carpeta no está dentro de ningún repositorio.
+ */
+export interface GitRepoInfo {
+  root: string
+  /** rama actualmente activa */
+  branch: string
+  /** un repositorio recién creado aún no tiene HEAD resoluble */
+  hasCommits: boolean
+  remoteUrl: string | null
+  /** rutas con cambios ya en el índice */
+  stagedPaths: string[]
+  /** rutas seguidas y modificadas en el árbol de trabajo */
+  dirtyPaths: string[]
+  /** rutas sin seguimiento (no impiden cambiar de rama) */
+  untrackedPaths: string[]
+}
+
+export interface GitCommitOptions {
+  repoRoot: string
+  branch: string
+  message: string
+  /** rutas absolutas de los archivos escritos por DocRecorder */
+  files: string[]
+  push: boolean
+}
+
+export interface GitCommitResult {
+  repoRoot: string
+  branch: string
+  createdBranch: boolean
+  /** hash corto, o null si no había nada que registrar */
+  commit: string | null
+  committedFiles: number
+  pushed: boolean
+  /** resumen legible para mostrar en la GUI */
+  message: string
+}
+
+/** Lo que la GUI envía al guardar cuando el usuario activa la integración Git. */
+export interface GitSaveOptions {
+  enabled: boolean
+  branch: string
+  message: string
+  push: boolean
 }

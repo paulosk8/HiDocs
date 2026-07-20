@@ -6,7 +6,15 @@
  * y preload no puedan divergir.
  */
 
-import type { DocStep, EngineState, SaveResult, SessionMeta, Viewport } from './types'
+import type {
+  DocStep,
+  EngineState,
+  GitRepoInfo,
+  GitSaveOptions,
+  SaveResult,
+  SessionMeta,
+  Viewport
+} from './types'
 
 /**
  * Paso tal como viaja del motor a la GUI: además de los campos persistidos,
@@ -32,6 +40,8 @@ export interface SavePayload {
   createdAt: string
   outputDir: string
   steps: RecordedStep[]
+  /** ausente = guardar solo en disco, sin tocar ningún repositorio */
+  git?: GitSaveOptions
 }
 
 /** Canales renderer → main con respuesta (ipcRenderer.invoke). */
@@ -50,6 +60,8 @@ export interface IpcInvokeMap {
   'dialog:pick-output-dir': () => string | null
   'session:save': (payload: SavePayload) => SaveResult
   'shell:open-path': (path: string) => void
+  /** inspecciona el repositorio que contenga la carpeta de salida, si lo hay */
+  'git:inspect': (outputDir: string) => GitRepoInfo | null
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -78,7 +90,8 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'recorder:stop',
   'dialog:pick-output-dir',
   'session:save',
-  'shell:open-path'
+  'shell:open-path',
+  'git:inspect'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [

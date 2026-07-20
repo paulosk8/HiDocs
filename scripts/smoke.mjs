@@ -8,7 +8,7 @@
  *   npm run build && node scripts/smoke.mjs
  */
 import { spawn, execSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, readdirSync, existsSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import electronPath from 'electron'
@@ -41,6 +41,17 @@ console.log('fixture:', fixture.url)
 
 const outDir = mkdtempSync(join(tmpdir(), 'docrecorder-out-'))
 console.log('salida:', outDir)
+
+// La carpeta de salida es un repositorio Git: así se ejercita la fase de
+// integración igual que lo haría el repo Docusaurus del otro desarrollador.
+const g = (args) => execSync(`git ${args}`, { cwd: outDir, encoding: 'utf8' }).trim()
+execSync('git init -q -b main', { cwd: outDir })
+g('config user.email prueba@ejemplo.com')
+g('config user.name Prueba')
+writeFileSync(join(outDir, 'README.md'), '# Documentación\n')
+g('add README.md')
+g('commit -q -m "chore: repositorio de documentación inicial"')
+console.log('repo de prueba en main con 1 commit')
 
 // Una ejecución anterior interrumpida dejaría el puerto ocupado y la prueba
 // se conectaría a esa instancia en vez de a la nueva.
@@ -246,6 +257,32 @@ try {
   // escritas, que es como lo usaría alguien que documenta siempre en el mismo sitio.
   await gui.fill('.topbar input[placeholder="Sin seleccionar"]', outDir)
 
+  // --- Fase Git: detección y activación ---
+  await gui.waitForSelector('.git-section', { timeout: 10000 })
+  const detected = await gui.locator('.git-toggle em').textContent()
+  check(
+    /rama actual\s*main/.test(detected),
+    'Git: repositorio detectado desde la carpeta de salida',
+    detected
+  )
+
+  await gui.locator('.git-section input[type="checkbox"]').first().check()
+  await gui.waitForSelector('.git-fields', { timeout: 5000 })
+  const suggested = await gui.locator('.git-fields .field input').first().inputValue()
+  check(
+    suggested === 'docs/matriculas-crear-matricula',
+    'Git: rama sugerida a partir de módulo y funcionalidad',
+    suggested
+  )
+  const suggestedMsg = await gui.locator('.git-fields .field input').nth(1).inputValue()
+  check(
+    suggestedMsg === 'docs(matriculas): Crear una matrícula',
+    'Git: mensaje de commit sugerido',
+    suggestedMsg
+  )
+  const pushDisabled = await gui.locator('.git-toggle.small input').isDisabled()
+  check(pushDisabled, 'Git: el push queda deshabilitado sin remoto «origin»')
+
   await gui.click('.ctrl:nth-child(3)')
   await gui.waitForSelector('.dialog', { timeout: 20000 })
   const dialogTitle = await gui.locator('.dialog h3').textContent()
@@ -309,6 +346,105 @@ try {
   check(
     session.steps.every((s) => s.value !== 'secreto123'),
     'Criterio 3: la contraseña no se persiste en claro'
+  )
+
+  // --- Fase Git: rama, commit y salvaguardas ---
+  const branchNow = g('rev-parse --abbrev-ref HEAD')
+  check(branchNow === 'docs/matriculas-crear-matricula', 'Git: rama creada y activa', branchNow)
+
+  const subject = g('log -1 --pretty=%s')
+  check(
+    subject === 'docs(matriculas): Crear una matrícula',
+    'Git: commit con el mensaje indicado',
+    subject
+  )
+
+  const committed = g('show --stat --name-only --pretty=format: HEAD')
+    .split('\n')
+    .filter(Boolean)
+    .sort()
+  check(
+    committed.length === 6 &&
+      committed.includes('matriculas/crear-matricula/session.json') &&
+      committed.includes('matriculas/crear-matricula/flow.json') &&
+      committed.filter((f) => f.endsWith('.png')).length === 4,
+    'Git: el commit contiene session.json, flow.json y las 4 capturas',
+    committed.join(' ')
+  )
+
+  const cleanAfter = g('status --porcelain')
+  check(cleanAfter === '', 'Git: no quedan cambios sin registrar', cleanAfter || '(limpio)')
+
+  const mainUntouched = g('log main --oneline').split('\n').length
+  check(mainUntouched === 1, 'Git: la rama main queda intacta', `${mainUntouched} commit(s)`)
+
+  // Salvaguarda: un archivo ajeno ya indexado debe abortar el commit.
+  writeFileSync(join(outDir, 'AJENO.md'), 'trabajo en curso de otra persona\n')
+  g('add AJENO.md')
+  const headBeforeGuard = g('rev-parse HEAD')
+  const guard = await gui.evaluate(
+    ([dir, steps]) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'matriculas',
+          feature: 'otra',
+          title: 'Otra',
+          role: 'x',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-guard',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps,
+        git: { enabled: true, branch: 'docs/otra', message: 'docs: otra', push: false }
+      }),
+    [outDir, await gui.evaluate(() => [])]
+  )
+  check(
+    !!guard.gitError && /ya indexados/.test(guard.gitError),
+    'Git: se aborta el commit si hay cambios ajenos en el índice',
+    guard.gitError?.slice(0, 60)
+  )
+  check(
+    g('rev-parse HEAD') === headBeforeGuard,
+    'Git: la salvaguarda no dejó ningún commit a medias'
+  )
+  check(
+    existsSync(join(outDir, 'matriculas', 'otra', 'session.json')),
+    'Git: el paquete en disco se escribe aunque el commit falle'
+  )
+
+  // Regrabar la misma funcionalidad debe reutilizar la rama existente.
+  g('reset -q HEAD AJENO.md')
+  const reuse = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'matriculas',
+          feature: 'crear-matricula',
+          title: 'Crear una matrícula',
+          role: 'secretaria',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-reuse',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps: [],
+        git: {
+          enabled: true,
+          branch: 'docs/matriculas-crear-matricula',
+          message: 'docs(matriculas): regrabación',
+          push: false
+        }
+      }),
+    outDir
+  )
+  check(
+    !reuse.gitError && reuse.git?.createdBranch === false,
+    'Git: regrabar reutiliza la rama existente en vez de fallar',
+    reuse.gitError ?? reuse.git?.message
   )
 
   const failed = checks.filter((c) => !c.ok)

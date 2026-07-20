@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { RecordedStep } from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
+  type GitRepoInfo,
   type EngineState,
   type RecorderStatus,
   type SessionMeta,
@@ -22,6 +23,14 @@ interface SessionState {
   /** id del paso recién llegado, para hacer scroll y enfocar su título (§8) */
   focusStepId: string | null
 
+  /** repositorio que contiene la carpeta de salida, o null si no hay ninguno */
+  gitRepo: GitRepoInfo | null
+  gitEnabled: boolean
+  gitPush: boolean
+  /** null = usar el nombre sugerido a partir de los metadatos de la sesión */
+  gitBranchOverride: string | null
+  gitMessageOverride: string | null
+
   setMeta: (patch: Partial<SessionMeta>) => void
   setOutputDir: (dir: string) => void
   applyEngineState: (state: EngineState) => void
@@ -31,6 +40,11 @@ interface SessionState {
   reorderSteps: (fromIndex: number, toIndex: number) => void
   clearFocus: () => void
   resetSteps: () => void
+
+  setGitRepo: (repo: GitRepoInfo | null) => void
+  setGit: (patch: Partial<Pick<SessionState, 'gitEnabled' | 'gitPush'>>) => void
+  setGitBranch: (value: string | null) => void
+  setGitMessage: (value: string | null) => void
 }
 
 function renumber(steps: RecordedStep[]): RecordedStep[] {
@@ -49,6 +63,11 @@ export const useSession = create<SessionState>((set) => ({
   error: null,
   steps: [],
   focusStepId: null,
+  gitRepo: null,
+  gitEnabled: false,
+  gitPush: false,
+  gitBranchOverride: null,
+  gitMessageOverride: null,
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
   setOutputDir: (outputDir) => set({ outputDir }),
@@ -84,5 +103,12 @@ export const useSession = create<SessionState>((set) => ({
     }),
 
   clearFocus: () => set({ focusStepId: null }),
-  resetSteps: () => set({ steps: [], focusStepId: null })
+  resetSteps: () => set({ steps: [], focusStepId: null }),
+
+  // Detectar un repositorio activa la integración por defecto, pero nunca el
+  // push: subir cambios al repositorio de otra persona se pide a mano.
+  setGitRepo: (gitRepo) => set((s) => ({ gitRepo, gitEnabled: gitRepo ? s.gitEnabled : false })),
+  setGit: (patch) => set(patch),
+  setGitBranch: (gitBranchOverride) => set({ gitBranchOverride }),
+  setGitMessage: (gitMessageOverride) => set({ gitMessageOverride })
 }))

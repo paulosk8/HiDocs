@@ -21,6 +21,8 @@ import { useSession } from '../store'
 import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
 import { ConfirmDialog } from './ConfirmDialog'
+import { GitSection } from './GitSection'
+import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
 
 export function StepsPanel(): React.JSX.Element {
   const steps = useSession((s) => s.steps)
@@ -61,7 +63,17 @@ export function StepsPanel(): React.JSX.Element {
         sessionId: s.sessionId,
         createdAt: s.createdAt,
         outputDir: s.outputDir,
-        steps: s.steps
+        steps: s.steps,
+        git: s.gitEnabled
+          ? {
+              enabled: true,
+              branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module, s.meta.feature),
+              message:
+                s.gitMessageOverride ??
+                suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
+              push: s.gitPush
+            }
+          : undefined
       })
       setResult(saved)
     } catch (err) {
@@ -185,6 +197,8 @@ export function StepsPanel(): React.JSX.Element {
         </DndContext>
       </div>
 
+      <GitSection />
+
       {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
 
       {pendingSave && (
@@ -209,7 +223,16 @@ export function StepsPanel(): React.JSX.Element {
       {result && (
         <ConfirmDialog
           title="Documentación guardada"
-          body={`${result.stepsWritten} pasos y ${result.imagesWritten} capturas en:\n${result.path}`}
+          body={[
+            `${result.stepsWritten} pasos y ${result.imagesWritten} capturas en:`,
+            result.path,
+            result.git ? `\n${result.git.message}` : '',
+            result.gitError
+              ? `\nEl paquete se guardó, pero no se registró en Git:\n${result.gitError}`
+              : ''
+          ]
+            .filter(Boolean)
+            .join('\n')}
           confirmLabel="Abrir carpeta"
           cancelLabel="Cerrar"
           onConfirm={() => {
