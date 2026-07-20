@@ -27,7 +27,9 @@ export function TopBar(): React.JSX.Element {
     currentUrl,
     error,
     applyEngineState,
-    setProjectsOpen
+    setProjectsOpen,
+    theme,
+    toggleTheme
   } = useSession()
   const [opening, setOpening] = useState(false)
 
@@ -135,6 +137,14 @@ export function TopBar(): React.JSX.Element {
           title="Repositorios ya usados, sus ramas y su historial"
         >
           Proyectos…
+        </button>
+        <button
+          className="btn btn-icon"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+          aria-label={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
         </button>
       </div>
 

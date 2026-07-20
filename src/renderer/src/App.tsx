@@ -14,9 +14,16 @@ export function App(): React.JSX.Element {
   const attached = useSession((s) => s.attached)
   const projectsOpen = useSession((s) => s.projectsOpen)
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
+  const theme = useSession((s) => s.theme)
 
   // Mantiene `gitRepo` al día aunque el panel (y su sección Git) esté colapsado.
   useRepoInspection()
+
+  // El tema vive en <html data-theme>, donde el CSS lo lee. No afecta a la vista
+  // nativa: esa es la página externa que se documenta, con su propio tema.
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+  }, [theme])
 
   useEffect(() => {
     const offState = ipc.on('engine:state', applyEngineState)

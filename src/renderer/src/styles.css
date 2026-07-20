@@ -1,19 +1,90 @@
 :root {
+  color-scheme: light;
   --bg: #f6f7f9;
   --surface: #ffffff;
+  /* Fondos derivados: `tint` apenas levanta sobre la superficie, `sunken` la
+     hunde (campos de solo lectura), `hover` es el realce de botones, `chip` el
+     fondo de código y contadores, `viewport-bg` el hueco tras la vista nativa. */
+  --tint: #fbfcfd;
+  --sunken: #f2f4f7;
+  --hover: #f0f2f5;
+  --chip: #eef1f5;
+  --viewport-bg: #e9ecf1;
   --border: #d9dde3;
   --border-strong: #c2c9d2;
   --text: #1b1f24;
   --muted: #6a7480;
+  --dialog-body: #414a55;
   --accent: #ff5722;
   --accent-soft: #fff1ec;
   --blue: #1d64d8;
+  /* El azul de enlace y el de botón primario se separan: en oscuro el enlace
+     debe aclararse para leerse, pero el botón necesita quedar oscuro bajo el
+     texto blanco. */
+  --primary: #1d64d8;
+  --primary-hover: #1a58bd;
   --green: #12855a;
   --amber: #b7791f;
+  --danger: #c02626;
+  --danger-bg: #fdecec;
+  --danger-border: #f0b4b4;
+  --warn-text: #8a5a00;
+  --warn-bg: #fdf6e7;
+  --warn-border: #e8c98a;
+  --ok-bg: #eefaf3;
+  --ok-border: #a7d6bb;
+  --info-bg: #eef4fd;
+  --info-border: #a9c6f0;
+  --overlay: rgb(16 24 40 / 0.5);
+  --focus-ring: rgb(29 100 216 / 0.15);
+  --shadow-card: 0 6px 18px rgb(0 0 0 / 0.14);
+  --shadow-modal: 0 12px 40px rgb(0 0 0 / 0.28);
   --radius: 8px;
   --font:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* Tema oscuro. Se activa por `data-theme="dark"` en <html> (lo fija la GUI según
+   la preferencia guardada o la del sistema). Solo redefine tokens: ninguna regla
+   de más abajo repite un color, así que el tema se mantiene con un único origen
+   de verdad. `color-scheme` hace que checkboxes y barras de scroll nativas
+   también se pinten en oscuro. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #14171c;
+  --surface: #1c2128;
+  --tint: #191d23;
+  --sunken: #101318;
+  --hover: #262b33;
+  --chip: #262b33;
+  --viewport-bg: #0e1013;
+  --border: #2c323b;
+  --border-strong: #3d4550;
+  --text: #e6e9ee;
+  --muted: #98a2ae;
+  --dialog-body: #c3cad4;
+  --accent: #ff6b3d;
+  --accent-soft: #3a2317;
+  --blue: #5b9bff;
+  --primary: #2f6fd6;
+  --primary-hover: #3f7ce6;
+  --green: #46c78c;
+  --amber: #e0a94a;
+  --danger: #ff6b6b;
+  --danger-bg: #3a1f1f;
+  --danger-border: #5e3232;
+  --warn-text: #e0a94a;
+  --warn-bg: #332a17;
+  --warn-border: #574823;
+  --ok-bg: #16301f;
+  --ok-border: #2c5a3f;
+  --info-bg: #172438;
+  --info-border: #2f4c74;
+  --overlay: rgb(0 0 0 / 0.6);
+  --focus-ring: rgb(91 155 255 / 0.28);
+  --shadow-card: 0 6px 18px rgb(0 0 0 / 0.4);
+  --shadow-modal: 0 12px 40px rgb(0 0 0 / 0.55);
 }
 
 * {
@@ -104,11 +175,11 @@ select {
 .field input:focus,
 .field textarea:focus {
   border-color: var(--blue);
-  box-shadow: 0 0 0 2px rgb(29 100 216 / 0.15);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .field input[readonly] {
-  background: #f2f4f7;
+  background: var(--sunken);
   color: var(--muted);
 }
 
@@ -122,7 +193,14 @@ select {
 }
 
 .btn:hover:not(:disabled) {
-  background: #f0f2f5;
+  background: var(--hover);
+}
+
+/* Botón cuadrado para un solo glifo (p. ej. el interruptor de tema). */
+.btn-icon {
+  padding: 6px 10px;
+  font-size: 15px;
+  line-height: 1;
 }
 
 .btn:disabled {
@@ -177,8 +255,8 @@ select {
 
 .status-paused {
   color: var(--amber);
-  border-color: #e8c98a;
-  background: #fdf6e7;
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
 }
 
 .status-paused .status-dot {
@@ -206,7 +284,7 @@ select {
 }
 
 .error {
-  color: #c02626;
+  color: var(--danger);
 }
 
 /* ---------- franja de estado del proyecto ---------- */
@@ -231,7 +309,7 @@ select {
 
 .project-status code {
   font-family: var(--mono);
-  background: #eef1f5;
+  background: var(--chip);
   border-radius: 3px;
   padding: 0 4px;
 }
@@ -307,7 +385,7 @@ select {
 .viewport-slot {
   flex: 1;
   min-width: 0;
-  background: #e9ecf1;
+  background: var(--viewport-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -390,7 +468,7 @@ select {
 }
 
 .count {
-  background: #eef1f5;
+  background: var(--chip);
   border-radius: 999px;
   padding: 1px 8px;
   color: var(--muted);
@@ -430,7 +508,7 @@ select {
 }
 
 .ctrl:hover:not(:disabled) {
-  background: #f0f2f5;
+  background: var(--hover);
 }
 
 .ctrl:disabled {
@@ -455,13 +533,13 @@ select {
 
 .step-card.dragging {
   opacity: 0.85;
-  box-shadow: 0 6px 18px rgb(0 0 0 / 0.14);
+  box-shadow: var(--shadow-card);
   z-index: 2;
   position: relative;
 }
 
 .step-card.excluded {
-  background: #fafbfc;
+  background: var(--tint);
   opacity: 0.72;
 }
 
@@ -502,7 +580,7 @@ select {
 .action-chip {
   font-size: 11px;
   color: var(--muted);
-  background: #eef1f5;
+  background: var(--chip);
   border-radius: 4px;
   padding: 1px 6px;
 }
@@ -518,8 +596,8 @@ select {
 }
 
 .icon-btn.danger:hover {
-  background: #fdecec;
-  color: #c02626;
+  background: var(--danger-bg);
+  color: var(--danger);
 }
 
 .step-body {
@@ -534,7 +612,7 @@ select {
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
-  background: #eef1f5;
+  background: var(--chip);
   cursor: zoom-in;
 }
 
@@ -577,7 +655,7 @@ select {
 .step-title:focus,
 .step-desc:focus {
   border-color: var(--blue);
-  box-shadow: 0 0 0 2px rgb(29 100 216 / 0.15);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 
 .step-value {
@@ -588,7 +666,7 @@ select {
 
 .step-value code {
   font-family: var(--mono);
-  background: #f2f4f7;
+  background: var(--sunken);
   padding: 1px 4px;
   border-radius: 3px;
 }
@@ -609,7 +687,7 @@ select {
   border: 1px solid var(--border);
   border-radius: 999px;
   padding: 2px 8px;
-  background: #f7f9fb;
+  background: var(--tint);
 }
 
 .selector-chip b {
@@ -634,8 +712,8 @@ select {
 }
 
 .strategy-testid {
-  border-color: #a7d6bb;
-  background: #eefaf3;
+  border-color: var(--ok-border);
+  background: var(--ok-bg);
 }
 
 .strategy-testid b {
@@ -643,8 +721,8 @@ select {
 }
 
 .strategy-role {
-  border-color: #a9c6f0;
-  background: #eef4fd;
+  border-color: var(--info-border);
+  background: var(--info-bg);
 }
 
 .strategy-role b {
@@ -652,8 +730,8 @@ select {
 }
 
 .strategy-css {
-  border-color: #e8c98a;
-  background: #fdf6e7;
+  border-color: var(--warn-border);
+  background: var(--warn-bg);
 }
 
 .strategy-css b {
@@ -661,9 +739,9 @@ select {
 }
 
 .selector-chip.missing {
-  color: #c02626;
-  border-color: #f0b4b4;
-  background: #fdecec;
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
 }
 
 .include-toggle {
@@ -682,7 +760,7 @@ select {
 .overlay {
   position: fixed;
   inset: 0;
-  background: rgb(16 24 40 / 0.5);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -695,7 +773,7 @@ select {
   border-radius: 10px;
   padding: 18px 20px;
   max-width: 460px;
-  box-shadow: 0 12px 40px rgb(0 0 0 / 0.25);
+  box-shadow: var(--shadow-modal);
 }
 
 .dialog h3 {
@@ -705,7 +783,7 @@ select {
 
 .dialog p {
   margin: 0 0 16px;
-  color: #414a55;
+  color: var(--dialog-body);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -724,7 +802,7 @@ select {
 }
 
 .btn.primary:hover:not(:disabled) {
-  background: #1a58bd;
+  background: var(--primary-hover);
 }
 
 .shot-modal {
@@ -737,7 +815,7 @@ select {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 12px 40px rgb(0 0 0 / 0.3);
+  box-shadow: var(--shadow-modal);
 }
 
 .shot-modal img {
@@ -750,7 +828,7 @@ select {
 
 .shot-modal figcaption {
   font-size: 12px;
-  color: #414a55;
+  color: var(--dialog-body);
 }
 
 /* ---------- integración Git ---------- */
@@ -759,7 +837,7 @@ select {
   flex: 0 0 auto;
   border-top: 1px solid var(--border);
   padding: 8px 12px;
-  background: #fbfcfd;
+  background: var(--tint);
 }
 
 .git-toggle {
@@ -787,7 +865,7 @@ select {
 .git-toggle code,
 .git-note code {
   font-family: var(--mono);
-  background: #eef1f5;
+  background: var(--chip);
   border-radius: 3px;
   padding: 0 3px;
 }
@@ -822,9 +900,9 @@ select {
 }
 
 .git-note.warn {
-  color: #8a5a00;
-  background: #fdf6e7;
-  border: 1px solid #e8c98a;
+  color: var(--warn-text);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-border);
   border-radius: 6px;
   padding: 5px 7px;
 }

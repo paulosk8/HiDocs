@@ -38,6 +38,8 @@ interface SessionState {
   gitBaseBranch: string | null
   /** el explorador de repositorios está abierto */
   projectsOpen: boolean
+  /** tema de la interfaz; se aplica a <html data-theme> y se persiste */
+  theme: 'light' | 'dark'
   /**
    * El panel de pasos está colapsado a una tira fina. Colapsarlo devuelve el
    * ancho al viewport para que la página que se documenta muestre su layout de
@@ -62,6 +64,21 @@ interface SessionState {
   setGitBaseBranch: (value: string | null) => void
   setProjectsOpen: (open: boolean) => void
   togglePanel: () => void
+  toggleTheme: () => void
+}
+
+const THEME_KEY = 'docrecorder.theme'
+
+/** Preferencia guardada; si no hay, la del sistema; por defecto, claro. */
+function initialTheme(): 'light' | 'dark' {
+  try {
+    const saved = localStorage.getItem(THEME_KEY)
+    if (saved === 'light' || saved === 'dark') return saved
+    if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark'
+  } catch {
+    // localStorage puede fallar en contextos restringidos; se cae a claro.
+  }
+  return 'light'
 }
 
 function renumber(steps: RecordedStep[]): RecordedStep[] {
@@ -87,6 +104,7 @@ export const useSession = create<SessionState>((set) => ({
   gitMessageOverride: null,
   gitBaseBranch: null,
   projectsOpen: false,
+  theme: initialTheme(),
   panelCollapsed: false,
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
@@ -140,5 +158,15 @@ export const useSession = create<SessionState>((set) => ({
   setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
   setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
-  togglePanel: () => set((s) => ({ panelCollapsed: !s.panelCollapsed }))
+  togglePanel: () => set((s) => ({ panelCollapsed: !s.panelCollapsed })),
+  toggleTheme: () =>
+    set((s) => {
+      const theme = s.theme === 'dark' ? 'light' : 'dark'
+      try {
+        localStorage.setItem(THEME_KEY, theme)
+      } catch {
+        // sin persistencia: el cambio vale para esta sesión igualmente
+      }
+      return { theme }
+    })
 }))

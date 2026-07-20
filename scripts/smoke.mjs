@@ -685,6 +685,27 @@ try {
     'Panel colapsable: al expandir, el viewport vuelve a su ancho'
   )
 
+  // --- Tema claro/oscuro ---
+  const themeState = () =>
+    gui.evaluate(() => ({
+      attr: document.documentElement.dataset.theme,
+      bg: getComputedStyle(document.body).backgroundColor,
+      saved: localStorage.getItem('docrecorder.theme')
+    }))
+  const themeBefore = await themeState()
+  await gui.getByRole('button', { name: /Cambiar a modo/ }).click()
+  const themeAfter = await themeState()
+  check(
+    themeAfter.attr !== themeBefore.attr && themeAfter.bg !== themeBefore.bg,
+    'Tema: el interruptor cambia data-theme y el fondo real',
+    `${themeBefore.attr}(${themeBefore.bg}) → ${themeAfter.attr}(${themeAfter.bg})`
+  )
+  check(
+    themeAfter.saved === themeAfter.attr,
+    'Tema: la elección se persiste para el próximo arranque',
+    themeAfter.saved
+  )
+
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)
   process.exitCode = failed.length ? 1 : 0
