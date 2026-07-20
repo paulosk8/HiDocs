@@ -447,6 +447,49 @@ try {
     reuse.gitError ?? reuse.git?.message
   )
 
+  // Documentar una SEGUNDA funcionalidad debe abrir una rama hermana desde main,
+  // no encadenarla sobre la anterior: si se encadena, su PR arrastra la
+  // documentación de la funcionalidad previa y los dos quedan enredados.
+  const second = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'matriculas',
+          feature: 'anular-matricula',
+          title: 'Anular una matrícula',
+          role: 'secretaria',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-segunda',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps: [],
+        git: {
+          enabled: true,
+          branch: 'docs/matriculas-anular-matricula',
+          message: 'docs(matriculas): anular',
+          push: false
+        }
+      }),
+    outDir
+  )
+  // El PADRE del commit, no `merge-base`: main también es antepasado de una rama
+  // encadenada, así que `merge-base` daría por bueno justo el caso que falla.
+  const parent = g('rev-parse docs/matriculas-anular-matricula^')
+  const mainHead = g('rev-parse main')
+  check(
+    !second.gitError && parent === mainHead,
+    'Git: la segunda funcionalidad nace de main, no de la rama anterior',
+    second.gitError ?? `padre ${parent.slice(0, 7)} | main ${mainHead.slice(0, 7)}`
+  )
+  const secondTree = g('ls-tree -r --name-only docs/matriculas-anular-matricula')
+  check(
+    !secondTree.includes('matriculas/crear-matricula/'),
+    'Git: la rama de la segunda funcionalidad no arrastra la documentación de la primera',
+    secondTree.split('\n').filter(Boolean).join(' ')
+  )
+
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)
   process.exitCode = failed.length ? 1 : 0

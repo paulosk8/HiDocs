@@ -139,6 +139,41 @@ export async function inspectRepo(dir: string): Promise<GitRepoInfo | null> {
   }
 }
 
+/**
+ * Rama de la que debe nacer cada rama de documentación, o `null` si no se puede
+ * determinar ninguna.
+ *
+ * Sin esto, `git checkout -b` ramifica desde HEAD: al documentar dos
+ * funcionalidades seguidas, la segunda rama nacería de la primera y su PR
+ * arrastraría la documentación de la anterior. En GitHub Flow cada rama parte de
+ * la rama por defecto.
+ *
+ * Se prefiere `origin/HEAD` porque es lo que el repositorio declara como su rama
+ * por defecto; `main`/`master` son solo el respaldo cuando ese puntero no está
+ * configurado localmente (es habitual: solo lo fija `clone`, no `remote add`).
+ *
+ * Se resuelve siempre contra la copia LOCAL: ramificar desde `origin/main`
+ * exigiría un `fetch` con red y credenciales en cada guardado. Si la copia local
+ * está desactualizada, la rama nace algo atrasada, pero eso se resuelve solo al
+ * rebasar el PR y no bloquea el trabajo sin conexión.
+ */
+async function detectBaseBranch(root: string): Promise<string | null> {
+  const head = await git(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD']).catch(
+    () => ''
+  )
+  // `origin/HEAD` apunta a `origin/main`; aquí interesa la rama local `main`.
+  const preferred = head.replace(/^origin\//, '')
+
+  for (const candidate of [preferred, 'main', 'master']) {
+    if (!candidate) continue
+    const exists = await git(root, ['show-ref', '--verify', '--quiet', `refs/heads/${candidate}`])
+      .then(() => true)
+      .catch(() => false)
+    if (exists) return candidate
+  }
+  return null
+}
+
 /** Git rechaza estos patrones en `check-ref-format`; se avisa antes de intentarlo. */
 export function validateBranchName(name: string): string | null {
   if (!name.trim()) return 'El nombre de la rama no puede estar vacío.'
@@ -214,13 +249,27 @@ export async function commitDocs(options: GitCommitOptions): Promise<GitCommitRe
   }
 
   let createdBranch = false
+  let baseNote = ''
   if (mustSwitch) {
     if (branchExists) {
       // Reutilizar la rama permite regrabar una funcionalidad y añadir el
       // resultado a la misma rama en vez de dispersarlo.
       await git(info.root, ['checkout', branch])
     } else if (info.hasCommits) {
-      await git(info.root, ['checkout', '-b', branch])
+      // Se ramifica desde la rama por defecto, no desde HEAD: así cada
+      // funcionalidad genera un PR independiente (GitHub Flow).
+      const base = await detectBaseBranch(info.root)
+      if (base) {
+        await git(info.root, ['checkout', '-b', branch, base])
+        if (base !== info.branch) baseNote = ` desde «${base}»`
+      } else {
+        // Repositorio sin main/master ni origin/HEAD: no hay base evidente, así
+        // que se conserva el comportamiento anterior (ramificar desde HEAD)
+        // antes que fallar el guardado. Se avisa porque la rama puede quedar
+        // encadenada sobre la anterior.
+        await git(info.root, ['checkout', '-b', branch])
+        baseNote = ` desde «${info.branch}» (no se encontró la rama por defecto del repositorio)`
+      }
       createdBranch = true
     } else {
       // Repositorio sin commits: no hay de dónde ramificar todavía.
@@ -278,7 +327,7 @@ export async function commitDocs(options: GitCommitOptions): Promise<GitCommitRe
     committedFiles,
     pushed,
     message:
-      `${createdBranch ? 'Rama creada' : 'Rama reutilizada'} «${branch}», ` +
+      `${createdBranch ? 'Rama creada' : 'Rama reutilizada'} «${branch}»${baseNote}, ` +
       `commit ${commit} con ${committedFiles} archivo(s).${pushNote}`
   }
 }
