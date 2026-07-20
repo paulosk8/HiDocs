@@ -536,6 +536,47 @@ try {
     registered.map((p) => p.label).join(', ')
   )
 
+  // --- Renderizado del modal (lo que los checks IPC de arriba NO cubren) ---
+  // Un fallo de React —JSX roto, onClick sin cablear, columnas colapsadas—
+  // pasaría todos los checks anteriores y aun así dejaría la ventana inservible.
+  // Aquí se maneja el DOM real, con esperas web-first en vez de tiempos fijos.
+
+  // El diálogo de guardado sigue abierto y su overlay taparía el clic; se cierra
+  // con «Cerrar» antes de tocar la barra superior.
+  await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
+  await gui.getByRole('button', { name: 'Proyectos…', exact: true }).click()
+  await gui.waitForSelector('.projects-modal', { timeout: 5000 })
+  check(
+    (await gui.locator('.projects-col').count()) === 3,
+    'Modal: se pintan las tres columnas (proyectos → ramas → historial)'
+  )
+
+  // La rama activa del repo de la sesión debe aparecer en la columna de ramas.
+  await gui.waitForSelector('.projects-col:nth-child(2) .row', { timeout: 5000 })
+  const uiBranches = await gui.locator('.projects-col:nth-child(2) .row b').allInnerTexts()
+  check(
+    uiBranches.some((b) => b.includes('main')),
+    'Modal: la columna de ramas lista las ramas del repositorio',
+    uiBranches.join(' | ')
+  )
+
+  // Seleccionar una rama debe cargar su historial en la tercera columna: es la
+  // cadena de eventos completa (click → IPC → estado → render).
+  await gui.locator('.projects-col:nth-child(2) .row').first().click()
+  await gui.waitForSelector('.projects-col:nth-child(3) .commits li', { timeout: 5000 })
+  check(
+    (await gui.locator('.projects-col:nth-child(3) .commits li').count()) > 0,
+    'Modal: al elegir una rama se pinta su historial de commits'
+  )
+
+  // Escoger la base escribe en el store y el modal se cierra: se comprueba el
+  // efecto, no el DOM interno.
+  await gui.locator('.projects-modal footer button').first().click()
+  await gui.waitForSelector('.projects-modal', { state: 'detached', timeout: 5000 })
+  const baseChosen = await gui.evaluate(() => document.querySelector('.projects-modal') === null)
+  check(baseChosen, 'Modal: la acción del pie cierra la ventana')
+
   // --- Rama base elegida a mano: continuar una línea ya empezada ---
 
   const onto = await gui.evaluate(
