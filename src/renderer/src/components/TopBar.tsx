@@ -18,8 +18,21 @@ function normalizeUrl(input: string): string {
 }
 
 export function TopBar(): React.JSX.Element {
-  const { meta, setMeta, outputDir, setOutputDir, status, currentUrl, error, applyEngineState } =
-    useSession()
+  const {
+    meta,
+    setMeta,
+    outputDir,
+    setOutputDir,
+    status,
+    currentUrl,
+    error,
+    applyEngineState,
+    setProjectsOpen,
+    setHelpOpen,
+    theme,
+    toggleTheme,
+    setViewportActive
+  } = useSession()
   const [opening, setOpening] = useState(false)
 
   const open = async (): Promise<void> => {
@@ -27,8 +40,16 @@ export function TopBar(): React.JSX.Element {
     if (!url) return
     setMeta({ baseUrl: url })
     setOpening(true)
+    // Se muestra el visor de inmediato (aunque la carga tarde): así al pulsar
+    // «Abrir» el onboarding da paso a la página en curso, no se queda plantado.
+    setViewportActive(true)
     try {
       applyEngineState(await ipc.invoke('viewport:navigate', url))
+    } catch (err) {
+      // Si la navegación falla, se vuelve al estado inicial en vez de dejar un
+      // visor activo pero vacío.
+      setViewportActive(false)
+      throw err
     } finally {
       setOpening(false)
     }
@@ -119,6 +140,29 @@ export function TopBar(): React.JSX.Element {
         </label>
         <button className="btn" onClick={() => void pickDir()}>
           Elegir…
+        </button>
+        <button
+          className="btn"
+          onClick={() => setProjectsOpen(true)}
+          title="Repositorios ya usados, sus ramas y su historial"
+        >
+          Proyectos…
+        </button>
+        <button
+          className="btn btn-icon"
+          onClick={toggleTheme}
+          title={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+          aria-label={theme === 'dark' ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'}
+        >
+          {theme === 'dark' ? '☀' : '☾'}
+        </button>
+        <button
+          className="btn btn-icon"
+          onClick={() => setHelpOpen(true)}
+          title="Ayuda: cómo usar la aplicación"
+          aria-label="Abrir la ayuda"
+        >
+          ?
         </button>
       </div>
 

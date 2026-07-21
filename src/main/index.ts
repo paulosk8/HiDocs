@@ -14,12 +14,17 @@ import { TargetViewport } from './viewport'
 import { RecorderEngine } from './engine/recorder'
 import {
   SHOT_PROTOCOL,
+  type DraftPayload,
   type RecordedStep,
   type SavePayload,
   type ViewportBounds
 } from '../shared/ipc-contract'
 import { DEFAULT_VIEWPORT, type EngineState } from '../shared/types'
 import { saveSession } from './storage'
+import { inspectRepo, listBranches, listCommits, readCommitDocs, readDocImage } from './git'
+import { listProjects, forgetProject } from './projects'
+import { suggestDocsDir } from './docusaurus'
+import { saveDraft, loadDraft, clearDraft } from './draft'
 
 /**
  * El puerto de depuración remota debe quedar fijado ANTES de `app.whenReady`:
@@ -27,6 +32,13 @@ import { saveSession } from './storage'
  */
 export const REMOTE_DEBUGGING_PORT = 9333
 app.commandLine.appendSwitch('remote-debugging-port', String(REMOTE_DEBUGGING_PORT))
+
+// Aísla el estado persistente (borrador, registro de proyectos, preferencias) en
+// un `userData` propio cuando se pide por entorno: así las pruebas de humo no
+// tocan los datos reales del usuario (su borrador incluido).
+if (process.env['DOCRECORDER_USER_DATA']) {
+  app.setPath('userData', process.env['DOCRECORDER_USER_DATA'])
+}
 
 // Debe declararse antes de `whenReady` para que el renderer pueda usar
 // `docshot:` en `<img src>` bajo su Content-Security-Policy.
@@ -59,8 +71,12 @@ function registerShotProtocol(): void {
   protocol.handle(SHOT_PROTOCOL, async (request) => {
     const encoded = new URL(request.url).pathname.replace(/^\//, '')
     const filePath = decodeURIComponent(encoded)
+    // Se sirven las capturas temporales de la sesión y las del borrador guardado
+    // (userData/draft/img), que sobreviven al cierre para restaurar la grabación.
     const tempRoot = app.getPath('temp')
-    if (!filePath.startsWith(tempRoot) || filePath.includes('..')) {
+    const draftImg = join(app.getPath('userData'), 'draft', 'img')
+    const allowed = filePath.startsWith(tempRoot) || filePath.startsWith(draftImg)
+    if (!allowed || filePath.includes('..')) {
       return new Response('Ruta no permitida', { status: 403 })
     }
     try {
@@ -206,6 +222,55 @@ function registerIpc(): void {
 
   ipcMain.handle('shell:open-path', async (_e, path: string) => {
     await shell.openPath(path)
+  })
+
+  ipcMain.handle('git:inspect', async (_e, outputDir: string) => {
+    // Devuelve null tanto si no hay repositorio como si `git` no está
+    // instalado: en ambos casos la GUI simplemente no ofrece la integración.
+    return inspectRepo(outputDir).catch(() => null)
+  })
+
+  // El explorador es de solo lectura: estos tres canales no escriben nada en el
+  // repositorio, así que ante cualquier fallo devuelven vacío en vez de
+  // propagar el error. La vista queda sin datos, que es un estado inocuo.
+  ipcMain.handle('git:branches', async (_e, repoRoot: string) => {
+    return listBranches(repoRoot).catch(() => [])
+  })
+
+  ipcMain.handle('git:commits', async (_e, args: { repoRoot: string; branch: string }) => {
+    return listCommits(args.repoRoot, args.branch).catch(() => [])
+  })
+
+  ipcMain.handle('git:commit-docs', async (_e, args: { repoRoot: string; commit: string }) => {
+    return readCommitDocs(args.repoRoot, args.commit).catch(() => [])
+  })
+
+  ipcMain.handle(
+    'git:doc-image',
+    async (_e, args: { repoRoot: string; commit: string; imagePath: string }) => {
+      return readDocImage(args.repoRoot, args.commit, args.imagePath).catch(() => null)
+    }
+  )
+
+  ipcMain.handle('projects:list', async () => listProjects().catch(() => []))
+
+  ipcMain.handle('projects:forget', async (_e, repoRoot: string) => {
+    await forgetProject(repoRoot).catch(() => {})
+    return listProjects().catch(() => [])
+  })
+
+  ipcMain.handle('docusaurus:suggest-docs', async (_e, dir: string) => {
+    return suggestDocsDir(dir).catch(() => null)
+  })
+
+  ipcMain.handle('draft:save', async (_e, draft: DraftPayload) => {
+    await saveDraft(draft).catch((err) =>
+      engine.log('warn', `No se pudo guardar el borrador: ${err}`)
+    )
+  })
+  ipcMain.handle('draft:load', async () => loadDraft().catch(() => null))
+  ipcMain.handle('draft:clear', async () => {
+    await clearDraft().catch(() => undefined)
   })
 }
 

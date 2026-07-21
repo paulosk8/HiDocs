@@ -6,7 +6,19 @@
  * y preload no puedan divergir.
  */
 
-import type { DocStep, EngineState, SaveResult, SessionMeta, Viewport } from './types'
+import type {
+  CommitDocs,
+  DocStep,
+  EngineState,
+  GitBranchInfo,
+  GitCommitInfo,
+  GitRepoInfo,
+  GitSaveOptions,
+  ProjectEntry,
+  SaveResult,
+  SessionMeta,
+  Viewport
+} from './types'
 
 /**
  * Paso tal como viaja del motor a la GUI: además de los campos persistidos,
@@ -16,6 +28,35 @@ import type { DocStep, EngineState, SaveResult, SessionMeta, Viewport } from './
 export interface RecordedStep extends DocStep {
   /** ruta absoluta al PNG temporal (fuera del paquete final) */
   tempFile: string
+  /**
+   * El elemento es un campo de formulario (input de texto, textarea o select).
+   * Solo se usa en la GUI para agrupar: un clic en un campo (enfocarlo antes de
+   * escribir) cuenta como parte del formulario; un clic en un botón, no. No se
+   * persiste.
+   */
+  isFormField?: boolean
+}
+
+/**
+ * Borrador de la grabación en curso, persistido para poder cerrar la app y
+ * continuar otro día (§8). Incluye los pasos con su captura y la configuración
+ * de la sesión y de Git.
+ */
+export interface DraftPayload {
+  meta: SessionMeta
+  steps: RecordedStep[]
+  sessionId: string
+  createdAt: string
+  outputDir: string
+  git: {
+    enabled: boolean
+    push: boolean
+    branchOverride: string | null
+    messageOverride: string | null
+    baseBranch: string | null
+  }
+  /** ISO; se muestra al ofrecer la restauración */
+  savedAt: string
 }
 
 export interface ViewportBounds {
@@ -32,6 +73,8 @@ export interface SavePayload {
   createdAt: string
   outputDir: string
   steps: RecordedStep[]
+  /** ausente = guardar solo en disco, sin tocar ningún repositorio */
+  git?: GitSaveOptions
 }
 
 /** Canales renderer → main con respuesta (ipcRenderer.invoke). */
@@ -50,6 +93,31 @@ export interface IpcInvokeMap {
   'dialog:pick-output-dir': () => string | null
   'session:save': (payload: SavePayload) => SaveResult
   'shell:open-path': (path: string) => void
+  /** inspecciona el repositorio que contenga la carpeta de salida, si lo hay */
+  'git:inspect': (outputDir: string) => GitRepoInfo | null
+  /** ramas locales del repositorio, para el explorador (solo lectura) */
+  'git:branches': (repoRoot: string) => GitBranchInfo[]
+  /** historial de una rama, del commit más reciente hacia atrás (solo lectura) */
+  'git:commits': (args: { repoRoot: string; branch: string }) => GitCommitInfo[]
+  /** documentación registrada en un commit, para previsualizar (solo lectura) */
+  'git:commit-docs': (args: { repoRoot: string; commit: string }) => CommitDocs[]
+  /** una captura commiteada como data URI, para la vista previa (solo lectura) */
+  'git:doc-image': (args: { repoRoot: string; commit: string; imagePath: string }) => string | null
+  /** repositorios de documentación ya usados, del más reciente al más antiguo */
+  'projects:list': () => ProjectEntry[]
+  /** quita el repositorio del registro; no toca nada en disco */
+  'projects:forget': (repoRoot: string) => ProjectEntry[]
+  /**
+   * Si la carpeta es la raíz de un proyecto Docusaurus, devuelve su carpeta
+   * `docs/` (donde la documentación sí se renderiza); si no, `null`.
+   */
+  'docusaurus:suggest-docs': (dir: string) => string | null
+  /** guarda el borrador de la grabación en curso (autoguardado) */
+  'draft:save': (draft: DraftPayload) => void
+  /** carga el borrador guardado, o null si no hay */
+  'draft:load': () => DraftPayload | null
+  /** descarta el borrador (al finalizar o al desecharlo) */
+  'draft:clear': () => void
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -78,7 +146,18 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'recorder:stop',
   'dialog:pick-output-dir',
   'session:save',
-  'shell:open-path'
+  'shell:open-path',
+  'git:inspect',
+  'git:branches',
+  'git:commits',
+  'git:commit-docs',
+  'git:doc-image',
+  'projects:list',
+  'projects:forget',
+  'docusaurus:suggest-docs',
+  'draft:save',
+  'draft:load',
+  'draft:clear'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [

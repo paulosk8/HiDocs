@@ -31,6 +31,13 @@ export interface DocStep {
   selectorCandidates: SelectorCandidate[]
   /** para fill/select ("***" si es password) */
   value?: string
+  /**
+   * Campos de un formulario agrupados en este paso. Cuando la GUI une varios
+   * `fill`/`select` seguidos del mismo formulario en un solo paso (para no
+   * generar una captura por campo), cada campo queda aquí como etiqueta+valor y
+   * `value` deja de usarse.
+   */
+  fields?: Array<{ label: string; value: string }>
   /** metadato: URL en el momento de la interacción */
   url: string
   /** ruta relativa dentro del paquete exportado: img/paso-03.png */
@@ -108,4 +115,116 @@ export interface SaveResult {
   path: string
   stepsWritten: number
   imagesWritten: number
+  /** presente solo si se pidió registrar el resultado en Git */
+  git?: GitCommitResult
+  /** el commit se pidió pero falló; el paquete en disco sí se escribió */
+  gitError?: string
+}
+
+/**
+ * Estado del repositorio que contiene la carpeta de salida (§ fase Git).
+ * `null` cuando esa carpeta no está dentro de ningún repositorio.
+ */
+export interface GitRepoInfo {
+  root: string
+  /** rama actualmente activa */
+  branch: string
+  /** un repositorio recién creado aún no tiene HEAD resoluble */
+  hasCommits: boolean
+  remoteUrl: string | null
+  /** rutas con cambios ya en el índice */
+  stagedPaths: string[]
+  /** rutas seguidas y modificadas en el árbol de trabajo */
+  dirtyPaths: string[]
+  /** rutas sin seguimiento (no impiden cambiar de rama) */
+  untrackedPaths: string[]
+  /**
+   * Rama de la que nacen las ramas de documentación (`main` habitualmente), o
+   * `null` si el repositorio no declara ninguna reconocible.
+   */
+  defaultBranch: string | null
+}
+
+/** Una rama local, para el explorador de repositorios (solo lectura). */
+export interface GitBranchInfo {
+  name: string
+  /** rama activa en el árbol de trabajo */
+  current: boolean
+  /** resumen del último commit, para situar la rama de un vistazo */
+  lastCommitSubject: string
+  lastCommitDate: string
+  /** commits que tiene por delante de la rama por defecto */
+  aheadOfDefault: number
+}
+
+/** Un commit del historial de una rama (solo lectura). */
+export interface GitCommitInfo {
+  hash: string
+  subject: string
+  author: string
+  date: string
+}
+
+/** Documentación (una funcionalidad) registrada en un commit, para previsualizar. */
+export interface CommitDocs {
+  /** ruta del session.json en el repo, p. ej. `matriculas/crear/session.json` */
+  path: string
+  session: DocSession
+}
+
+export interface GitCommitOptions {
+  repoRoot: string
+  branch: string
+  message: string
+  /** rutas absolutas de los archivos escritos por DocRecorder */
+  files: string[]
+  push: boolean
+  /**
+   * Rama desde la que crear la rama nueva. Si se omite, se usa la rama por
+   * defecto del repositorio: cada documentación debe abrir su propio PR, no
+   * encadenarse sobre la anterior.
+   */
+  baseBranch?: string
+}
+
+export interface GitCommitResult {
+  repoRoot: string
+  branch: string
+  createdBranch: boolean
+  /** hash corto, o null si no había nada que registrar */
+  commit: string | null
+  committedFiles: number
+  pushed: boolean
+  /** resumen legible para mostrar en la GUI */
+  message: string
+}
+
+/** Lo que la GUI envía al guardar cuando el usuario activa la integración Git. */
+export interface GitSaveOptions {
+  enabled: boolean
+  branch: string
+  message: string
+  push: boolean
+  /** elegida en el explorador de repositorios; sin ella se usa la por defecto */
+  baseBranch?: string
+}
+
+/**
+ * Repositorio de documentación que el usuario ya ha usado.
+ *
+ * El registro solo recuerda carpetas locales: la app no clona ni crea nada en
+ * GitHub. Sirve para volver a un repositorio sin tener que buscarlo otra vez en
+ * el disco.
+ */
+export interface ProjectEntry {
+  /** raíz del repositorio */
+  root: string
+  /** nombre mostrado: la carpeta raíz */
+  label: string
+  /** ISO; ordena la lista por uso más reciente */
+  lastUsedAt: string
+  /** última carpeta de salida usada dentro de ese repositorio */
+  lastOutputDir: string
+  /** el repositorio puede haberse movido o borrado desde la última vez */
+  missing?: boolean
 }

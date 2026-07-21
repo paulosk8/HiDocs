@@ -27,6 +27,21 @@ const OBSERVER_CONFIG: ObserverConfig = {
   submitDedupeMs: 500
 }
 
+/**
+ * ¿El elemento es un campo donde se introduce un valor? Sirve para agrupar: un
+ * clic en un campo (enfocarlo antes de escribir) es parte del formulario; un
+ * clic en un botón de envío no lo es.
+ */
+function isFormField(signals: RawEvent['signals']): boolean {
+  const tag = signals.tag
+  if (tag === 'select' || tag === 'textarea') return true
+  if (tag === 'input') {
+    const type = (signals.type ?? 'text').toLowerCase()
+    return !['submit', 'button', 'reset', 'image'].includes(type)
+  }
+  return false
+}
+
 /** Título por defecto de cada paso, editable después por el usuario. */
 function defaultTitle(action: StepAction, event: RawEvent): string {
   const name = event.signals.accessibleName ?? event.signals.text ?? event.signals.placeholder
@@ -274,7 +289,8 @@ export class RecorderEngine {
         boundingRect,
         includeInDocs: true,
         timestamp: event.timestamp,
-        tempFile: file
+        tempFile: file,
+        isFormField: isFormField(event.signals)
       }
       if (event.value !== undefined) {
         step.value = event.isPassword ? '***' : event.value

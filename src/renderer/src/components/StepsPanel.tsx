@@ -21,6 +21,8 @@ import { useSession } from '../store'
 import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
 import { ConfirmDialog } from './ConfirmDialog'
+import { GitSection } from './GitSection'
+import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
 
 export function StepsPanel(): React.JSX.Element {
   const steps = useSession((s) => s.steps)
@@ -28,9 +30,22 @@ export function StepsPanel(): React.JSX.Element {
   const attached = useSession((s) => s.attached)
   const reorderSteps = useSession((s) => s.reorderSteps)
   const applyEngineState = useSession((s) => s.applyEngineState)
+  const startFreshSession = useSession((s) => s.startFreshSession)
+  const collapsed = useSession((s) => s.panelCollapsed)
+  const togglePanel = useSession((s) => s.togglePanel)
+  const projectsOpen = useSession((s) => s.projectsOpen)
+  const helpOpen = useSession((s) => s.helpOpen)
+  const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
+  const groupFormFields = useSession((s) => s.groupFormFields)
+  const setGroupFormFields = useSession((s) => s.setGroupFormFields)
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
+  const [pendingCommit, setPendingCommit] = useState<{
+    branch: string
+    message: string
+    untitled: number
+  } | null>(null)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -61,21 +76,60 @@ export function StepsPanel(): React.JSX.Element {
         sessionId: s.sessionId,
         createdAt: s.createdAt,
         outputDir: s.outputDir,
-        steps: s.steps
+        steps: s.steps,
+        git: s.gitEnabled
+          ? {
+              enabled: true,
+              branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
+              message:
+                s.gitMessageOverride ??
+                suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
+              push: s.gitPush,
+              // Sin elección explícita se omite, y el main resuelve la rama por
+              // defecto del repositorio.
+              baseBranch: s.gitBaseBranch ?? undefined
+            }
+          : undefined
       })
       setResult(saved)
+      // Guardado con éxito: se descarta el borrador y se estrena sesión para la
+      // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
+      // un autoguardado pendiente no vuelva a crear el borrador.
+      startFreshSession()
+      void ipc.invoke('draft:clear')
     } catch (err) {
       setProblem(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
       setPendingSave(null)
     }
-  }, [])
+  }, [startFreshSession])
 
-  /** Detener y guardar (§8): valida, avisa, y deja guardar igualmente. */
-  const stopAndSave = async (): Promise<void> => {
+  /**
+   * Detiene la grabación de verdad y termina de guardar. Se llama al confirmar
+   * el aviso de Git, o directamente cuando no hay Git. Detener vacía la cola del
+   * motor y puede emitir un último paso, por eso el estado se relee después.
+   */
+  const finishSave = useCallback(async (): Promise<void> => {
     applyEngineState(await ipc.invoke('recorder:stop'))
+    const s = useSession.getState()
+    const untitled = s.steps.filter((step) => !step.title.trim()).length
+    // Sin Git, el aviso de pasos sin título es el último filtro; con Git ya se
+    // avisó de ello en la confirmación del commit.
+    if (untitled > 0 && !s.gitEnabled) {
+      setPendingSave({ untitled })
+      return
+    }
+    await write()
+  }, [write, applyEngineState])
 
+  /**
+   * Detener y guardar (§8). Valida y, si se va a registrar en Git, avisa ANTES
+   * de detener: el commit cuesta deshacerlo y a veces la documentación aún no
+   * está completa. Así, cancelar deja la grabación intacta, sin tener que
+   * reanudar.
+   */
+  const stopAndSave = async (): Promise<void> => {
     const s = useSession.getState()
     if (!s.steps.length) {
       setProblem('No hay pasos que guardar.')
@@ -90,12 +144,17 @@ export function StepsPanel(): React.JSX.Element {
       return
     }
 
-    const untitled = s.steps.filter((step) => !step.title.trim()).length
-    if (untitled > 0) {
-      setPendingSave({ untitled })
+    if (s.gitEnabled) {
+      setPendingCommit({
+        branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
+        message:
+          s.gitMessageOverride ?? suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
+        untitled: s.steps.filter((step) => !step.title.trim()).length
+      })
       return
     }
-    await write()
+
+    await finishSave()
   }
 
   const toggleRecording = useCallback(async () => {
@@ -111,8 +170,18 @@ export function StepsPanel(): React.JSX.Element {
   )
 
   // El WebContentsView se pinta por encima del HTML del renderer, así que
-  // cualquier diálogo propio exige ocultarlo mientras esté abierto.
-  const modalOpen = shot !== null || pendingSave !== null || result !== null || problem !== null
+  // cualquier superposición propia exige ocultarlo mientras esté abierta. Incluye
+  // el explorador de proyectos: si no, la página nativa lo tapa y solo asoma su
+  // borde derecho, que parece un recuadro vacío sin sentido.
+  const modalOpen =
+    shot !== null ||
+    pendingSave !== null ||
+    pendingCommit !== null ||
+    result !== null ||
+    problem !== null ||
+    projectsOpen ||
+    helpOpen ||
+    docusaurusIntroOpen
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])
@@ -123,44 +192,169 @@ export function StepsPanel(): React.JSX.Element {
     applyEngineState(await ipc.invoke('recorder:start'))
   }
 
+  // Los tres controles de grabación se muestran tanto en el encabezado del panel
+  // abierto (en fila) como en la tira colapsada (en columna), así que se definen
+  // una sola vez.
+  const controls = (
+    <>
+      <button
+        className="ctrl ctrl-record"
+        disabled={status === 'recording'}
+        title="Grabar"
+        onClick={() => void record()}
+      >
+        ●
+      </button>
+      <button
+        className="ctrl"
+        disabled={status === 'idle'}
+        title={status === 'paused' ? 'Reanudar (Ctrl+Shift+R)' : 'Pausar (Ctrl+Shift+R)'}
+        onClick={() => void toggleRecording()}
+      >
+        {status === 'paused' ? '▶' : '⏸'}
+      </button>
+      <button
+        className="ctrl"
+        disabled={busy || (status === 'idle' && steps.length === 0)}
+        title="Detener y guardar"
+        onClick={() => void stopAndSave()}
+      >
+        ■
+      </button>
+    </>
+  )
+
+  // Los diálogos se montan igual en ambos estados del panel: guardar (y sus
+  // avisos) debe funcionar también con el panel colapsado.
+  const dialogs = (
+    <>
+      {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
+
+      {pendingCommit && (
+        <ConfirmDialog
+          title="Detener y registrar en Git"
+          body={[
+            'Se guardará la documentación y se registrará en Git:',
+            `\n· Rama: ${pendingCommit.branch}`,
+            `· Commit: ${pendingCommit.message}`,
+            pendingCommit.untitled > 0
+              ? `\n${pendingCommit.untitled} paso(s) todavía sin título.`
+              : '',
+            '\nSi aún no está completa, cancela y sigue grabando: la grabación no se detiene.'
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          confirmLabel="Registrar en Git"
+          cancelLabel="Seguir grabando"
+          onConfirm={() => {
+            setPendingCommit(null)
+            void finishSave()
+          }}
+          onCancel={() => setPendingCommit(null)}
+        />
+      )}
+
+      {pendingSave && (
+        <ConfirmDialog
+          title="Hay pasos sin título"
+          body={`${pendingSave.untitled} de ${steps.length} pasos no tienen título. Puedes guardar igualmente y completarlos después.`}
+          confirmLabel="Guardar de todos modos"
+          onConfirm={() => void write()}
+          onCancel={() => setPendingSave(null)}
+        />
+      )}
+
+      {problem && (
+        <ConfirmDialog
+          title="No se puede guardar"
+          body={problem}
+          confirmLabel="Entendido"
+          onConfirm={() => setProblem(null)}
+        />
+      )}
+
+      {result && (
+        <ConfirmDialog
+          title="Documentación guardada"
+          body={[
+            `${result.stepsWritten} pasos y ${result.imagesWritten} capturas en:`,
+            result.path,
+            result.git ? `\n${result.git.message}` : '',
+            result.gitError
+              ? `\nEl paquete se guardó, pero no se registró en Git:\n${result.gitError}`
+              : ''
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          confirmLabel="Abrir carpeta"
+          cancelLabel="Cerrar"
+          onConfirm={() => {
+            void ipc.invoke('shell:open-path', result.path)
+            setResult(null)
+          }}
+          onCancel={() => setResult(null)}
+        />
+      )}
+    </>
+  )
+
+  // Colapsado: una tira estrecha con lo imprescindible para grabar sin volver a
+  // abrir el panel. El viewport recupera el ancho y la página muestra su menú
+  // lateral. Los diálogos siguen montados fuera de este condicional para que
+  // guardar desde la tira también funcione.
+  if (collapsed) {
+    return (
+      <aside className="panel collapsed">
+        <div className="panel-strip">
+          <button
+            className="strip-toggle"
+            onClick={togglePanel}
+            title="Expandir el panel de pasos"
+            aria-label="Expandir el panel de pasos"
+          >
+            «
+          </button>
+          <span className="count" title={`${steps.length} paso(s)`}>
+            {steps.length}
+          </span>
+          <div className="controls controls-vertical">{controls}</div>
+        </div>
+        {dialogs}
+      </aside>
+    )
+  }
+
   return (
     <aside className="panel">
       <div className="panel-header">
+        <button
+          className="strip-toggle"
+          onClick={togglePanel}
+          title="Colapsar el panel (da ancho a la página)"
+          aria-label="Colapsar el panel de pasos"
+        >
+          »
+        </button>
         <h2>Pasos</h2>
         <span className="count">{steps.length}</span>
-        <div className="controls">
-          <button
-            className="ctrl ctrl-record"
-            disabled={status === 'recording'}
-            title="Grabar"
-            onClick={() => void record()}
-          >
-            ●
-          </button>
-          <button
-            className="ctrl"
-            disabled={status === 'idle'}
-            title={status === 'paused' ? 'Reanudar (Ctrl+Shift+R)' : 'Pausar (Ctrl+Shift+R)'}
-            onClick={() => void toggleRecording()}
-          >
-            {status === 'paused' ? '▶' : '⏸'}
-          </button>
-          <button
-            className="ctrl"
-            disabled={busy || (status === 'idle' && steps.length === 0)}
-            title="Detener y guardar"
-            onClick={() => void stopAndSave()}
-          >
-            ■
-          </button>
-        </div>
+        <label
+          className="group-toggle"
+          title="Une los campos que RELLENAS o SELECCIONAS de un mismo formulario en un solo paso (una captura en vez de una por campo). No afecta a los clics."
+        >
+          <input
+            type="checkbox"
+            checked={groupFormFields}
+            onChange={(e) => setGroupFormFields(e.target.checked)}
+          />
+          agrupar campos
+        </label>
+        <div className="controls">{controls}</div>
       </div>
 
       <div className="panel-body">
         {!attached && status === 'idle' && steps.length === 0 && (
           <p className="empty">
-            Abre primero la URL del sistema. Después pulsa <b>●</b> y navega con normalidad: cada
-            interacción se convertirá en un paso.
+            Los pasos que captures aparecerán aquí, cada uno con su captura y su selector.
           </p>
         )}
         {attached && steps.length === 0 && (
@@ -185,40 +379,9 @@ export function StepsPanel(): React.JSX.Element {
         </DndContext>
       </div>
 
-      {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
+      <GitSection />
 
-      {pendingSave && (
-        <ConfirmDialog
-          title="Hay pasos sin título"
-          body={`${pendingSave.untitled} de ${steps.length} pasos no tienen título. Puedes guardar igualmente y completarlos después.`}
-          confirmLabel="Guardar de todos modos"
-          onConfirm={() => void write()}
-          onCancel={() => setPendingSave(null)}
-        />
-      )}
-
-      {problem && (
-        <ConfirmDialog
-          title="No se puede guardar"
-          body={problem}
-          confirmLabel="Entendido"
-          onConfirm={() => setProblem(null)}
-        />
-      )}
-
-      {result && (
-        <ConfirmDialog
-          title="Documentación guardada"
-          body={`${result.stepsWritten} pasos y ${result.imagesWritten} capturas en:\n${result.path}`}
-          confirmLabel="Abrir carpeta"
-          cancelLabel="Cerrar"
-          onConfirm={() => {
-            void ipc.invoke('shell:open-path', result.path)
-            setResult(null)
-          }}
-          onCancel={() => setResult(null)}
-        />
-      )}
+      {dialogs}
     </aside>
   )
 }

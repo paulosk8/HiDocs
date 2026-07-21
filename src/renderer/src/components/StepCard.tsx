@@ -124,10 +124,22 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
         </div>
       </div>
 
-      {step.value !== undefined && (
+      {step.fields?.length ? (
         <div className="step-value">
-          valor: <code>{step.value}</code>
+          <ul className="field-list">
+            {step.fields.map((f, i) => (
+              <li key={i}>
+                <span className="field-label">{f.label}:</span> <code>{f.value || '—'}</code>
+              </li>
+            ))}
+          </ul>
         </div>
+      ) : (
+        step.value !== undefined && (
+          <div className="step-value">
+            valor: <code>{step.value}</code>
+          </div>
+        )
       )}
 
       <div className="step-foot">

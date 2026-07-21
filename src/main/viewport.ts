@@ -82,6 +82,11 @@ export class TargetViewport {
   setVisible(visible: boolean): void {
     this.visible = visible
     if (!this.view) return
+    // Se oculta en el compositor con `view.setVisible`, no solo con bounds 0×0:
+    // con un diálogo nativo del sistema encima (p. ej. el selector de carpeta),
+    // el tamaño 0×0 dejaba el último fotograma pintado y la vista tapaba la barra
+    // superior de la GUI. `setVisible(false)` la retira de verdad.
+    this.view.setVisible(visible)
     if (visible) {
       this.setBounds(this.lastBounds)
     } else {

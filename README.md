@@ -6,7 +6,8 @@ normalidad y cada interacción se convierte en una tarjeta con captura resaltada
 selectores robustos y textos editables. Al detener, se exporta un paquete
 portable a disco.
 
-Implementación del MVP descrito en [`SPEC.md`](./SPEC.md).
+Implementación del MVP descrito en [`SPEC.md`](./SPEC.md), más la fase de integración
+con Git.
 
 ## Uso
 
@@ -84,18 +85,39 @@ Cuando el clic aterriza en un `<img>` o `<span>` decorativo dentro de un control
 sube al control que lo contiene: es lo que describe el paso y lo que da un selector
 estable.
 
+## Integración con el repositorio de documentación
+
+Si la carpeta de salida está dentro de un repositorio Git, el panel ofrece registrar el resultado automáticamente: crea (o reutiliza) una rama `docs/<modulo>-<funcionalidad>`, hace commit con un mensaje semántico y, si se pide expresamente, sube la rama a `origin`.
+
+Se invoca el `git` del sistema en vez de embeber una implementación, para respetar la configuración, las credenciales y los hooks que ya tenga esa persona.
+
+Como escribe en un repositorio ajeno, las salvaguardas son parte del contrato:
+
+- **Solo se indexan las rutas que escribe DocRecorder.** Nunca `git add -A`, que barrería trabajo en curso hacia nuestro commit.
+- **Se aborta si hay cambios ajenos ya indexados**, porque acabarían dentro del commit.
+- **No se cambia de rama si hay archivos seguidos modificados**, que viajarían a la rama nueva. Los archivos sin seguimiento no bloquean: Git los conserva intactos al hacer checkout.
+- **El push nunca es automático** y jamás usa `--force`.
+- **Si el commit falla, el paquete en disco se conserva.** Perder una grabación por un problema del repositorio sería mucho peor que quedarse sin commit; el error se muestra y la grabación sigue ahí.
+
+Tres detalles de implementación que costaron encontrar y que conviene no revertir:
+
+- `git status` se lee con `-z` y `--untracked-files=all`. Sin `-z`, Git escapa entre comillas las rutas con acentos; sin `--untracked-files=all`, colapsa un directorio nuevo entero en una sola entrada (`?? carpeta/`) y las rutas propias dejan de coincidir. La salida tampoco se puede recortar: una entrada como `" M archivo"` empieza por espacio, y ese espacio es justo lo que distingue indexado de no indexado.
+- Las rutas se resuelven con `realpath` antes de compararlas con la raíz del repositorio. En macOS `/var` es un enlace simbólico a `/private/var` y `git rev-parse --show-toplevel` siempre devuelve la ruta real, así que sin resolver ambas `git add` rechaza los archivos por quedar «fuera del repositorio».
+
 ## Pruebas
 
 ```bash
 npm run build
-node scripts/smoke.mjs        # 27 comprobaciones de extremo a extremo
+node scripts/smoke.mjs        # 40 comprobaciones de extremo a extremo
 node scripts/smoke-next.mjs   # contra un Next.js real (por defecto nextjs.org)
 ```
 
 `scripts/smoke.mjs` levanta una página de prueba que reproduce los patrones
 problemáticos de Next.js (clases hasheadas, modal en un portal con retraso,
 navegación cliente sin cambio de URL, campo de contraseña), arranca la app, la maneja
-por CDP como lo haría una persona y comprueba el paquete escrito en disco.
+por CDP como lo haría una persona y comprueba el paquete escrito en disco. La carpeta
+de salida es un repositorio Git real, así que también ejercita la integración completa
+y sus salvaguardas.
 
 ## Decisiones que se apartan de SPEC.md
 
@@ -110,8 +132,7 @@ por CDP como lo haría una persona y comprueba el paquete escrito en disco.
   la grabación: lo que teclease acabaría en el panel en vez de en el formulario, y ese
   paso `fill` nunca se registraría.
 
-## Fuera de alcance de este MVP
+## Fases pendientes
 
-Integración Git, generación de MDX para Docusaurus, runner headless de regeneración y
-asistencia de IA para redactar descripciones. El modelo de datos y `flow.json` ya están
-pensados para ello.
+Generación de MDX para Docusaurus, runner headless de regeneración y asistencia de IA
+para redactar descripciones. El modelo de datos y `flow.json` ya están pensados para ello.
