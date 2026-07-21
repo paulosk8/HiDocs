@@ -18,6 +18,7 @@ import type {
   GitCommitInfo,
   GitRepoInfo,
   GitSaveOptions,
+  FlowAction,
   ProjectEntry,
   RegenReport,
   RegenStepResult,
@@ -49,10 +50,27 @@ export interface RecordedStep extends DocStep {
    */
   ref?: number
   /**
-   * Referencias de todos los campos fundidos en este paso, en orden. Presente
-   * solo en pasos agrupados; es lo que permite señalarlos todos en la captura.
+   * Campos fundidos en este paso, en orden. Es la fuente de verdad del grupo en
+   * la GUI: de aquí se derivan `fields` (lo que se publica) y `mergedActions`
+   * (lo que reproduce el runner), y es lo que permite quitar un campo suelto sin
+   * dejar descuadrada su acción ni su resaltado.
    */
-  groupRefs?: number[]
+  groupItems?: GroupedField[]
+}
+
+/** Un campo dentro de un paso de formulario agrupado. */
+export interface GroupedField {
+  /** nombre del campo, tal como se lista en el manual */
+  label: string
+  /** valor introducido; vacío si solo se enfocó */
+  value: string
+  /**
+   * Acciones que lo produjeron (enfocar y escribir son dos), para que el runner
+   * reproduzca el paso igual que ocurrió.
+   */
+  actions: FlowAction[]
+  /** referencias a su elemento en el observador, para volver a resaltarlo */
+  refs: number[]
 }
 
 /**

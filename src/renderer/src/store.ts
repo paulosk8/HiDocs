@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { DraftPayload, RecordedStep } from '../../shared/ipc-contract'
+import type { DraftPayload, GroupedField, RecordedStep } from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
   type AiStatus,
@@ -98,6 +98,11 @@ interface SessionState {
   addStep: (step: RecordedStep) => RecordedStep | null
   /** sustituye la captura de un paso por la del grupo re-capturado */
   applyGroupShot: (id: string, tempFile: string) => void
+  /**
+   * Quita un campo de un paso de formulario agrupado (con su acción y su
+   * resaltado). Devuelve el paso resultante para poder rehacer su captura.
+   */
+  removeGroupField: (stepId: string, label: string) => RecordedStep | null
   updateStep: (id: string, patch: Partial<RecordedStep>) => void
   removeStep: (id: string) => void
   reorderSteps: (fromIndex: number, toIndex: number) => void
@@ -181,21 +186,44 @@ function isFormInput(step: RecordedStep): boolean {
 }
 
 /**
- * Añade o actualiza un campo por etiqueta: el clic para enfocar («…», sin valor)
- * y la escritura posterior del mismo campo se funden en una sola entrada, y un
- * valor real no lo pisa un clic vacío posterior.
+ * Añade o actualiza un campo del grupo por etiqueta: el clic para enfocar («…»,
+ * sin valor) y la escritura posterior del mismo campo se funden en una sola
+ * entrada, y un valor real no lo pisa un clic vacío posterior.
+ *
+ * Las acciones y las referencias se acumulan siempre, aunque la entrada ya
+ * exista: el runner debe reproducir la secuencia real (enfocar y luego escribir)
+ * y el resaltado necesita todos los elementos implicados.
  */
-function upsertField(
-  fields: Array<{ label: string; value: string }>,
-  label: string,
-  value: string
-): Array<{ label: string; value: string }> {
-  const i = fields.findIndex((f) => f.label === label)
-  if (i < 0) return [...fields, { label, value }]
-  if (!value) return fields
-  const next = fields.slice()
-  next[i] = { label, value }
+function upsertItem(items: GroupedField[], incoming: GroupedField): GroupedField[] {
+  const i = items.findIndex((f) => f.label === incoming.label)
+  if (i < 0) return [...items, incoming]
+  const next = items.slice()
+  next[i] = {
+    ...next[i],
+    value: incoming.value || next[i].value,
+    actions: [...next[i].actions, ...incoming.actions],
+    refs: [...next[i].refs, ...incoming.refs]
+  }
   return next
+}
+
+/** Referencias de todos los campos del grupo, para resaltarlos en la captura. */
+export function groupRefsOf(step: RecordedStep): number[] {
+  return (step.groupItems ?? []).flatMap((item) => item.refs)
+}
+
+/**
+ * Vuelca los campos del grupo sobre el paso: `fields` es lo que se publica en el
+ * manual y `mergedActions` lo que reproduce el runner. Se derivan siempre de
+ * `groupItems`, para que quitar un campo no deje descuadrada su acción.
+ */
+function withGroupItems(step: RecordedStep, items: GroupedField[]): RecordedStep {
+  return {
+    ...step,
+    groupItems: items,
+    fields: items.map(({ label, value }) => ({ label, value })),
+    mergedActions: items.flatMap((item) => item.actions)
+  }
 }
 
 const THEME_KEY = 'docrecorder.theme'
@@ -296,25 +324,35 @@ export const useSession = create<SessionState>((set) => ({
         // La captura pasa a ser la más reciente (el formulario más completo) y el
         // campo se acumula (deduplicado por etiqueta). La primera vez se siembra
         // con el campo del paso anterior.
-        const seeded = last.fields ?? [{ label: fieldLabel(last), value: last.value ?? '' }]
-        const seededActions = last.mergedActions ?? [toFlowAction(last)]
-        // Referencias de todos los campos del grupo, para poder marcarlos todos
-        // en la captura. La primera vez se siembra con la del paso anterior.
-        const seededRefs = last.groupRefs ?? (last.ref !== undefined ? [last.ref] : [])
-        const merged: RecordedStep = {
-          ...last,
-          action: 'fill',
-          title: last.fields ? last.title : 'Rellenar el formulario',
-          tempFile: step.tempFile,
-          boundingRect: step.boundingRect,
-          timestamp: step.timestamp,
-          value: undefined,
-          fields: upsertField(seeded, fieldLabel(step), step.value ?? ''),
-          // Cada campo se conserva como acción individual para el runner (replay).
-          mergedActions: [...seededActions, toFlowAction(step)],
-          groupRefs: step.ref !== undefined ? [...seededRefs, step.ref] : seededRefs,
-          selectorCandidates: step.selectorCandidates
-        }
+        // La primera vez el grupo se siembra con el paso anterior, que hasta
+        // ahora era un paso suelto.
+        const seeded: GroupedField[] = last.groupItems ?? [
+          {
+            label: fieldLabel(last),
+            value: last.value ?? '',
+            actions: [toFlowAction(last)],
+            refs: last.ref !== undefined ? [last.ref] : []
+          }
+        ]
+        const items = upsertItem(seeded, {
+          label: fieldLabel(step),
+          value: step.value ?? '',
+          actions: [toFlowAction(step)],
+          refs: step.ref !== undefined ? [step.ref] : []
+        })
+        const merged = withGroupItems(
+          {
+            ...last,
+            action: 'fill',
+            title: last.groupItems ? last.title : 'Rellenar el formulario',
+            tempFile: step.tempFile,
+            boundingRect: step.boundingRect,
+            timestamp: step.timestamp,
+            value: undefined,
+            selectorCandidates: step.selectorCandidates
+          },
+          items
+        )
         const steps = renumber([...s.steps.slice(0, -1), merged])
         result.merged = steps[steps.length - 1]
         return { steps, focusStepId: merged.id }
@@ -332,6 +370,23 @@ export const useSession = create<SessionState>((set) => ({
     set((s) => ({
       steps: s.steps.map((step) => (step.id === id ? { ...step, tempFile } : step))
     })),
+
+  removeGroupField: (stepId, label) => {
+    const result: { updated: RecordedStep | null } = { updated: null }
+    set((s) => {
+      const target = s.steps.find((step) => step.id === stepId)
+      const items = target?.groupItems
+      // Nunca se vacía el grupo: quitar el último campo dejaría un paso que no
+      // documenta nada. Para eso está el botón de eliminar el paso entero.
+      if (!target || !items || items.length < 2) return {}
+      const kept = items.filter((item) => item.label !== label)
+      if (kept.length === items.length || !kept.length) return {}
+      const updated = withGroupItems(target, kept)
+      result.updated = updated
+      return { steps: s.steps.map((step) => (step.id === stepId ? updated : step)) }
+    })
+    return result.updated
+  },
 
   updateStep: (id, patch) =>
     set((s) => ({

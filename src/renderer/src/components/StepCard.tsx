@@ -4,6 +4,7 @@ import { CSS } from '@dnd-kit/utilities'
 import { shotUrl, type RecordedStep } from '../../../shared/ipc-contract'
 import { useSession } from '../store'
 import { useAiDraft } from '../useAiDraft'
+import { useGroupCapture } from '../useGroupCapture'
 
 const STRATEGY_LABEL: Record<string, string> = {
   testid: 'test-id',
@@ -33,7 +34,9 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
   const focusStepId = useSession((s) => s.focusStepId)
   const clearFocus = useSession((s) => s.clearFocus)
   const aiBusy = useSession((s) => s.aiBusyIds.includes(step.id))
+  const removeGroupField = useSession((s) => s.removeGroupField)
   const { draft } = useAiDraft()
+  const recaptureGroup = useGroupCapture()
 
   const titleRef = useRef<HTMLInputElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -142,6 +145,19 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
             {step.fields.map((f, i) => (
               <li key={i}>
                 <span className="field-label">{f.label}:</span> <code>{f.value || '—'}</code>
+                {/* Con un solo campo no se ofrece quitarlo: vaciar el grupo
+                    dejaría un paso que no documenta nada, y para eso está el
+                    botón de eliminar el paso entero. */}
+                {step.fields && step.fields.length > 1 && (
+                  <button
+                    className="field-remove"
+                    title={`Quitar «${f.label}» de este paso`}
+                    aria-label={`Quitar el campo ${f.label}`}
+                    onClick={() => recaptureGroup(removeGroupField(step.id, f.label))}
+                  >
+                    ✕
+                  </button>
+                )}
               </li>
             ))}
           </ul>

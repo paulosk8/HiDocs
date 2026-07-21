@@ -258,8 +258,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>En el encabezado del panel:</p>
               <ul className="help-defs">
                 <li>
-                  <b>agrupar campos</b> · une los <i>fill</i> y <i>select</i> seguidos de un mismo
-                  formulario en un solo paso, con una sola captura en vez de una por campo.
+                  <b>agrupar campos</b> · une los campos seguidos de un mismo formulario (escribir,
+                  elegir, marcar un interruptor) en un solo paso, con una sola captura en la que se
+                  resaltan <b>todos</b> los campos del grupo. Un clic en un botón, un envío o una
+                  navegación cierran el grupo. Cada campo se lista en la tarjeta y puedes{' '}
+                  <b>quitarlo</b> con su ✕ si no quieres documentarlo.
                 </li>
                 <li>
                   <b>✨ Redactar todos</b> · redacta de una vez todos los pasos marcados como

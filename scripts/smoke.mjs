@@ -1185,11 +1185,14 @@ try {
 
   // La captura del grupo la genera el motor aparte (`group-*.png`); mientras no
   // llega se conserva la del último campo, así que se espera a que la sustituya.
+  // Se espera también a que la miniatura esté decodificada: cambiar el `src` es
+  // inmediato, pero el PNG nuevo tarda un instante en cargarse.
   await gui.waitForFunction(
     () => {
       const cards = [...document.querySelectorAll('.step-card')]
       const img = cards[cards.length - 1]?.querySelector('.thumb img')
-      return !!img && decodeURIComponent(img.src).includes('group-')
+      if (!img || !decodeURIComponent(img.src).includes('group-')) return false
+      return img.complete && img.naturalWidth > 0
     },
     null,
     { timeout: 20000 }
@@ -1206,6 +1209,29 @@ try {
   )
 
   await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // Quitar un campo del grupo debe llevarse también su acción del `flow.json`:
+  // si no, el runner reproduciría un campo que el manual ya no documenta.
+  const groupedCard = gui.locator('.step-card').last()
+  const removedLabel = await groupedCard.locator('.field-list li .field-label').first().textContent()
+  await groupedCard.locator('.field-list li .field-remove').first().click({ force: true })
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      return (cards[cards.length - 1]?.querySelectorAll('.field-list li').length ?? 0) === 2
+    },
+    null,
+    { timeout: 5000 }
+  )
+  const remaining = await groupedCard
+    .locator('.field-list li .field-label')
+    .evaluateAll((els) => els.map((e) => e.textContent))
+  check(
+    remaining.length === 2 && !remaining.includes(removedLabel),
+    'Agrupar campos: se puede quitar un campo suelto del grupo',
+    `quitado ${removedLabel} · quedan ${remaining.join(' ')}`
+  )
+
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
 
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.

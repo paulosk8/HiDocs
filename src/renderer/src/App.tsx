@@ -13,6 +13,7 @@ import { ipc } from './ipc'
 import { useSession } from './store'
 import { useRepoInspection } from './useRepoInspection'
 import { useDraftAutosave } from './useDraftAutosave'
+import { useGroupCapture } from './useGroupCapture'
 import type { DraftPayload } from '../../shared/ipc-contract'
 
 export function App(): React.JSX.Element {
@@ -33,30 +34,19 @@ export function App(): React.JSX.Element {
   const setAiOpen = useSession((s) => s.setAiOpen)
   const setAiStatus = useSession((s) => s.setAiStatus)
   const setAiProgress = useSession((s) => s.setAiProgress)
-  const applyGroupShot = useSession((s) => s.applyGroupShot)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
+  const recaptureGroup = useGroupCapture()
 
   /**
-   * Cuando un campo se funde en un paso de formulario, la captura que traía era
-   * la del campo suelto: solo lo marcaba a él. Se pide otra al motor marcando
-   * todos los campos del grupo, que es lo que el paso documenta de verdad.
-   *
-   * Va después de fundir, no antes: la GUI se actualiza al instante y la
-   * captura mejorada llega cuando esté. Si la página ya cambió y no se puede
-   * marcar nada, el motor devuelve null y se conserva la captura anterior.
+   * Al fundir un campo en un paso de formulario, la captura que traía era la del
+   * campo suelto: solo lo marcaba a él. Se pide otra con todo el grupo marcado,
+   * que es lo que el paso documenta de verdad.
    */
   const onStep = useCallback(
     (step: Parameters<typeof addStep>[0]) => {
-      const merged = addStep(step)
-      if (!merged?.groupRefs || merged.groupRefs.length < 2) return
-      void ipc
-        .invoke('recorder:capture-group', { refs: merged.groupRefs, badge: merged.order })
-        .then((file) => {
-          if (file) applyGroupShot(merged.id, file)
-        })
-        .catch(() => undefined)
+      recaptureGroup(addStep(step))
     },
-    [addStep, applyGroupShot]
+    [addStep, recaptureGroup]
   )
 
   // Mantiene `gitRepo` al día aunque el panel (y su sección Git) esté colapsado.
