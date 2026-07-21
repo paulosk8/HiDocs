@@ -588,8 +588,15 @@ export function observerScript(config: ObserverConfig): void {
     overlay = null
   }
 
-  /** Recuadro rojo sobre un elemento; el primero del grupo lleva el número. */
-  const drawBox = (rect: DOMRect, badge: number | null): HTMLElement => {
+  /**
+   * Recuadro rojo sobre un elemento.
+   *
+   * A propósito SIN número: el orden de los pasos cambia al eliminar o
+   * reordenar, y un número pintado en el PNG no se puede rehacer —son píxeles—,
+   * así que acabaría contradiciendo al paso que ilustra. El número lo pone quien
+   * sí puede mantenerlo al día: la tarjeta del panel y el encabezado del manual.
+   */
+  const drawBox = (rect: DOMRect): HTMLElement => {
     const box = document.createElement('div')
     box.style.cssText = [
       'position:fixed',
@@ -605,24 +612,6 @@ export function observerScript(config: ObserverConfig): void {
       'padding:0'
     ].join(';')
 
-    if (badge !== null) {
-      const badgeEl = document.createElement('div')
-      badgeEl.textContent = String(badge)
-      badgeEl.style.cssText = [
-        'position:absolute',
-        'left:-13px',
-        'top:-13px',
-        'width:24px',
-        'height:24px',
-        'border-radius:50%',
-        'background:#FF5722',
-        'color:#fff',
-        'font:700 13px/24px system-ui,sans-serif',
-        'text-align:center',
-        'box-shadow:0 1px 3px rgba(0,0,0,.35)'
-      ].join(';')
-      box.appendChild(badgeEl)
-    }
     return box
   }
 
@@ -637,7 +626,7 @@ export function observerScript(config: ObserverConfig): void {
    * Los rectángulos se recalculan al capturar, no al registrar el evento: entre
    * uno y otro el layout puede haber cambiado o la página haber rodado.
    */
-  const highlight = (targets: number[], badge: number): BoundingRect | null => {
+  const highlight = (targets: number[]): BoundingRect | null => {
     removeOverlay()
 
     const container = document.createElement('div')
@@ -651,9 +640,7 @@ export function observerScript(config: ObserverConfig): void {
       if (!el || !el.isConnected) continue
       const rect = el.getBoundingClientRect()
       if (rect.width === 0 && rect.height === 0) continue
-      // El número va en el primero que se pinte: identifica al paso entero, y
-      // repetirlo en cada campo del grupo solo añadiría ruido.
-      container.appendChild(drawBox(rect, painted === 0 ? badge : null))
+      container.appendChild(drawBox(rect))
       painted++
       last = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
     }

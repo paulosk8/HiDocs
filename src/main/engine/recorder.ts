@@ -293,30 +293,27 @@ export class RecorderEngine {
    * Se encola con los pasos normales: dos capturas simultáneas se pisarían el
    * resaltado.
    */
-  captureGroup(refs: number[], badge: number): Promise<string | null> {
+  captureGroup(refs: number[]): Promise<string | null> {
     return new Promise((resolve) => {
       this.queue = this.queue
-        .then(() => this.doCaptureGroup(refs, badge))
+        .then(() => this.doCaptureGroup(refs))
         .then(resolve, () => resolve(null))
     })
   }
 
-  private async doCaptureGroup(refs: number[], badge: number): Promise<string | null> {
+  private async doCaptureGroup(refs: number[]): Promise<string | null> {
     const page = this.attachment?.page
     if (!page || !this.shotDir || !refs.length) return null
 
     const rect = await page
       .evaluate(
-        ([ns, targets, n]) => {
+        ([ns, targets]) => {
           const api = (
-            window as unknown as Record<
-              string,
-              { highlight(r: number[], b: number): BoundingRect | null }
-            >
+            window as unknown as Record<string, { highlight(r: number[]): BoundingRect | null }>
           )[ns as string]
-          return api ? api.highlight(targets as number[], n as number) : null
+          return api ? api.highlight(targets as number[]) : null
         },
-        [OBSERVER_NAMESPACE, refs, badge] as const
+        [OBSERVER_NAMESPACE, refs] as const
       )
       .catch(() => null)
 
@@ -350,16 +347,13 @@ export class RecorderEngine {
       // 2. Resaltar el elemento y recalcular su rectángulo.
       const freshRect = await page
         .evaluate(
-          ([ns, refs, badge]) => {
+          ([ns, refs]) => {
             const api = (
-              window as unknown as Record<
-                string,
-                { highlight(r: number[], b: number): BoundingRect | null }
-              >
+              window as unknown as Record<string, { highlight(r: number[]): BoundingRect | null }>
             )[ns as string]
-            return api ? api.highlight(refs as number[], badge as number) : null
+            return api ? api.highlight(refs as number[]) : null
           },
-          [OBSERVER_NAMESPACE, [event.ref], order] as [string, number[], number]
+          [OBSERVER_NAMESPACE, [event.ref]] as [string, number[]]
         )
         .catch(() => null)
 

@@ -281,8 +281,8 @@ function registerIpc(): void {
 
   ipcMain.handle(
     'recorder:capture-group',
-    async (_e, args: { refs: number[]; badge: number }) => {
-      return engine.captureGroup(args.refs, args.badge)
+    async (_e, args: { refs: number[] }) => {
+      return engine.captureGroup(args.refs)
     }
   )
 

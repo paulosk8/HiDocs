@@ -163,7 +163,7 @@ export interface IpcInvokeMap {
    * Re-captura un paso de formulario agrupado marcando todos sus campos.
    * Devuelve la ruta del PNG nuevo, o `null` si ya no se pudo marcar ninguno.
    */
-  'recorder:capture-group': (args: { refs: number[]; badge: number }) => string | null
+  'recorder:capture-group': (args: { refs: number[] }) => string | null
   'dialog:pick-output-dir': () => string | null
   'session:save': (payload: SavePayload) => SaveResult
   'shell:open-path': (path: string) => void

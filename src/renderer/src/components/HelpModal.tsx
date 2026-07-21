@@ -199,9 +199,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>⏸ / ▶</b> Pausar / Reanudar · detiene la captura sin cerrar la sesión.
                 </li>
                 <li>
-                  <b>■</b> Detener y guardar · finaliza y escribe el paquete. Si Git está activo,
-                  antes avisa de que se registrará en Git (con la rama), para que puedas{' '}
-                  <b>cancelar y seguir grabando</b> si aún no está completo.
+                  <b>■</b> Detener y guardar · finaliza y escribe el paquete. Si falta algún dato
+                  (módulo, funcionalidad o carpeta de salida) <b>detiene igualmente</b> y te dice
+                  qué falta: complétalo arriba y vuelve a pulsarlo, tus pasos siguen ahí. Si Git
+                  está activo, antes avisa de que se registrará en Git (con la rama), para que
+                  puedas <b>cancelar y seguir grabando</b> si aún no está completo.
                 </li>
               </ul>
               <p>
@@ -235,8 +237,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   venga después empieza un grupo nuevo, aunque sea del mismo formulario.
                 </li>
                 <li>
-                  <b>La captura</b> · resalta en rojo <b>todos</b> los campos del grupo, con el
-                  número del paso en el primero. Se rehace cada vez que el grupo cambia.
+                  <b>La captura</b> · resalta en rojo <b>todos</b> los campos del grupo, y se
+                  rehace cada vez que el grupo cambia.
                 </li>
                 <li>
                   <b>Revisar y depurar</b> · la tarjeta lista los campos con su valor; el <b>✕</b>{' '}

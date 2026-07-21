@@ -23,7 +23,7 @@ export function useGroupCapture(): (step: RecordedStep | null) => void {
       const refs = groupRefsOf(step)
       if (!refs.length) return
       void ipc
-        .invoke('recorder:capture-group', { refs, badge: step.order })
+        .invoke('recorder:capture-group', { refs })
         .then((file) => {
           if (file) applyGroupShot(step.id, file)
         })

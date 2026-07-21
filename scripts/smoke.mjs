@@ -1227,7 +1227,26 @@ try {
     groupShotOk.src.split('/').pop()
   )
 
-  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+  // Pulsar ■ sin los metadatos rellenos debe DETENER igualmente y explicar qué
+  // falta. Antes solo avisaba y la grabación seguía viva: el botón parecía no
+  // responder y no había forma de terminar sin completar la barra superior.
+  // Se llega aquí grabando (viene de la etapa anterior), que es justo el caso.
+  const moduleInput = gui.locator('.topbar input[placeholder="matriculas"]')
+  const savedModule = await moduleInput.inputValue()
+  await moduleInput.fill('')
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 5000 })
+  const stopWarning = await gui.locator('.dialog p').textContent()
+  const statusAfterStop = await gui.locator('.status').textContent()
+  await gui.getByRole('button', { name: 'Entendido' }).click()
+  check(
+    /falta indicar/i.test(stopWarning ?? '') &&
+      /módulo/.test(stopWarning ?? '') &&
+      statusAfterStop.includes('Listo'),
+    'Detener: sin metadatos se detiene igualmente y avisa de lo que falta',
+    `estado: ${statusAfterStop?.trim()}`
+  )
+  await moduleInput.fill(savedModule)
 
   // Quitar un campo del grupo debe llevarse también su acción del `flow.json`:
   // si no, el runner reproduciría un campo que el manual ya no documenta.

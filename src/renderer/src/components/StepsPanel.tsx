@@ -134,24 +134,42 @@ export function StepsPanel(): React.JSX.Element {
   }, [write, applyEngineState])
 
   /**
-   * Detener y guardar (§8). Valida y, si se va a registrar en Git, avisa ANTES
-   * de detener: el commit cuesta deshacerlo y a veces la documentación aún no
-   * está completa. Así, cancelar deja la grabación intacta, sin tener que
-   * reanudar.
+   * Detener y guardar (§8).
+   *
+   * Si falta algún dato, la grabación se detiene IGUALMENTE y el aviso dice qué
+   * falta: pulsar ■ significa «he terminado». Antes se validaba primero y, al
+   * faltar un dato, el botón solo mostraba el aviso y la captura seguía viva,
+   * con lo que parecía no responder. Los pasos se conservan (y el borrador se
+   * autoguarda), así que basta completar arriba y volver a pulsar ■.
+   *
+   * En cambio, si se va a registrar en Git se avisa ANTES de detener: eso no es
+   * un error sino una decisión, el commit cuesta deshacerlo y a veces la
+   * documentación aún no está completa. Así, cancelar deja la grabación intacta
+   * y se puede seguir sin tener que reanudar.
    */
   const stopAndSave = async (): Promise<void> => {
     const s = useSession.getState()
-    if (!s.steps.length) {
-      setProblem('No hay pasos que guardar.')
-      return
-    }
+
     const missing: string[] = []
     if (!s.meta.module.trim()) missing.push('módulo')
     if (!s.meta.feature.trim()) missing.push('funcionalidad')
     if (!s.outputDir) missing.push('carpeta de salida')
-    if (missing.length) {
-      setProblem(`Falta indicar: ${missing.join(', ')}.`)
-      return
+
+    if (missing.length || !s.steps.length) {
+      applyEngineState(await ipc.invoke('recorder:stop'))
+      if (missing.length) {
+        setProblem(
+          `La grabación se ha detenido, pero todavía no se puede guardar: falta indicar ${missing.join(', ')}.\n\n` +
+            'Complétalo en la barra superior y vuelve a pulsar ■. Tus pasos siguen aquí.'
+        )
+        return
+      }
+      // Detener vacía la cola del motor y puede emitir un último paso, así que
+      // se relee antes de dar la grabación por vacía.
+      if (!useSession.getState().steps.length) {
+        setProblem('No hay pasos que guardar. La grabación se ha detenido.')
+        return
+      }
     }
 
     if (s.gitEnabled) {
