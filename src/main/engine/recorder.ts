@@ -278,6 +278,63 @@ export class RecorderEngine {
     this.queue = this.queue.then(() => this.processEvent(event)).catch(() => undefined)
   }
 
+  /**
+   * Vuelve a capturar marcando VARIOS elementos a la vez, para un paso de
+   * formulario agrupado. La GUI la llama tras fundir un campo nuevo en un paso
+   * ya existente: la captura resultante muestra el formulario con todos sus
+   * campos señalados, no solo el último.
+   *
+   * Devuelve la ruta del PNG nuevo, o `null` si no quedaba ningún elemento que
+   * marcar (la página cambió) — en ese caso la GUI conserva la captura previa.
+   *
+   * Se encola con los pasos normales: dos capturas simultáneas se pisarían el
+   * resaltado.
+   */
+  captureGroup(refs: number[], badge: number): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.queue = this.queue
+        .then(() => this.doCaptureGroup(refs, badge))
+        .then(resolve, () => resolve(null))
+    })
+  }
+
+  private async doCaptureGroup(refs: number[], badge: number): Promise<string | null> {
+    const page = this.attachment?.page
+    if (!page || !this.shotDir || !refs.length) return null
+
+    const rect = await page
+      .evaluate(
+        ([ns, targets, n]) => {
+          const api = (
+            window as unknown as Record<
+              string,
+              { highlight(r: number[], b: number): BoundingRect | null }
+            >
+          )[ns as string]
+          return api ? api.highlight(targets as number[], n as number) : null
+        },
+        [OBSERVER_NAMESPACE, refs, badge] as const
+      )
+      .catch(() => null)
+
+    if (!rect) return null
+
+    const file = join(this.shotDir, `group-${randomUUID()}.png`)
+    try {
+      await page.screenshot({ path: file, type: 'png' })
+    } catch {
+      return null
+    } finally {
+      await page
+        .evaluate((ns) => {
+          const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
+          api?.clearHighlight()
+        }, OBSERVER_NAMESPACE)
+        .catch(() => undefined)
+    }
+    return file
+  }
+
   private async processEvent(event: RawEvent): Promise<void> {
     const page = this.attachment?.page
     if (!page || this.status !== 'recording') return
@@ -290,16 +347,16 @@ export class RecorderEngine {
       // 2. Resaltar el elemento y recalcular su rectángulo.
       const freshRect = await page
         .evaluate(
-          ([ns, ref, badge]) => {
+          ([ns, refs, badge]) => {
             const api = (
               window as unknown as Record<
                 string,
-                { highlight(r: number, b: number): BoundingRect | null }
+                { highlight(r: number[], b: number): BoundingRect | null }
               >
             )[ns as string]
-            return api ? api.highlight(ref as number, badge as number) : null
+            return api ? api.highlight(refs as number[], badge as number) : null
           },
-          [OBSERVER_NAMESPACE, event.ref, order] as const
+          [OBSERVER_NAMESPACE, [event.ref], order] as [string, number[], number]
         )
         .catch(() => null)
 
@@ -309,20 +366,17 @@ export class RecorderEngine {
       const file = join(this.shotDir!, `step-${String(order).padStart(3, '0')}.png`)
       await page.screenshot({ path: file, type: 'png' })
 
-      // 4. Quitar el overlay para no dejar rastro en el sistema documentado.
+      // 4. Quitar el overlay para no dejar rastro en el sistema documentado. La
+      //    referencia al elemento NO se libera: si este paso acaba fundido con
+      //    los siguientes en un paso de formulario, habrá que volver a marcarlo
+      //    junto a sus compañeros. El observador suelta las más antiguas solo.
       await page
         .evaluate(
-          ([ns, ref]) => {
-            const api = (
-              window as unknown as Record<
-                string,
-                { clearHighlight(): void; release(r: number): void }
-              >
-            )[ns as string]
+          (ns) => {
+            const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
             api?.clearHighlight()
-            api?.release(ref as number)
           },
-          [OBSERVER_NAMESPACE, event.ref] as const
+          OBSERVER_NAMESPACE
         )
         .catch(() => undefined)
 
@@ -339,7 +393,8 @@ export class RecorderEngine {
         includeInDocs: true,
         timestamp: event.timestamp,
         tempFile: file,
-        isFormField: isFormField(event.signals)
+        isFormField: isFormField(event.signals),
+        ref: event.ref
       }
       if (event.value !== undefined) {
         step.value = event.isPassword ? '***' : event.value

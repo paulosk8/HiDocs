@@ -42,6 +42,17 @@ export interface RecordedStep extends DocStep {
    * persiste.
    */
   isFormField?: boolean
+  /**
+   * Referencia al elemento dentro del observador, para poder volver a marcarlo
+   * al re-capturar un paso de formulario agrupado. No se persiste: solo vale
+   * mientras la página siga cargada.
+   */
+  ref?: number
+  /**
+   * Referencias de todos los campos fundidos en este paso, en orden. Presente
+   * solo en pasos agrupados; es lo que permite señalarlos todos en la captura.
+   */
+  groupRefs?: number[]
 }
 
 /**
@@ -130,6 +141,11 @@ export interface IpcInvokeMap {
   'recorder:pause': () => EngineState
   'recorder:resume': () => EngineState
   'recorder:stop': () => EngineState
+  /**
+   * Re-captura un paso de formulario agrupado marcando todos sus campos.
+   * Devuelve la ruta del PNG nuevo, o `null` si ya no se pudo marcar ninguno.
+   */
+  'recorder:capture-group': (args: { refs: number[]; badge: number }) => string | null
   'dialog:pick-output-dir': () => string | null
   'session:save': (payload: SavePayload) => SaveResult
   'shell:open-path': (path: string) => void
@@ -203,6 +219,7 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'recorder:pause',
   'recorder:resume',
   'recorder:stop',
+  'recorder:capture-group',
   'dialog:pick-output-dir',
   'session:save',
   'shell:open-path',

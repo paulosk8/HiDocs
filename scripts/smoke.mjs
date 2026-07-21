@@ -1147,6 +1147,67 @@ try {
   // autoguardado no siga escribiendo el borrador durante el desmontaje.
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
 
+  // --- Agrupar campos: la captura resalta TODOS los campos del grupo ---
+  // Un paso agrupado documenta varios campos a la vez. Si su captura marcase
+  // solo el último, el manual señalaría un campo y describiría cinco: por eso,
+  // al fundir, se pide al motor una captura nueva con todo el grupo resaltado.
+  if (!(await gui.locator('.group-toggle input').isChecked())) {
+    await gui.locator('.group-toggle input').check()
+  }
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeGroup = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('[data-testid="nueva-matricula"]')
+  await waitSteps(beforeGroup + 1, 'grupo: abrir el modal')
+
+  await target.fill('#alumno', 'Ana Pérez')
+  await target.fill('#clave', 'secreto123')
+  await target.selectOption('#curso', '2b')
+
+  // Los tres campos deben quedar en UN paso, no en tres.
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      return (cards[cards.length - 1]?.querySelectorAll('.field-list li').length ?? 0) >= 3
+    },
+    null,
+    { timeout: 20000 }
+  )
+  check(
+    (await stepCount()) === beforeGroup + 2,
+    'Agrupar campos: los tres campos se funden en un solo paso',
+    `${beforeGroup} → ${await stepCount()}`
+  )
+
+  // La captura del grupo la genera el motor aparte (`group-*.png`); mientras no
+  // llega se conserva la del último campo, así que se espera a que la sustituya.
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      return !!img && decodeURIComponent(img.src).includes('group-')
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const groupShotOk = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    const img = cards[cards.length - 1]?.querySelector('.thumb img')
+    return { src: decodeURIComponent(img?.src ?? ''), loaded: !!img?.complete && img.naturalWidth > 0 }
+  })
+  check(
+    /group-.*\.png/.test(groupShotOk.src) && groupShotOk.loaded,
+    'Agrupar campos: la captura se rehace marcando todo el grupo',
+    groupShotOk.src.split('/').pop()
+  )
+
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+  await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
+
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
   await gui.evaluate(() => localStorage.removeItem('docrecorder.groupFormFields')).catch(() => {})
 

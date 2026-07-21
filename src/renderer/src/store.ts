@@ -90,7 +90,14 @@ interface SessionState {
   setMeta: (patch: Partial<SessionMeta>) => void
   setOutputDir: (dir: string) => void
   applyEngineState: (state: EngineState) => void
-  addStep: (step: RecordedStep) => void
+  /**
+   * Añade un paso, fundiéndolo con el anterior si ambos son campos del mismo
+   * formulario. Devuelve el paso resultante SOLO cuando hubo fusión, para que
+   * quien llama pueda pedir una captura nueva con todos sus campos marcados.
+   */
+  addStep: (step: RecordedStep) => RecordedStep | null
+  /** sustituye la captura de un paso por la del grupo re-capturado */
+  applyGroupShot: (id: string, tempFile: string) => void
   updateStep: (id: string, patch: Partial<RecordedStep>) => void
   removeStep: (id: string) => void
   reorderSteps: (fromIndex: number, toIndex: number) => void
@@ -267,7 +274,10 @@ export const useSession = create<SessionState>((set) => ({
       viewportActive: s.viewportActive || state.attached
     })),
 
-  addStep: (step) =>
+  addStep: (step) => {
+    // Se guarda fuera del `set` porque hay que devolverlo: el orden definitivo
+    // solo se conoce tras renumerar, y es el número que llevará el resaltado.
+    const result: { merged: RecordedStep | null } = { merged: null }
     set((s) => {
       const last = s.steps[s.steps.length - 1]
       // Se funde con el paso anterior si ambos son campos del MISMO formulario
@@ -288,6 +298,9 @@ export const useSession = create<SessionState>((set) => ({
         // con el campo del paso anterior.
         const seeded = last.fields ?? [{ label: fieldLabel(last), value: last.value ?? '' }]
         const seededActions = last.mergedActions ?? [toFlowAction(last)]
+        // Referencias de todos los campos del grupo, para poder marcarlos todos
+        // en la captura. La primera vez se siembra con la del paso anterior.
+        const seededRefs = last.groupRefs ?? (last.ref !== undefined ? [last.ref] : [])
         const merged: RecordedStep = {
           ...last,
           action: 'fill',
@@ -299,19 +312,26 @@ export const useSession = create<SessionState>((set) => ({
           fields: upsertField(seeded, fieldLabel(step), step.value ?? ''),
           // Cada campo se conserva como acción individual para el runner (replay).
           mergedActions: [...seededActions, toFlowAction(step)],
+          groupRefs: step.ref !== undefined ? [...seededRefs, step.ref] : seededRefs,
           selectorCandidates: step.selectorCandidates
         }
-        return {
-          steps: renumber([...s.steps.slice(0, -1), merged]),
-          focusStepId: merged.id
-        }
+        const steps = renumber([...s.steps.slice(0, -1), merged])
+        result.merged = steps[steps.length - 1]
+        return { steps, focusStepId: merged.id }
       }
 
       return {
         steps: renumber([...s.steps, step]),
         focusStepId: step.id
       }
-    }),
+    })
+    return result.merged
+  },
+
+  applyGroupShot: (id, tempFile) =>
+    set((s) => ({
+      steps: s.steps.map((step) => (step.id === id ? { ...step, tempFile } : step))
+    })),
 
   updateStep: (id, patch) =>
     set((s) => ({

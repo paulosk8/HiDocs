@@ -279,6 +279,13 @@ function registerIpc(): void {
     return engine.state
   })
 
+  ipcMain.handle(
+    'recorder:capture-group',
+    async (_e, args: { refs: number[]; badge: number }) => {
+      return engine.captureGroup(args.refs, args.badge)
+    }
+  )
+
   ipcMain.handle('session:save', async (_e, payload: SavePayload) => {
     const result = await saveSession(payload, viewport.currentSize)
     engine.log('info', `Sesión guardada en ${result.path}`)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { TopBar } from './components/TopBar'
 import { ViewportSlot } from './components/ViewportSlot'
 import { StepsPanel } from './components/StepsPanel'
@@ -33,7 +33,31 @@ export function App(): React.JSX.Element {
   const setAiOpen = useSession((s) => s.setAiOpen)
   const setAiStatus = useSession((s) => s.setAiStatus)
   const setAiProgress = useSession((s) => s.setAiProgress)
+  const applyGroupShot = useSession((s) => s.applyGroupShot)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
+
+  /**
+   * Cuando un campo se funde en un paso de formulario, la captura que traía era
+   * la del campo suelto: solo lo marcaba a él. Se pide otra al motor marcando
+   * todos los campos del grupo, que es lo que el paso documenta de verdad.
+   *
+   * Va después de fundir, no antes: la GUI se actualiza al instante y la
+   * captura mejorada llega cuando esté. Si la página ya cambió y no se puede
+   * marcar nada, el motor devuelve null y se conserva la captura anterior.
+   */
+  const onStep = useCallback(
+    (step: Parameters<typeof addStep>[0]) => {
+      const merged = addStep(step)
+      if (!merged?.groupRefs || merged.groupRefs.length < 2) return
+      void ipc
+        .invoke('recorder:capture-group', { refs: merged.groupRefs, badge: merged.order })
+        .then((file) => {
+          if (file) applyGroupShot(merged.id, file)
+        })
+        .catch(() => undefined)
+    },
+    [addStep, applyGroupShot]
+  )
 
   // Mantiene `gitRepo` al día aunque el panel (y su sección Git) esté colapsado.
   useRepoInspection()
@@ -55,7 +79,7 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     const offState = ipc.on('engine:state', applyEngineState)
-    const offStep = ipc.on('recorder:step', addStep)
+    const offStep = ipc.on('recorder:step', onStep)
     const offRegen = ipc.on('runner:progress', runnerProgressAdd)
     const offAi = ipc.on('ai:progress', setAiProgress)
     void ipc.invoke('engine:get-state').then(applyEngineState)
@@ -68,7 +92,7 @@ export function App(): React.JSX.Element {
       offRegen()
       offAi()
     }
-  }, [applyEngineState, addStep, runnerProgressAdd, setAiProgress, setAiStatus])
+  }, [applyEngineState, onStep, runnerProgressAdd, setAiProgress, setAiStatus])
 
   return (
     <div className="app">

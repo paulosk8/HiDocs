@@ -76,6 +76,8 @@ export function observerScript(config: ObserverConfig): void {
   if (w[config.namespace]) return
 
   const MAX_TEXT = 80
+  /** Cuántas referencias a elementos se conservan para poder re-resaltarlas. */
+  const MAX_REFS = 60
   const emit = w[config.bindingName] as ((event: RawEvent) => Promise<void>) | undefined
 
   const refs = new Map<number, Element>()
@@ -365,6 +367,15 @@ export function observerScript(config: ObserverConfig): void {
     if (!enabled || !emit) return
     const ref = nextRef++
     refs.set(ref, el)
+    // Las referencias ya no se liberan tras capturar: un paso puede fundirse
+    // más tarde con los siguientes y hay que poder volver a marcar sus campos.
+    // Se conservan las más recientes y se sueltan las viejas, para no retener
+    // indefinidamente nodos que la página ya descartó.
+    while (refs.size > MAX_REFS) {
+      const oldest = refs.keys().next()
+      if (oldest.done) break
+      refs.delete(oldest.value)
+    }
     const rect = rectOf(el)
     const event: RawEvent = {
       action,
@@ -494,20 +505,9 @@ export function observerScript(config: ObserverConfig): void {
     overlay = null
   }
 
-  /**
-   * Dibuja el resaltado sobre el elemento y devuelve su rectángulo actual.
-   * Se recalcula en el momento de capturar, no en el del evento: entre uno y
-   * otro el layout puede haber cambiado.
-   */
-  const highlight = (ref: number, badge: number): BoundingRect | null => {
-    removeOverlay()
-    const el = refs.get(ref)
-    if (!el || !el.isConnected) return null
-    const rect = el.getBoundingClientRect()
-    if (rect.width === 0 && rect.height === 0) return null
-
+  /** Recuadro rojo sobre un elemento; el primero del grupo lleva el número. */
+  const drawBox = (rect: DOMRect, badge: number | null): HTMLElement => {
     const box = document.createElement('div')
-    box.setAttribute('data-docrec-overlay', '')
     box.style.cssText = [
       'position:fixed',
       `left:${rect.x - 3}px`,
@@ -518,31 +518,67 @@ export function observerScript(config: ObserverConfig): void {
       'border-radius:6px',
       'box-sizing:border-box',
       'pointer-events:none',
-      'z-index:2147483647',
       'margin:0',
       'padding:0'
     ].join(';')
 
-    const badgeEl = document.createElement('div')
-    badgeEl.textContent = String(badge)
-    badgeEl.style.cssText = [
-      'position:absolute',
-      'left:-13px',
-      'top:-13px',
-      'width:24px',
-      'height:24px',
-      'border-radius:50%',
-      'background:#FF5722',
-      'color:#fff',
-      'font:700 13px/24px system-ui,sans-serif',
-      'text-align:center',
-      'box-shadow:0 1px 3px rgba(0,0,0,.35)'
-    ].join(';')
-    box.appendChild(badgeEl)
+    if (badge !== null) {
+      const badgeEl = document.createElement('div')
+      badgeEl.textContent = String(badge)
+      badgeEl.style.cssText = [
+        'position:absolute',
+        'left:-13px',
+        'top:-13px',
+        'width:24px',
+        'height:24px',
+        'border-radius:50%',
+        'background:#FF5722',
+        'color:#fff',
+        'font:700 13px/24px system-ui,sans-serif',
+        'text-align:center',
+        'box-shadow:0 1px 3px rgba(0,0,0,.35)'
+      ].join(';')
+      box.appendChild(badgeEl)
+    }
+    return box
+  }
 
-    document.body.appendChild(box)
-    overlay = box
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+  /**
+   * Dibuja el resaltado sobre uno o varios elementos y devuelve el rectángulo
+   * del ÚLTIMO (el que motivó la captura).
+   *
+   * Se admiten varios porque un paso de formulario agrupado reúne varios campos
+   * en una sola captura: marcar solo el último dejaría los demás sin señalar en
+   * el manual, que es justo lo que el paso documenta.
+   *
+   * Los rectángulos se recalculan al capturar, no al registrar el evento: entre
+   * uno y otro el layout puede haber cambiado o la página haber rodado.
+   */
+  const highlight = (targets: number[], badge: number): BoundingRect | null => {
+    removeOverlay()
+
+    const container = document.createElement('div')
+    container.setAttribute('data-docrec-overlay', '')
+    container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647'
+
+    let last: BoundingRect | null = null
+    let painted = 0
+    for (const ref of targets) {
+      const el = refs.get(ref)
+      if (!el || !el.isConnected) continue
+      const rect = el.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) continue
+      // El número va en el primero que se pinte: identifica al paso entero, y
+      // repetirlo en cada campo del grupo solo añadiría ruido.
+      container.appendChild(drawBox(rect, painted === 0 ? badge : null))
+      painted++
+      last = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+    }
+
+    if (!painted) return null
+    document.body.appendChild(container)
+    overlay = container
+    return last
   }
 
   w[config.namespace] = {
