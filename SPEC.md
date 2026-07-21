@@ -212,7 +212,9 @@ Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 420p
 
 **Sección Git** (dentro del panel, ver §10): aparece cuando la carpeta de salida está dentro de un repositorio. Casilla "Registrar en Git al guardar", campos de rama y mensaje (prerrellenados a partir de los metadatos), casilla de push (deshabilitada si no hay remoto `origin`), y avisos: de qué rama nacerá la nueva, cambios sin guardar que impedirían el cambio de rama, o archivos ajenos ya indexados. Cuando la carpeta **no** está en un repositorio, la sección lo explica en vez de desaparecer sin más.
 
-**Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite dos acciones: usar otro proyecto para la sesión (cambia la carpeta de salida) y elegir la rama base de la próxima grabación. "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
+**Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite: usar otro proyecto para la sesión (cambia la carpeta de salida), elegir la rama base de la próxima grabación, y **previsualizar** la documentación de un commit (pulsándolo) —sus pasos y capturas, leídos de Git con `git show` sin checkout ni Docusaurus. "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
+
+**Borrador (continuar otro día)**: la grabación en curso se autoguarda en `userData/draft` (pasos + capturas durables), con retardo tras cada cambio. Al arrancar, si hay borrador, se ofrece continuar o descartarlo. Se descarta al guardar con éxito. Para las pruebas, el proceso principal acepta `DOCRECORDER_USER_DATA` y aísla todo el estado persistente en un `userData` propio, sin tocar el del usuario.
 
 **Centro de ayuda** (botón "?"): modal con navegación de temas a la izquierda y contenido desplazable a la derecha (con resaltado del tema activo al desplazar). Documenta el uso, cada control, la integración con Git y con Docusaurus, y la solución de problemas.
 

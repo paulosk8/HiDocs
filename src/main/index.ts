@@ -21,7 +21,7 @@ import {
 } from '../shared/ipc-contract'
 import { DEFAULT_VIEWPORT, type EngineState } from '../shared/types'
 import { saveSession } from './storage'
-import { inspectRepo, listBranches, listCommits } from './git'
+import { inspectRepo, listBranches, listCommits, readCommitDocs, readDocImage } from './git'
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
 import { saveDraft, loadDraft, clearDraft } from './draft'
@@ -240,6 +240,17 @@ function registerIpc(): void {
   ipcMain.handle('git:commits', async (_e, args: { repoRoot: string; branch: string }) => {
     return listCommits(args.repoRoot, args.branch).catch(() => [])
   })
+
+  ipcMain.handle('git:commit-docs', async (_e, args: { repoRoot: string; commit: string }) => {
+    return readCommitDocs(args.repoRoot, args.commit).catch(() => [])
+  })
+
+  ipcMain.handle(
+    'git:doc-image',
+    async (_e, args: { repoRoot: string; commit: string; imagePath: string }) => {
+      return readDocImage(args.repoRoot, args.commit, args.imagePath).catch(() => null)
+    }
+  )
 
   ipcMain.handle('projects:list', async () => listProjects().catch(() => []))
 

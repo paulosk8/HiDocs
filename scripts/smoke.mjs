@@ -632,6 +632,36 @@ try {
     registered.map((p) => p.label).join(', ')
   )
 
+  // --- Vista previa: leer la documentación de un commit desde Git ---
+  // El commit que documentó «crear-matricula» (el tip de docs/matriculas es la
+  // regrabación de «editar», que se guardó sin pasos).
+  const firstCommit = g(
+    'log --format=%H -n1 docs/matriculas -- matriculas/crear-matricula/session.json'
+  )
+  const commitDocs = await gui.evaluate(
+    ([root, commit]) => window.docrecorder.invoke('git:commit-docs', { repoRoot: root, commit }),
+    [outDir, firstCommit]
+  )
+  const previewSession = commitDocs[0]?.session
+  check(
+    commitDocs.length > 0 &&
+      previewSession?.feature === 'crear-matricula' &&
+      previewSession.steps.length > 0,
+    'Vista previa: se lee el session.json documentado en un commit',
+    `${commitDocs.length} sesión(es), ${previewSession?.steps.length ?? 0} paso(s)`
+  )
+  const imgPath = `${commitDocs[0].path.replace(/session\.json$/, '')}${previewSession.steps[0].screenshot}`
+  const dataUri = await gui.evaluate(
+    ([root, commit, imagePath]) =>
+      window.docrecorder.invoke('git:doc-image', { repoRoot: root, commit, imagePath }),
+    [outDir, firstCommit, imgPath]
+  )
+  check(
+    typeof dataUri === 'string' && dataUri.startsWith('data:image/png;base64,'),
+    'Vista previa: la captura commiteada se lee de Git como data URI',
+    dataUri ? `${dataUri.slice(0, 24)}… (${dataUri.length} b)` : 'null'
+  )
+
   // --- Renderizado del modal (lo que los checks IPC de arriba NO cubren) ---
   // Un fallo de React —JSX roto, onClick sin cablear, columnas colapsadas—
   // pasaría todos los checks anteriores y aun así dejaría la ventana inservible.

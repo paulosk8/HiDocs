@@ -165,6 +165,13 @@ export interface GitCommitInfo {
   date: string
 }
 
+/** Documentación (una funcionalidad) registrada en un commit, para previsualizar. */
+export interface CommitDocs {
+  /** ruta del session.json en el repo, p. ej. `matriculas/crear/session.json` */
+  path: string
+  session: DocSession
+}
+
 export interface GitCommitOptions {
   repoRoot: string
   branch: string

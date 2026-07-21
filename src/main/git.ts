@@ -2,7 +2,10 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { relative, isAbsolute, join } from 'node:path'
 import { realpath } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import type {
+  CommitDocs,
+  DocSession,
   GitBranchInfo,
   GitCommitInfo,
   GitCommitOptions,
@@ -258,6 +261,64 @@ export async function listCommits(
       const [hash, subject, author, date] = line.split(FIELD)
       return { hash, subject: subject ?? '', author: author ?? '', date: date ?? '' }
     })
+}
+
+/**
+ * Documentación registrada en un commit, para previsualizarla en el explorador
+ * sin arrancar Docusaurus ni hacer checkout. Lee los `session.json` que el commit
+ * añadió o modificó y devuelve sus pasos.
+ */
+export async function readCommitDocs(root: string, commit: string): Promise<CommitDocs[]> {
+  const changed = await git(root, ['show', '--name-only', '--pretty=format:', commit]).catch(
+    () => ''
+  )
+  const paths = changed
+    .split('\n')
+    .map((p) => p.trim())
+    .filter((p) => p === 'session.json' || p.endsWith('/session.json'))
+
+  const docs: CommitDocs[] = []
+  for (const path of paths) {
+    const json = await git(root, ['show', `${commit}:${path}`]).catch(() => '')
+    let session: DocSession | null = null
+    try {
+      session = JSON.parse(json) as DocSession
+    } catch {
+      // session.json ilegible: se omite ese archivo del preview
+    }
+    if (session) docs.push({ path, session })
+  }
+  return docs
+}
+
+/**
+ * Una captura commiteada, como data URI, para mostrarla en la vista previa. Se
+ * lee el blob binario directamente del commit (sin checkout).
+ */
+export async function readDocImage(
+  root: string,
+  commit: string,
+  imagePath: string
+): Promise<string | null> {
+  try {
+    const { stdout } = await run('git', ['show', `${commit}:${imagePath}`], {
+      cwd: root,
+      timeout: GIT_TIMEOUT_MS,
+      windowsHide: true,
+      maxBuffer: 20 * 1024 * 1024,
+      encoding: 'buffer'
+    })
+    const buf = stdout as unknown as Buffer
+    if (!buf.length) return null
+    return `data:image/png;base64,${buf.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
+/** Ruta en el repo de la captura de un paso, a partir del path de su session.json. */
+export function docImagePath(sessionPath: string, screenshot: string): string {
+  return `${dirname(sessionPath)}/${screenshot}`.replace(/\\/g, '/')
 }
 
 /** Git rechaza estos patrones en `check-ref-format`; se avisa antes de intentarlo. */

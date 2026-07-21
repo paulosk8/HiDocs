@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { GitBranchInfo, GitCommitInfo, ProjectEntry } from '../../../shared/types'
 import { ipc } from '../ipc'
 import { useSession } from '../store'
+import { CommitDocsPreview } from './CommitDocsPreview'
 
 /**
  * Explorador de los repositorios de documentación ya usados.
@@ -24,6 +25,7 @@ export function ProjectsModal({ onClose }: { onClose: () => void }): React.JSX.E
   // respuesta lenta de un repositorio ya abandonado se ignora sola.
   const [branchData, setBranchData] = useState<{ key: string; items: GitBranchInfo[] } | null>(null)
   const [commitData, setCommitData] = useState<{ key: string; items: GitCommitInfo[] } | null>(null)
+  const [preview, setPreview] = useState<{ commit: string; subject: string } | null>(null)
 
   // Separador NUL: una ruta puede contener espacios, y con un espacio como
   // separador dos pares (repositorio, rama) distintos darían la misma clave.
@@ -161,18 +163,37 @@ export function ProjectsModal({ onClose }: { onClose: () => void }): React.JSX.E
             {!branch && <p className="muted">Elige una rama.</p>}
             {branch && commits === null && <p className="muted">Leyendo historial…</p>}
             {commits?.length === 0 && <p className="muted">Sin commits.</p>}
+            {commits && commits.length > 0 && (
+              <p className="muted">Pulsa un commit para ver su documentación.</p>
+            )}
             <ol className="commits">
               {commits?.map((c) => (
                 <li key={c.hash}>
-                  <code>{c.hash}</code> {c.subject}
-                  <span className="muted">
-                    {c.author} · {c.date.slice(0, 16)}
-                  </span>
+                  <button
+                    className="row"
+                    onClick={() => repoRoot && setPreview({ commit: c.hash, subject: c.subject })}
+                  >
+                    <span>
+                      <code>{c.hash}</code> {c.subject}
+                    </span>
+                    <span className="muted">
+                      {c.author} · {c.date.slice(0, 16)}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ol>
           </section>
         </div>
+
+        {preview && repoRoot && (
+          <CommitDocsPreview
+            repoRoot={repoRoot}
+            commit={preview.commit}
+            subject={preview.subject}
+            onClose={() => setPreview(null)}
+          />
+        )}
 
         <footer>
           {selected && selected.root !== repo?.root && (

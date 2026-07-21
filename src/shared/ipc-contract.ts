@@ -7,6 +7,7 @@
  */
 
 import type {
+  CommitDocs,
   DocStep,
   EngineState,
   GitBranchInfo,
@@ -98,6 +99,10 @@ export interface IpcInvokeMap {
   'git:branches': (repoRoot: string) => GitBranchInfo[]
   /** historial de una rama, del commit más reciente hacia atrás (solo lectura) */
   'git:commits': (args: { repoRoot: string; branch: string }) => GitCommitInfo[]
+  /** documentación registrada en un commit, para previsualizar (solo lectura) */
+  'git:commit-docs': (args: { repoRoot: string; commit: string }) => CommitDocs[]
+  /** una captura commiteada como data URI, para la vista previa (solo lectura) */
+  'git:doc-image': (args: { repoRoot: string; commit: string; imagePath: string }) => string | null
   /** repositorios de documentación ya usados, del más reciente al más antiguo */
   'projects:list': () => ProjectEntry[]
   /** quita el repositorio del registro; no toca nada en disco */
@@ -145,6 +150,8 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'git:inspect',
   'git:branches',
   'git:commits',
+  'git:commit-docs',
+  'git:doc-image',
   'projects:list',
   'projects:forget',
   'docusaurus:suggest-docs',

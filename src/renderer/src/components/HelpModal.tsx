@@ -198,7 +198,15 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <b>Agrupar campos</b> (interruptor en el encabezado del panel, activado por
                 defecto): une los campos seguidos de un mismo formulario en <b>un solo paso</b> —una
                 captura del formulario relleno y la lista de campos y valores— en vez de una captura
-                por campo. Desactívalo si prefieres documentar cada campo por separado.
+                por campo. Incluye los <b>clics en campos</b> (enfocar antes de escribir); un clic
+                en un botón rompe el grupo. Desactívalo si prefieres documentar cada campo por
+                separado.
+              </p>
+              <p>
+                <b>Continuar otro día:</b> la grabación en curso se <b>autoguarda</b> como borrador.
+                Puedes cerrar la app y, al volver a abrirla, te ofrecerá{' '}
+                <b>continuar donde lo dejaste</b> o descartarlo. El borrador se descarta al
+                finalizar y registrar en Git.
               </p>
             </section>
 
@@ -331,6 +339,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <li>Ver las ramas y el historial de commits de cada una.</li>
                 <li>
                   Elegir la <b>rama base</b> de la próxima grabación.
+                </li>
+                <li>
+                  <b>Pulsar un commit del historial</b> para ver, dentro de la app, la documentación
+                  que registró (pasos y capturas), leída de Git sin arrancar Docusaurus ni hacer
+                  checkout. Útil para revisar hasta dónde llegaste en una rama.
                 </li>
                 <li>
                   «Quitar de la lista» olvida la entrada del registro, sin tocar el repositorio en
