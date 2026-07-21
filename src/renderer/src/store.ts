@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { RecordedStep } from '../../shared/ipc-contract'
+import type { DraftPayload, RecordedStep } from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
   type GitRepoInfo,
@@ -71,6 +71,10 @@ interface SessionState {
   reorderSteps: (fromIndex: number, toIndex: number) => void
   clearFocus: () => void
   resetSteps: () => void
+  /** carga un borrador guardado para continuar donde se dejó */
+  restoreDraft: (draft: DraftPayload) => void
+  /** deja la sesión lista para documentar una funcionalidad nueva (tras guardar) */
+  startFreshSession: () => void
 
   setGitRepo: (repo: GitRepoInfo | null) => void
   setGit: (patch: Partial<Pick<SessionState, 'gitEnabled' | 'gitPush'>>) => void
@@ -267,6 +271,33 @@ export const useSession = create<SessionState>((set) => ({
 
   clearFocus: () => set({ focusStepId: null }),
   resetSteps: () => set({ steps: [], focusStepId: null }),
+
+  restoreDraft: (draft) =>
+    set({
+      sessionId: draft.sessionId,
+      createdAt: draft.createdAt,
+      meta: draft.meta,
+      outputDir: draft.outputDir,
+      steps: renumber(draft.steps),
+      focusStepId: null,
+      gitEnabled: draft.git.enabled,
+      gitPush: draft.git.push,
+      gitBranchOverride: draft.git.branchOverride,
+      gitMessageOverride: draft.git.messageOverride,
+      gitBaseBranch: draft.git.baseBranch
+    }),
+
+  // Tras guardar una funcionalidad se limpia la lista y se estrena sesión, listo
+  // para documentar la siguiente (que irá a su rama). Los metadatos se conservan
+  // para que el usuario solo cambie funcionalidad/título.
+  startFreshSession: () =>
+    set({
+      steps: [],
+      focusStepId: null,
+      sessionId: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      gitMessageOverride: null
+    }),
 
   // Detectar un repositorio activa la integración por defecto, pero nunca el
   // push: subir cambios al repositorio de otra persona se pide a mano.

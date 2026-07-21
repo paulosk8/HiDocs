@@ -14,7 +14,8 @@ import {
   readFileSync,
   readdirSync,
   existsSync,
-  writeFileSync
+  writeFileSync,
+  rmSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,7 +67,14 @@ try {
   execSync(`lsof -ti :${PORT} | xargs kill -9`, { stdio: 'ignore' })
 } catch {}
 
-const child = spawn(electronPath, ['.'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] })
+// userData propio: la prueba no toca los datos reales del usuario (borrador,
+// registro de proyectos, preferencias), y arranca siempre desde cero.
+const userData = mkdtempSync(join(tmpdir(), 'docrecorder-userdata-'))
+const child = spawn(electronPath, ['.'], {
+  cwd: root,
+  stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, DOCRECORDER_USER_DATA: userData }
+})
 child.stdout.on('data', (d) => process.stdout.write(`[main] ${d}`))
 child.stderr.on('data', (d) => {
   const s = String(d)
@@ -334,6 +342,19 @@ try {
     branchOptions.join(', ')
   )
 
+  // El autoguardado ya debe haber escrito un borrador con los pasos grabados.
+  const draftBefore = await gui.evaluate(() => window.docrecorder.invoke('draft:load'))
+  check(
+    !!draftBefore && draftBefore.steps.length > 0,
+    'Borrador: la grabación en curso se autoguarda',
+    draftBefore ? `${draftBefore.steps.length} paso(s)` : 'sin borrador'
+  )
+  // Las capturas del borrador se copian a una carpeta durable (no la temporal).
+  check(
+    !!draftBefore && draftBefore.steps.every((s) => /\/draft\/img\//.test(s.tempFile)),
+    'Borrador: las capturas se guardan en una carpeta durable'
+  )
+
   await gui.click('.ctrl:nth-child(3)')
   await gui.waitForSelector('.dialog', { timeout: 20000 })
   // Con Git activo, al detener aparece primero el aviso de que se registrará en
@@ -359,6 +380,9 @@ try {
     'Etapa 6: la sesión se guarda',
     `${finalDialog.title}: ${finalDialog.body}`
   )
+  // Al guardar con éxito, el borrador se descarta (ya está en Git).
+  const draftAfter = await gui.evaluate(() => window.docrecorder.invoke('draft:load'))
+  check(draftAfter === null, 'Borrador: se descarta al guardar con éxito', String(draftAfter))
 
   const dir = join(outDir, 'matriculas', 'crear-matricula')
   const session = JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))
@@ -875,5 +899,6 @@ try {
   await browser?.close().catch(() => {})
   fixture.close()
   child.kill('SIGTERM')
+  rmSync(userData, { recursive: true, force: true })
   setTimeout(() => process.exit(process.exitCode ?? 0), 600)
 }

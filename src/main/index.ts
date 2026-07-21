@@ -14,6 +14,7 @@ import { TargetViewport } from './viewport'
 import { RecorderEngine } from './engine/recorder'
 import {
   SHOT_PROTOCOL,
+  type DraftPayload,
   type RecordedStep,
   type SavePayload,
   type ViewportBounds
@@ -23,6 +24,7 @@ import { saveSession } from './storage'
 import { inspectRepo, listBranches, listCommits } from './git'
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
+import { saveDraft, loadDraft, clearDraft } from './draft'
 
 /**
  * El puerto de depuración remota debe quedar fijado ANTES de `app.whenReady`:
@@ -30,6 +32,13 @@ import { suggestDocsDir } from './docusaurus'
  */
 export const REMOTE_DEBUGGING_PORT = 9333
 app.commandLine.appendSwitch('remote-debugging-port', String(REMOTE_DEBUGGING_PORT))
+
+// Aísla el estado persistente (borrador, registro de proyectos, preferencias) en
+// un `userData` propio cuando se pide por entorno: así las pruebas de humo no
+// tocan los datos reales del usuario (su borrador incluido).
+if (process.env['DOCRECORDER_USER_DATA']) {
+  app.setPath('userData', process.env['DOCRECORDER_USER_DATA'])
+}
 
 // Debe declararse antes de `whenReady` para que el renderer pueda usar
 // `docshot:` en `<img src>` bajo su Content-Security-Policy.
@@ -62,8 +71,12 @@ function registerShotProtocol(): void {
   protocol.handle(SHOT_PROTOCOL, async (request) => {
     const encoded = new URL(request.url).pathname.replace(/^\//, '')
     const filePath = decodeURIComponent(encoded)
+    // Se sirven las capturas temporales de la sesión y las del borrador guardado
+    // (userData/draft/img), que sobreviven al cierre para restaurar la grabación.
     const tempRoot = app.getPath('temp')
-    if (!filePath.startsWith(tempRoot) || filePath.includes('..')) {
+    const draftImg = join(app.getPath('userData'), 'draft', 'img')
+    const allowed = filePath.startsWith(tempRoot) || filePath.startsWith(draftImg)
+    if (!allowed || filePath.includes('..')) {
       return new Response('Ruta no permitida', { status: 403 })
     }
     try {
@@ -237,6 +250,16 @@ function registerIpc(): void {
 
   ipcMain.handle('docusaurus:suggest-docs', async (_e, dir: string) => {
     return suggestDocsDir(dir).catch(() => null)
+  })
+
+  ipcMain.handle('draft:save', async (_e, draft: DraftPayload) => {
+    await saveDraft(draft).catch((err) =>
+      engine.log('warn', `No se pudo guardar el borrador: ${err}`)
+    )
+  })
+  ipcMain.handle('draft:load', async () => loadDraft().catch(() => null))
+  ipcMain.handle('draft:clear', async () => {
+    await clearDraft().catch(() => undefined)
   })
 }
 

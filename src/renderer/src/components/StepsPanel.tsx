@@ -30,6 +30,7 @@ export function StepsPanel(): React.JSX.Element {
   const attached = useSession((s) => s.attached)
   const reorderSteps = useSession((s) => s.reorderSteps)
   const applyEngineState = useSession((s) => s.applyEngineState)
+  const startFreshSession = useSession((s) => s.startFreshSession)
   const collapsed = useSession((s) => s.panelCollapsed)
   const togglePanel = useSession((s) => s.togglePanel)
   const projectsOpen = useSession((s) => s.projectsOpen)
@@ -91,13 +92,18 @@ export function StepsPanel(): React.JSX.Element {
           : undefined
       })
       setResult(saved)
+      // Guardado con éxito: se descarta el borrador y se estrena sesión para la
+      // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
+      // un autoguardado pendiente no vuelva a crear el borrador.
+      startFreshSession()
+      void ipc.invoke('draft:clear')
     } catch (err) {
       setProblem(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
       setPendingSave(null)
     }
-  }, [])
+  }, [startFreshSession])
 
   /**
    * Detiene la grabación de verdad y termina de guardar. Se llama al confirmar

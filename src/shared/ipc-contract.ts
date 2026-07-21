@@ -36,6 +36,28 @@ export interface RecordedStep extends DocStep {
   isFormField?: boolean
 }
 
+/**
+ * Borrador de la grabación en curso, persistido para poder cerrar la app y
+ * continuar otro día (§8). Incluye los pasos con su captura y la configuración
+ * de la sesión y de Git.
+ */
+export interface DraftPayload {
+  meta: SessionMeta
+  steps: RecordedStep[]
+  sessionId: string
+  createdAt: string
+  outputDir: string
+  git: {
+    enabled: boolean
+    push: boolean
+    branchOverride: string | null
+    messageOverride: string | null
+    baseBranch: string | null
+  }
+  /** ISO; se muestra al ofrecer la restauración */
+  savedAt: string
+}
+
 export interface ViewportBounds {
   x: number
   y: number
@@ -85,6 +107,12 @@ export interface IpcInvokeMap {
    * `docs/` (donde la documentación sí se renderiza); si no, `null`.
    */
   'docusaurus:suggest-docs': (dir: string) => string | null
+  /** guarda el borrador de la grabación en curso (autoguardado) */
+  'draft:save': (draft: DraftPayload) => void
+  /** carga el borrador guardado, o null si no hay */
+  'draft:load': () => DraftPayload | null
+  /** descarta el borrador (al finalizar o al desecharlo) */
+  'draft:clear': () => void
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -119,7 +147,10 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'git:commits',
   'projects:list',
   'projects:forget',
-  'docusaurus:suggest-docs'
+  'docusaurus:suggest-docs',
+  'draft:save',
+  'draft:load',
+  'draft:clear'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
