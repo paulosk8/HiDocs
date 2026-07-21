@@ -30,6 +30,25 @@ const OBSERVER_CONFIG: ObserverConfig = {
 }
 
 /**
+ * Roles ARIA de controles que introducen un valor. Los diseños actuales rara vez
+ * usan `<input type="checkbox">`: un interruptor suele ser un `<button
+ * role="switch">` y un desplegable un `<div role="combobox">`. Sin mirar el rol,
+ * esos controles se tratarían como botones cualquiera y romperían la agrupación
+ * del formulario al que pertenecen.
+ */
+const FIELD_ROLES = [
+  'checkbox',
+  'switch',
+  'radio',
+  'combobox',
+  'listbox',
+  'textbox',
+  'searchbox',
+  'spinbutton',
+  'slider'
+]
+
+/**
  * ¿El elemento es un campo donde se introduce un valor? Sirve para agrupar: un
  * clic en un campo (enfocarlo antes de escribir) es parte del formulario; un
  * clic en un botón de envío no lo es.
@@ -41,7 +60,7 @@ function isFormField(signals: RawEvent['signals']): boolean {
     const type = (signals.type ?? 'text').toLowerCase()
     return !['submit', 'button', 'reset', 'image'].includes(type)
   }
-  return false
+  return FIELD_ROLES.includes((signals.role ?? '').toLowerCase())
 }
 
 /** Título por defecto de cada paso, editable después por el usuario. */

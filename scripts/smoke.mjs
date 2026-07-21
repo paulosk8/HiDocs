@@ -869,6 +869,24 @@ try {
     'Panel colapsable: al expandir, el viewport vuelve a su ancho'
   )
 
+  // Regresión: el encabezado del panel ha ido ganando controles (agrupar campos,
+  // redactar con IA…). Si no envuelve, los de grabación se salen por la derecha
+  // y «detener y guardar» queda inalcanzable, que es la única salida del flujo.
+  const controlsInside = await gui.evaluate(() => {
+    const panel = document.querySelector('.panel')?.getBoundingClientRect()
+    const ctrls = [...document.querySelectorAll('.panel-header .controls .ctrl')]
+    if (!panel || ctrls.length !== 3) return null
+    return ctrls.every((c) => {
+      const r = c.getBoundingClientRect()
+      return r.width > 0 && r.left >= panel.left - 1 && r.right <= panel.right + 1
+    })
+  })
+  check(
+    controlsInside === true,
+    'Panel: los tres controles de grabación caben dentro del panel',
+    String(controlsInside)
+  )
+
   // --- Tema claro/oscuro ---
   const themeState = () =>
     gui.evaluate(() => ({

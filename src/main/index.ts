@@ -6,9 +6,13 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  Menu,
   protocol,
   screen,
-  shell
+  session,
+  shell,
+  type MenuItemConstructorOptions,
+  type WebContents
 } from 'electron'
 import { TargetViewport } from './viewport'
 import { RecorderEngine } from './engine/recorder'
@@ -98,6 +102,68 @@ function registerShotProtocol(): void {
   })
 }
 
+/**
+ * Menú contextual de la GUI: correcciones ortográficas y edición.
+ *
+ * Electron no trae menú contextual propio, así que sin esto el clic derecho no
+ * hace nada y las palabras que el corrector subraya no se pueden corregir. Se
+ * aplica solo a la ventana de la aplicación, no al visor: ahí el menú es el del
+ * sistema documentado y abrirlo encima estorbaría a la grabación.
+ */
+function attachContextMenu(wc: WebContents): void {
+  wc.on('context-menu', (_event, params) => {
+    // Fuera de un campo editable y sin selección no hay nada que ofrecer.
+    if (!params.isEditable && !params.selectionText) return
+
+    const items: MenuItemConstructorOptions[] = []
+
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions) {
+        items.push({ label: suggestion, click: () => wc.replaceMisspelling(suggestion) })
+      }
+      if (!params.dictionarySuggestions.length) {
+        items.push({ label: 'Sin sugerencias', enabled: false })
+      }
+      items.push(
+        { type: 'separator' },
+        {
+          label: `Añadir «${params.misspelledWord}» al diccionario`,
+          click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+        },
+        { type: 'separator' }
+      )
+    }
+
+    items.push(
+      { label: 'Cortar', role: 'cut', enabled: params.editFlags.canCut },
+      { label: 'Copiar', role: 'copy', enabled: params.editFlags.canCopy },
+      { label: 'Pegar', role: 'paste', enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+      { label: 'Seleccionar todo', role: 'selectAll', enabled: params.editFlags.canSelectAll }
+    )
+
+    Menu.buildFromTemplate(items).popup({
+      window: BrowserWindow.fromWebContents(wc) ?? undefined
+    })
+  })
+}
+
+/**
+ * Idiomas del corrector. En macOS lo provee el sistema operativo con su propia
+ * lista, y fijarla desde aquí lanza; en el resto se pide español, que es el
+ * idioma en el que se escribe la documentación.
+ */
+function configureSpellChecker(): void {
+  if (process.platform === 'darwin') return
+  try {
+    const available = session.defaultSession.availableSpellCheckerLanguages
+    const wanted = ['es-ES', 'es'].filter((lang) => available.includes(lang)).slice(0, 1)
+    if (wanted.length) session.defaultSession.setSpellCheckerLanguages(wanted)
+  } catch (err) {
+    console.warn('[spellcheck] no se pudo fijar el idioma:', err)
+  }
+}
+
 function createWindow(): void {
   // La ventana se dimensiona para que el viewport quepa a tamaño nominal
   // (1440x900) junto al panel; si la pantalla no da, se reduce y la sesión
@@ -118,9 +184,14 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // Los títulos y descripciones de los pasos son prosa que acaba publicada
+      // en el manual: merece corrector.
+      spellcheck: true
     }
   })
+
+  attachContextMenu(mainWindow.webContents)
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
@@ -364,6 +435,7 @@ if (!app.requestSingleInstanceLock()) {
 
 app.whenReady().then(() => {
   registerShotProtocol()
+  configureSpellChecker()
   registerIpc()
   createWindow()
 
