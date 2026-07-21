@@ -86,6 +86,7 @@ export async function saveSession(
       timestamp: step.timestamp
     }
     if (step.value !== undefined) persisted.value = step.value
+    if (step.fields?.length) persisted.fields = step.fields
     steps.push(persisted)
 
     const action: FlowAction = {

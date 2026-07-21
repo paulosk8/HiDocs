@@ -112,6 +112,13 @@ export function renderFeatureMdx(
       out.push(mdxSafe(step.description.trim()))
       out.push('')
     }
+    // Campos de un formulario agrupado: una lista de etiqueta → valor.
+    if (step.fields?.length) {
+      for (const f of step.fields) {
+        out.push(`- **${mdxSafe(f.label)}:** ${mdxSafe(f.value)}`)
+      }
+      out.push('')
+    }
     if (step.screenshot && hasImage(step.screenshot)) {
       out.push(`![Paso ${n}: ${mdxSafe(heading)}](./${step.screenshot})`)
       out.push('')

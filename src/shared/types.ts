@@ -31,6 +31,13 @@ export interface DocStep {
   selectorCandidates: SelectorCandidate[]
   /** para fill/select ("***" si es password) */
   value?: string
+  /**
+   * Campos de un formulario agrupados en este paso. Cuando la GUI une varios
+   * `fill`/`select` seguidos del mismo formulario en un solo paso (para no
+   * generar una captura por campo), cada campo queda aquí como etiqueta+valor y
+   * `value` deja de usarse.
+   */
+  fields?: Array<{ label: string; value: string }>
   /** metadato: URL en el momento de la interacción */
   url: string
   /** ruta relativa dentro del paquete exportado: img/paso-03.png */

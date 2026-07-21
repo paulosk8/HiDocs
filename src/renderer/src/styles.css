@@ -1412,3 +1412,36 @@ select {
   display: flex;
   gap: 8px;
 }
+
+/* ---------- interruptor «agrupar campos» y lista de campos ---------- */
+
+.group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Lista de campos de un formulario agrupado, dentro de la tarjeta de paso. */
+.field-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.field-list li {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.field-label {
+  font-weight: 600;
+  color: var(--text);
+}

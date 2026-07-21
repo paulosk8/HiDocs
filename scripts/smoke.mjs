@@ -108,6 +108,16 @@ try {
     'Etapa 1: el estado inicial muestra la guía de inicio'
   )
 
+  // Se desactiva «agrupar campos» para que las etapas 3-6 registren un paso por
+  // campo (comportamiento del motor). La agrupación se prueba aparte, más abajo.
+  check(
+    (await gui.locator('.group-toggle input').count()) > 0,
+    'Etapa 1: existe el interruptor de agrupar campos'
+  )
+  if (await gui.locator('.group-toggle input').isChecked()) {
+    await gui.locator('.group-toggle input').uncheck()
+  }
+
   // --- Etapa 2: abrir la URL y adjuntar el motor por CDP ---
   await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', fixture.url)
   await gui.click('button:has-text("Abrir")')
@@ -326,15 +336,20 @@ try {
 
   await gui.click('.ctrl:nth-child(3)')
   await gui.waitForSelector('.dialog', { timeout: 20000 })
-  const dialogTitle = await gui.locator('.dialog h3').textContent()
-  if (dialogTitle?.includes('sin título')) {
-    await gui.click('.dialog .btn.primary')
-    await gui.waitForFunction(
-      () => document.querySelector('.dialog h3')?.textContent?.includes('guardada'),
-      null,
-      { timeout: 20000 }
-    )
-  }
+  // Con Git activo, al detener aparece primero el aviso de que se registrará en
+  // Git (con la rama), y permite cancelar para seguir grabando.
+  const commitDialog = await gui.locator('.dialog').textContent()
+  check(
+    /registrar en Git/i.test(commitDialog) && commitDialog.includes('docs/matriculas'),
+    'Etapa 6: al detener, se avisa del commit antes de registrarlo',
+    (commitDialog.match(/Rama:[^\n]*/) ?? [''])[0]
+  )
+  await gui.click('.dialog .btn.primary') // "Registrar en Git"
+  await gui.waitForFunction(
+    () => document.querySelector('.dialog h3')?.textContent?.includes('guardada'),
+    null,
+    { timeout: 20000 }
+  )
   const finalDialog = {
     title: await gui.locator('.dialog h3').textContent(),
     body: await gui.locator('.dialog p').textContent()
@@ -790,6 +805,59 @@ try {
     'Docusaurus: apuntar ya dentro de docs/ no genera aviso',
     String(noSuggest)
   )
+
+  // --- Agrupar campos: la página MDX lista los campos del formulario ---
+  // Un paso agrupado (con `fields`) debe rendersizarse como una lista en el MDX,
+  // en vez de una captura y un paso por campo.
+  await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'formularios',
+          feature: 'con-campos',
+          title: 'Formulario con campos',
+          role: 'admin',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-fields',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps: [
+          {
+            id: 'f1',
+            order: 1,
+            action: 'fill',
+            title: 'Rellenar el formulario',
+            description: '',
+            selectorCandidates: [],
+            url: 'http://x',
+            screenshot: 'img/paso-01.png',
+            boundingRect: { x: 0, y: 0, width: 1, height: 1 },
+            includeInDocs: true,
+            timestamp: 't',
+            tempFile: '',
+            fields: [
+              { label: 'Nombre', value: 'ACME' },
+              { label: 'Clave', value: '***' }
+            ]
+          }
+        ]
+      }),
+    outDir
+  )
+  const fieldsMdx = readFileSync(join(outDir, 'formularios', 'con-campos', 'index.mdx'), 'utf8')
+  check(
+    fieldsMdx.includes('- **Nombre:** ACME') && fieldsMdx.includes('- **Clave:** ***'),
+    'Agrupar campos: la página MDX lista los campos del formulario agrupado',
+    fieldsMdx
+      .split('\n')
+      .filter((l) => l.startsWith('- **'))
+      .join(' | ')
+  )
+
+  // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
+  await gui.evaluate(() => localStorage.removeItem('docrecorder.groupFormFields')).catch(() => {})
 
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)

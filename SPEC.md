@@ -68,6 +68,7 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
   5. Remueve el overlay.
   6. Emite el paso a la GUI por IPC.
 - Inputs de texto: consolidar en UN paso por campo (valor final), no un paso por tecla. Los campos de contraseña registran la acción pero guardan el valor como `"***"`.
+- **Agrupar campos de formulario** (interruptor en el panel, preferencia persistida, por defecto activo): la GUI funde `fill`/`select` seguidos de la misma URL en un solo paso, con una sola captura (el formulario relleno) y la lista de campos en `DocStep.fields` (etiqueta+valor). Reduce drásticamente las imágenes: un formulario de N campos pasa de N pasos a uno. La fusión es una decisión de la GUI (`store.addStep`), no del motor, que sigue emitiendo un evento por campo. Se rompe con un clic, envío o navegación.
 
 ## 4. Estrategia de selectores (crítica — el frontend es Next.js)
 
@@ -112,6 +113,7 @@ interface DocStep {
   description: string // editable por el usuario
   selectorCandidates: SelectorCandidate[]
   value?: string // para fill/select ("***" si es password)
+  fields?: { label: string; value: string }[] // formulario agrupado (§3): campos de varios fill/select unidos
   url: string // metadato
   screenshot: string // ruta relativa: img/paso-03.png
   boundingRect: { x: number; y: number; width: number; height: number }
@@ -202,7 +204,7 @@ Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 420p
 
 **Barra superior de sesión:** campos módulo/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, botón "Proyectos…" (abre el explorador de repositorios), indicador de estado (Listo / Grabando / Pausado).
 
-**Controles:** ● Grabar, ⏸ Pausar, ■ Detener y guardar. Atajo global `Ctrl+Shift+R` para pausar/reanudar sin tocar el panel.
+**Controles:** ● Grabar, ⏸ Pausar, ■ Detener y guardar. Atajo global `Ctrl+Shift+R` para pausar/reanudar sin tocar el panel. Interruptor **«agrupar campos»** en el encabezado (§3). Al pulsar ■ con Git activo, un **aviso de confirmación** informa de que se registrará en Git (con la rama) y permite cancelar para seguir grabando: el commit es difícil de deshacer y la documentación puede no estar completa.
 
 **Panel de pasos:** lista scrolleable de tarjetas. Cada tarjeta: miniatura clicable (abre la captura a tamaño real en modal), badge de número, título (input), descripción (textarea auto-resize), chip con el selector preferido y su estrategia, toggle "incluir en docs", botones eliminar y arrastrar para reordenar (dnd-kit). Al llegar un paso nuevo durante la grabación, hacer scroll automático y enfocar el campo título para escribir la descripción al vuelo.
 

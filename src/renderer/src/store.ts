@@ -56,6 +56,11 @@ interface SessionState {
    * DOM: si no, `about:blank` taparía ese onboarding con un rectángulo vacío.
    */
   viewportActive: boolean
+  /**
+   * Agrupar los `fill`/`select` seguidos de un mismo formulario en un solo paso,
+   * para no generar una captura por cada campo. Preferencia persistida.
+   */
+  groupFormFields: boolean
 
   setMeta: (patch: Partial<SessionMeta>) => void
   setOutputDir: (dir: string) => void
@@ -81,6 +86,24 @@ interface SessionState {
   togglePanel: () => void
   toggleTheme: () => void
   setViewportActive: (active: boolean) => void
+  setGroupFormFields: (value: boolean) => void
+}
+
+const GROUP_FIELDS_KEY = 'docrecorder.groupFormFields'
+
+/** Agrupar campos está activado salvo que el usuario lo haya desactivado. */
+function initialGroupFormFields(): boolean {
+  try {
+    return localStorage.getItem(GROUP_FIELDS_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+/** Nombre del campo de un paso `fill`/`select`, tomado del último «…» del título. */
+function fieldLabel(step: RecordedStep): string {
+  const matches = [...step.title.matchAll(/«([^»]*)»/g)]
+  return matches.length ? matches[matches.length - 1][1] : step.title
 }
 
 const THEME_KEY = 'docrecorder.theme'
@@ -135,6 +158,7 @@ export const useSession = create<SessionState>((set) => ({
   theme: initialTheme(),
   panelCollapsed: false,
   viewportActive: false,
+  groupFormFields: initialGroupFormFields(),
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
   setOutputDir: (outputDir) => set({ outputDir }),
@@ -151,10 +175,48 @@ export const useSession = create<SessionState>((set) => ({
     })),
 
   addStep: (step) =>
-    set((s) => ({
-      steps: renumber([...s.steps, step]),
-      focusStepId: step.id
-    })),
+    set((s) => {
+      const last = s.steps[s.steps.length - 1]
+      const isInput = step.action === 'fill' || step.action === 'select'
+      // Se funde con el paso anterior si ambos son campos del MISMO formulario:
+      // acciones de entrada seguidas, en la misma URL, sin un clic/envío/navegación
+      // que rompa la secuencia (eso ya crea un paso distinto). No se funde en un
+      // paso excluido de docs.
+      const mergeable =
+        s.groupFormFields &&
+        isInput &&
+        last &&
+        (last.action === 'fill' || last.action === 'select') &&
+        last.url === step.url &&
+        last.includeInDocs
+
+      if (mergeable) {
+        // La captura pasa a ser la más reciente (el formulario más completo) y el
+        // valor del campo se acumula en la lista. La primera vez se siembra con el
+        // campo del paso anterior.
+        const seeded = last.fields ?? [{ label: fieldLabel(last), value: last.value ?? '' }]
+        const merged: RecordedStep = {
+          ...last,
+          action: 'fill',
+          title: last.fields ? last.title : 'Rellenar el formulario',
+          tempFile: step.tempFile,
+          boundingRect: step.boundingRect,
+          timestamp: step.timestamp,
+          value: undefined,
+          fields: [...seeded, { label: fieldLabel(step), value: step.value ?? '' }],
+          selectorCandidates: step.selectorCandidates
+        }
+        return {
+          steps: renumber([...s.steps.slice(0, -1), merged]),
+          focusStepId: merged.id
+        }
+      }
+
+      return {
+        steps: renumber([...s.steps, step]),
+        focusStepId: step.id
+      }
+    }),
 
   updateStep: (id, patch) =>
     set((s) => ({
@@ -213,5 +275,13 @@ export const useSession = create<SessionState>((set) => ({
       }
       return { theme }
     }),
-  setViewportActive: (viewportActive) => set({ viewportActive })
+  setViewportActive: (viewportActive) => set({ viewportActive }),
+  setGroupFormFields: (groupFormFields) => {
+    try {
+      localStorage.setItem(GROUP_FIELDS_KEY, groupFormFields ? '1' : '0')
+    } catch {
+      // sin persistencia vale para esta sesión
+    }
+    set({ groupFormFields })
+  }
 }))

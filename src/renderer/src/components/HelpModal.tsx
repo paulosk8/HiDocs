@@ -183,7 +183,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>⏸ / ▶</b> Pausar / Reanudar · detiene la captura sin cerrar la sesión.
                 </li>
                 <li>
-                  <b>■</b> Detener y guardar · finaliza y escribe el paquete.
+                  <b>■</b> Detener y guardar · finaliza y escribe el paquete. Si Git está activo,
+                  antes avisa de que se registrará en Git (con la rama), para que puedas{' '}
+                  <b>cancelar y seguir grabando</b> si aún no está completo.
                 </li>
               </ul>
               <p>
@@ -191,6 +193,12 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 paso. La app espera a que la página se estabilice, resalta el elemento y toma la
                 captura. Los campos de texto se consolidan en <b>un solo paso</b> (el valor final),
                 y las <b>contraseñas se enmascaran</b> como <code>***</code>.
+              </p>
+              <p>
+                <b>Agrupar campos</b> (interruptor en el encabezado del panel, activado por
+                defecto): une los campos seguidos de un mismo formulario en <b>un solo paso</b> —una
+                captura del formulario relleno y la lista de campos y valores— en vez de una captura
+                por campo. Desactívalo si prefieres documentar cada campo por separado.
               </p>
             </section>
 

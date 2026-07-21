@@ -35,9 +35,16 @@ export function StepsPanel(): React.JSX.Element {
   const projectsOpen = useSession((s) => s.projectsOpen)
   const helpOpen = useSession((s) => s.helpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
+  const groupFormFields = useSession((s) => s.groupFormFields)
+  const setGroupFormFields = useSession((s) => s.setGroupFormFields)
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
+  const [pendingCommit, setPendingCommit] = useState<{
+    branch: string
+    message: string
+    untitled: number
+  } | null>(null)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -111,6 +118,20 @@ export function StepsPanel(): React.JSX.Element {
     }
 
     const untitled = s.steps.filter((step) => !step.title.trim()).length
+
+    // Si se va a registrar en Git, se confirma antes: el commit es difícil de
+    // deshacer y a veces la documentación aún no está completa. El aviso deja
+    // cancelar y seguir grabando (pulsando ●).
+    if (s.gitEnabled) {
+      setPendingCommit({
+        branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
+        message:
+          s.gitMessageOverride ?? suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
+        untitled
+      })
+      return
+    }
+
     if (untitled > 0) {
       setPendingSave({ untitled })
       return
@@ -137,6 +158,7 @@ export function StepsPanel(): React.JSX.Element {
   const modalOpen =
     shot !== null ||
     pendingSave !== null ||
+    pendingCommit !== null ||
     result !== null ||
     problem !== null ||
     projectsOpen ||
@@ -189,6 +211,30 @@ export function StepsPanel(): React.JSX.Element {
   const dialogs = (
     <>
       {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
+
+      {pendingCommit && (
+        <ConfirmDialog
+          title="Detener y registrar en Git"
+          body={[
+            'Se guardará la documentación y se registrará en Git:',
+            `\n· Rama: ${pendingCommit.branch}`,
+            `· Commit: ${pendingCommit.message}`,
+            pendingCommit.untitled > 0
+              ? `\n${pendingCommit.untitled} paso(s) todavía sin título.`
+              : '',
+            '\nSi aún no está completa, cancela y pulsa ● para seguir grabando.'
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          confirmLabel="Registrar en Git"
+          cancelLabel="Seguir grabando"
+          onConfirm={() => {
+            setPendingCommit(null)
+            void write()
+          }}
+          onCancel={() => setPendingCommit(null)}
+        />
+      )}
 
       {pendingSave && (
         <ConfirmDialog
@@ -273,6 +319,17 @@ export function StepsPanel(): React.JSX.Element {
         </button>
         <h2>Pasos</h2>
         <span className="count">{steps.length}</span>
+        <label
+          className="group-toggle"
+          title="Une los campos de un mismo formulario en un solo paso (una captura en vez de una por campo)"
+        >
+          <input
+            type="checkbox"
+            checked={groupFormFields}
+            onChange={(e) => setGroupFormFields(e.target.checked)}
+          />
+          agrupar campos
+        </label>
         <div className="controls">{controls}</div>
       </div>
 
