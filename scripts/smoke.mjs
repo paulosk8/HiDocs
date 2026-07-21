@@ -773,11 +773,12 @@ try {
   )
   // Navegar a un tema debe moverlo al estado activo (scroll-spy + clic).
   await gui.getByRole('button', { name: 'Salida y Docusaurus' }).click()
-  await gui.waitForTimeout(600)
+  await gui.waitForTimeout(800)
+  const activeTopic = await gui.locator('.help-nav button.active').textContent()
   check(
-    (await gui.locator('.help-nav button.active').textContent()) === 'Salida y Docusaurus' &&
-      (await gui.locator('.help-tree').first().isVisible()),
-    'Ayuda: navegar a un tema lo resalta y muestra su contenido'
+    activeTopic === 'Salida y Docusaurus' && (await gui.locator('.help-tree').first().isVisible()),
+    'Ayuda: navegar a un tema lo resalta y muestra su contenido',
+    `activo: ${activeTopic}`
   )
   await gui.keyboard.press('Escape')
   await gui.waitForSelector('.help-modal', { state: 'detached', timeout: 3000 })

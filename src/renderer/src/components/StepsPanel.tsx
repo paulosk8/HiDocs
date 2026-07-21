@@ -99,10 +99,31 @@ export function StepsPanel(): React.JSX.Element {
     }
   }, [])
 
-  /** Detener y guardar (§8): valida, avisa, y deja guardar igualmente. */
-  const stopAndSave = async (): Promise<void> => {
+  /**
+   * Detiene la grabación de verdad y termina de guardar. Se llama al confirmar
+   * el aviso de Git, o directamente cuando no hay Git. Detener vacía la cola del
+   * motor y puede emitir un último paso, por eso el estado se relee después.
+   */
+  const finishSave = useCallback(async (): Promise<void> => {
     applyEngineState(await ipc.invoke('recorder:stop'))
+    const s = useSession.getState()
+    const untitled = s.steps.filter((step) => !step.title.trim()).length
+    // Sin Git, el aviso de pasos sin título es el último filtro; con Git ya se
+    // avisó de ello en la confirmación del commit.
+    if (untitled > 0 && !s.gitEnabled) {
+      setPendingSave({ untitled })
+      return
+    }
+    await write()
+  }, [write, applyEngineState])
 
+  /**
+   * Detener y guardar (§8). Valida y, si se va a registrar en Git, avisa ANTES
+   * de detener: el commit cuesta deshacerlo y a veces la documentación aún no
+   * está completa. Así, cancelar deja la grabación intacta, sin tener que
+   * reanudar.
+   */
+  const stopAndSave = async (): Promise<void> => {
     const s = useSession.getState()
     if (!s.steps.length) {
       setProblem('No hay pasos que guardar.')
@@ -117,26 +138,17 @@ export function StepsPanel(): React.JSX.Element {
       return
     }
 
-    const untitled = s.steps.filter((step) => !step.title.trim()).length
-
-    // Si se va a registrar en Git, se confirma antes: el commit es difícil de
-    // deshacer y a veces la documentación aún no está completa. El aviso deja
-    // cancelar y seguir grabando (pulsando ●).
     if (s.gitEnabled) {
       setPendingCommit({
         branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
         message:
           s.gitMessageOverride ?? suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
-        untitled
+        untitled: s.steps.filter((step) => !step.title.trim()).length
       })
       return
     }
 
-    if (untitled > 0) {
-      setPendingSave({ untitled })
-      return
-    }
-    await write()
+    await finishSave()
   }
 
   const toggleRecording = useCallback(async () => {
@@ -222,7 +234,7 @@ export function StepsPanel(): React.JSX.Element {
             pendingCommit.untitled > 0
               ? `\n${pendingCommit.untitled} paso(s) todavía sin título.`
               : '',
-            '\nSi aún no está completa, cancela y pulsa ● para seguir grabando.'
+            '\nSi aún no está completa, cancela y sigue grabando: la grabación no se detiene.'
           ]
             .filter(Boolean)
             .join('\n')}
@@ -230,7 +242,7 @@ export function StepsPanel(): React.JSX.Element {
           cancelLabel="Seguir grabando"
           onConfirm={() => {
             setPendingCommit(null)
-            void write()
+            void finishSave()
           }}
           onCancel={() => setPendingCommit(null)}
         />
