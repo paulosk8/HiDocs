@@ -29,6 +29,7 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
 - **Playwright** (`playwright-core`) conectado al viewport vía **CDP**: Electron se lanza con `--remote-debugging-port`, y un módulo "motor" usa `chromium.connectOverCDP()` para adjuntarse al `WebContentsView` del sistema web. Playwright se usa desde ya para observar el DOM y generar selectores, de modo que en la etapa 3 (runner) los mismos selectores sean reproducibles sin conversión.
 - **zustand** (o similar ligero) para estado del panel de pasos.
 - Persistencia simple en disco (JSON + PNG). Sin base de datos.
+- **SDK de cada proveedor de IA** para la redacción de los pasos (§14): `@anthropic-ai/sdk` (Claude) y `@google/genai` (Gemini). Ambos se usan **solo desde el proceso principal**.
 
 ## 3. Arquitectura de procesos
 
@@ -116,6 +117,7 @@ interface DocStep {
   selectorCandidates: SelectorCandidate[]
   value?: string // para fill/select ("***" si es password)
   fields?: { label: string; value: string }[] // formulario agrupado (§3): campos de varios fill/select unidos
+  mergedActions?: FlowAction[] // acciones individuales del paso agrupado, para que el runner lo reproduzca (§12)
   url: string // metadato
   screenshot: string // ruta relativa: img/paso-03.png
   boundingRect: { x: number; y: number; width: number; height: number }
@@ -127,6 +129,52 @@ interface SelectorCandidate {
   strategy: 'testid' | 'id' | 'role' | 'text' | 'css'
   value: string
   score: number // 0-100, robustez estimada
+}
+```
+
+**Paso en vuelo** (`RecordedStep`, en `src/shared/ipc-contract.ts`): lo que viaja del motor a la GUI. Extiende `DocStep` con campos que **no se persisten**, porque solo valen mientras la página siga cargada:
+
+```typescript
+interface RecordedStep extends DocStep {
+  tempFile: string // ruta absoluta del PNG temporal; al guardar se copia a img/paso-NN.png
+  isFormField?: boolean // el elemento es (o acciona) un campo: decide la agrupación (§3)
+  ref?: number // referencia al elemento en el observador, para volver a resaltarlo
+  groupItems?: GroupedField[] // fuente de verdad del formulario agrupado (§3)
+}
+
+// Un campo dentro de un paso agrupado. De aquí se derivan `fields` (lo que se
+// publica) y `mergedActions` (lo que reproduce el runner), de modo que quitar un
+// campo no deje descuadrada ni su acción ni su resaltado.
+interface GroupedField {
+  label: string
+  value: string // vacío si solo se enfocó
+  actions: FlowAction[] // enfocar y escribir son dos
+  refs: number[] // sus elementos, para volver a marcarlos en la captura
+}
+```
+
+**Tipos de la asistencia de IA** (§14), en `src/shared/types.ts`. La clave **nunca** viaja al renderer: solo si existe o no.
+
+```typescript
+type AiProvider = 'anthropic' | 'gemini'
+
+interface AiSettings {
+  provider: AiProvider
+  models: Record<AiProvider, string> // se recuerda un modelo por proveedor
+  useScreenshot: boolean // enviar también la captura del paso (visión)
+}
+
+interface AiStatus {
+  settings: AiSettings
+  configured: Record<AiProvider, boolean> // proveedores con clave guardada
+  ready: boolean // el proveedor activo tiene clave
+  encrypted: boolean // el sistema operativo ofrece cifrado para guardarla
+}
+
+interface AiStepDraft {
+  id: string // el del paso; solo se aceptan los que se pidieron
+  title: string
+  description: string
 }
 ```
 
@@ -202,13 +250,22 @@ Nomenclatura: kebab-case en carpetas, `paso-NN.png` con cero a la izquierda. Al 
 
 ## 8. GUI (renderer)
 
-Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 420px).
+Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 440px).
 
-**Barra superior de sesión:** campos módulo/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, botón "Proyectos…" (abre el explorador de repositorios), indicador de estado (Listo / Grabando / Pausado).
+**Barra superior de sesión:** campos módulo/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, botón "Proyectos…" (explorador de repositorios), "Regenerar…" (runner, §12), "IA" (ajustes de redacción, §14; muestra ✓ cuando hay clave), interruptor de tema y ayuda, e indicador de estado (Listo / Grabando / Pausado).
 
-**Controles:** ● Grabar, ⏸ Pausar, ■ Detener y guardar. Atajo global `Ctrl+Shift+R` para pausar/reanudar sin tocar el panel. Interruptor **«agrupar campos»** en el encabezado (§3). Al pulsar ■ con Git activo, un **aviso de confirmación** informa de que se registrará en Git (con la rama) y permite cancelar para seguir grabando: el commit es difícil de deshacer y la documentación puede no estar completa.
+**Controles:** ● Grabar, ⏸ Pausar, ■ Detener y guardar. Atajo global `Ctrl+Shift+R` para pausar/reanudar sin tocar el panel. En el encabezado del panel conviven además el interruptor **«agrupar campos»** (§3) y **«✨ Redactar todos»** (§14); el encabezado **envuelve** a propósito, porque si no los controles de grabación se salen del panel cuando es estrecho y ■ queda inalcanzable —y con él la única salida del flujo—.
 
-**Panel de pasos:** lista scrolleable de tarjetas. Cada tarjeta: miniatura clicable (abre la captura a tamaño real en modal), badge de número, título (input), descripción (textarea auto-resize), chip con el selector preferido y su estrategia, toggle "incluir en docs", botones eliminar y arrastrar para reordenar (dnd-kit). Al llegar un paso nuevo durante la grabación, hacer scroll automático y enfocar el campo título para escribir la descripción al vuelo.
+**Al pulsar ■** hay dos comportamientos distintos, y la diferencia es deliberada:
+
+- **Falta un dato** (módulo, funcionalidad o carpeta de salida) o no hay pasos: la grabación **se detiene igualmente** y el aviso dice qué falta. Pulsar ■ significa «he terminado»; validar antes de detener hacía que el botón pareciese no responder. Los pasos se conservan (y el borrador se autoguarda): basta completar arriba y volver a pulsar.
+- **Git activo**: el aviso de confirmación aparece **antes** de detener, e informa de la rama y el mensaje. Eso no es un error sino una decisión —el commit cuesta deshacerlo y la documentación puede no estar completa—, así que cancelar debe dejar seguir grabando sin tener que reanudar.
+
+**Panel de pasos:** lista scrolleable de tarjetas. Cada tarjeta: miniatura clicable (abre la captura a tamaño real en modal), badge de número, título (input), descripción (textarea auto-resize), botón **✨** para redactarla con IA (§14), chip con el selector preferido y su estrategia, toggle "incluir en docs", botones eliminar y arrastrar para reordenar (dnd-kit). Un paso de formulario agrupado lista además sus campos, cada uno con un **✕** que lo quita del paso (§3). Al llegar un paso nuevo durante la grabación, hacer scroll automático y enfocar el campo título para escribir la descripción al vuelo.
+
+**El número del paso vive solo en la GUI y en el MDX**, nunca dentro del PNG: el orden cambia al eliminar o reordenar y los píxeles ya no se pueden rehacer (§3).
+
+**Escritura de los textos:** el título y la descripción se publican tal cual, así que la ventana lleva **corrector ortográfico** y **menú contextual** propio (sugerencias, «añadir al diccionario», cortar/copiar/pegar). Electron no trae menú contextual, así que sin implementarlo el clic derecho no hace nada. Se aplica solo a la ventana de la aplicación: en el visor el menú es el del sistema documentado y abrirlo encima estorbaría a la grabación.
 
 **Validación al guardar:** avisar si hay pasos sin título; permitir guardar de todos modos.
 
@@ -234,9 +291,13 @@ Diseño limpio, denso en información, con **modo claro y oscuro** (interruptor 
 
 - `contextIsolation: true`, `nodeIntegration: false` en todos los renderers; IPC solo por `contextBridge` con canales tipados (definir un archivo `ipc-contract.ts` compartido).
 - El viewport del sistema web NO recibe acceso a APIs de Node.
-- No persistir credenciales; la sesión del sistema vive en la partición del `WebContentsView` (usar `session.fromPartition('persist:target-app')` para conservar login entre usos).
+- No persistir credenciales del sistema documentado; su sesión vive en la partición del `WebContentsView` (`session.fromPartition('persist:target-app')`, para conservar el login entre usos).
+- **Clave de la API de IA** (§14): se guarda en `userData/settings.json` cifrada con `safeStorage` (llavero del sistema operativo), **nunca** en el repositorio de documentación. No sale del proceso principal: el renderer solo puede guardarla y preguntar si existe. Si el sistema no ofrece cifrado, se guarda en claro y la GUI lo advierte.
+- **Llamadas a la IA desde el proceso principal**, como las de Git: la clave no pasa por el renderer y las capturas se leen del disco allí.
+- `shell:open-external` solo acepta `http`/`https`: el canal existe para abrir la consola del proveedor de IA, no para que el renderer lance `file://` ni esquemas del sistema.
 - TypeScript estricto. ESLint + Prettier.
-- Estructura de código: `src/main/` (main + engine), `src/preload/`, `src/renderer/`, `src/shared/` (tipos y contrato IPC).
+- Estructura de código: `src/main/` (main + engine + `ai/`), `src/preload/`, `src/renderer/`, `src/shared/` (tipos y contrato IPC).
+- **Pruebas:** `npm run build && node scripts/smoke.mjs` — 100 comprobaciones de extremo a extremo que arrancan la app real y la manejan por CDP. Convención del proyecto: **cada arreglo llega con la prueba que lo demuestra**, y se comprueba que esa prueba **falla sin el arreglo**. Dos variables de entorno la sostienen: `DOCRECORDER_USER_DATA` (aísla el estado persistente) y `DOCRECORDER_AI_FAKE` (sustituye al proveedor de IA por una respuesta determinista, tras comprobar que hay clave). Lo que no se puede afirmar desde el DOM se comprueba **sobre los píxeles del PNG**, con un decodificador mínimo dentro del propio script.
 
 ## 10. Integración Git (GitHub Flow)
 
@@ -303,6 +364,20 @@ La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o 
 10. Nunca se indexan ni se comprometen archivos ajenos; sin remoto, el push no se intenta.
 11. El explorador muestra repositorios, ramas e historial, y permite elegir la rama base de la próxima grabación sin escribir nada en el repositorio.
 
+**Fidelidad de la captura (§3):** cada una de estas nació de documentar el sistema real, y todas tienen su comprobación en el smoke.
+
+12. Un gesto del usuario produce **un** paso: un interruptor que reenvía el clic a su `<input>` escondido no genera dos ni rompe el grupo del formulario.
+13. La captura de un paso agrupado resalta **todos** sus campos, no solo el último.
+14. El elemento señalado **se ve** aunque el fondo de un modal recién abierto lo oscurezca.
+15. Un clic que cambia de pantalla (cerrar sesión) conserva la captura previa, con el elemento señalado, en vez de ilustrar la pantalla siguiente sin recuadro.
+16. Eliminar o reordenar pasos nunca deja una captura contradiciendo su número.
+
+**Asistencia de IA (§14):**
+
+17. Sin clave configurada, redactar avisa de lo que falta en vez de fallar; la clave nunca vuelve al renderer y se guarda cifrada.
+18. Cada proveedor guarda su propia clave y su propio modelo.
+19. Redactar un paso no altera los demás, y «Redactar todos» omite los excluidos de la documentación.
+
 ## 12. Runner de regeneración
 
 Cuando el sistema documentado cambia de interfaz, las capturas quedan desactualizadas. El runner (`src/main/engine/runner.ts`) re-ejecuta el flujo de una funcionalidad y **actualiza sus capturas** sin volver a grabar a mano.
@@ -313,6 +388,7 @@ Cuando el sistema documentado cambia de interfaz, las capturas quedan desactuali
 - **Fallo:** si ningún selector encuentra el elemento, el paso se **marca como fallido**, conserva su captura anterior y el runner **sigue** con el resto. Al final, un informe por paso (regenerado / fallido).
 - **Salida:** sobrescribe los `img/paso-NN.png` en disco; el usuario revisa y comitea con el flujo de Git normal (no se re-commitea solo).
 - **UX:** el replay ocurre en el visor **visible** (para que las capturas salgan con el tamaño correcto); el informe se muestra al terminar.
+- **Efecto secundario útil:** como rehace las imágenes con el motor actual, regenerar una funcionalidad antigua le aplica también las mejoras de captura posteriores a su grabación (sin el número quemado, con el grupo entero resaltado, sin el elemento apagado bajo un modal).
 
 ## 13. Sugerencia de plan de implementación (para el agente)
 
@@ -334,6 +410,8 @@ El motor titula cada paso de forma mecánica (`Clic en «Guardar»`) y deja la d
 - **Contexto enviado:** los metadatos del manual, el **índice completo del flujo** (todos los títulos, para situar cada paso) y, por cada paso a redactar, su acción, el valor o los campos, la URL y —si el ajuste está activo— su **captura**. Las contraseñas ya viajan enmascaradas (`***`).
 - **Lotes:** los pasos se redactan de seis en seis. El contexto del flujo se envía una vez por lote, así que sale más coherente y más barato que una llamada por paso; el lote se mantiene pequeño para que el progreso avance a la vista y la petición no se dispare de tamaño.
 - **Salida estructurada:** `output_config.format` en Claude y `responseSchema` en Gemini, con el mismo esquema. Solo se aceptan los `id` que se pidieron: un modelo que se invente un paso no puede sobrescribir otro.
-- **Alcance en la GUI:** botón ✨ por paso y «✨ Redactar todos» en el encabezado del panel. «Todos» solo toca los pasos marcados como *incluir en docs*.
+- **Alcance en la GUI:** botón ✨ por paso y «✨ Redactar todos» en el encabezado del panel. «Todos» solo toca los pasos marcados como _incluir en docs_.
 - **Fallos:** un error a mitad devuelve **lo ya redactado** más el motivo (clave inválida, límite de peticiones, modelo no disponible, sin conexión), traducido a un mensaje accionable.
+- **Canales IPC:** `ai:status`, `ai:set-key`, `ai:set-settings` y `ai:draft`, más el evento `ai:progress` (avance tras cada lote). Ninguno devuelve la clave.
 - **Pruebas:** la variable de entorno `DOCRECORDER_AI_FAKE` sustituye la llamada al proveedor por una respuesta determinista, después de comprobar que hay clave. Así el smoke recorre el circuito completo (ajustes → IPC → aplicar en el panel) sin red ni clave real.
+- **Estado de verificación:** el camino de **Gemini está probado contra la API real** (con y sin captura; los modelos ofrecidos se confirmaron existentes con `models.list`). El de **Claude solo está comprobado por tipos**: no había clave de Anthropic disponible. Si aparece una, conviene ejercitarlo con una sonda desechable antes de fiarse, porque es el proveedor por defecto.
