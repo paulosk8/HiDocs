@@ -73,7 +73,10 @@ const userData = mkdtempSync(join(tmpdir(), 'docrecorder-userdata-'))
 const child = spawn(electronPath, ['.'], {
   cwd: root,
   stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, DOCRECORDER_USER_DATA: userData }
+  // `DOCRECORDER_AI_FAKE` sustituye la llamada al proveedor de IA por una
+  // respuesta determinista: la prueba recorre el circuito completo (ajustes →
+  // IPC → aplicar en el panel) sin depender de la red ni de una clave real.
+  env: { ...process.env, DOCRECORDER_USER_DATA: userData, DOCRECORDER_AI_FAKE: '1' }
 })
 child.stdout.on('data', (d) => process.stdout.write(`[main] ${d}`))
 child.stderr.on('data', (d) => {
@@ -988,6 +991,144 @@ try {
       .join(' | ')
   )
 
+  // --- Redacción con IA ---
+  const aiInitial = await gui.evaluate(() => window.docrecorder.invoke('ai:status'))
+  check(
+    aiInitial.settings.provider === 'anthropic' &&
+      aiInitial.settings.models.anthropic === 'claude-opus-4-8' &&
+      aiInitial.settings.models.gemini === 'gemini-3.5-flash' &&
+      aiInitial.settings.useScreenshot === true &&
+      aiInitial.ready === false,
+    'IA: arranca con Claude por defecto, sin clave y sin estar lista',
+    JSON.stringify(aiInitial.settings)
+  )
+
+  // Sin clave no se llama a nadie: se explica qué falta en vez de reventar.
+  const aiNoKey = await gui.evaluate(() =>
+    window.docrecorder.invoke('ai:draft', {
+      meta: { module: 'm', feature: 'f', title: 't', role: 'r', baseUrl: 'http://x' },
+      outline: [{ order: 1, title: 'Clic en «Guardar»' }],
+      steps: [
+        { id: 's1', order: 1, action: 'click', title: 'Clic en «Guardar»', description: '', url: 'http://x' }
+      ]
+    })
+  )
+  check(
+    aiNoKey.drafts.length === 0 && /clave/i.test(aiNoKey.error ?? ''),
+    'IA: sin clave configurada avisa en vez de fallar',
+    aiNoKey.error
+  )
+
+  const FAKE_KEY = 'sk-ant-clave-de-prueba-12345'
+  const aiWithKey = await gui.evaluate(
+    (key) => window.docrecorder.invoke('ai:set-key', { provider: 'anthropic', key }),
+    FAKE_KEY
+  )
+  check(
+    aiWithKey.ready &&
+      aiWithKey.configured.anthropic &&
+      !JSON.stringify(aiWithKey).includes(FAKE_KEY),
+    'IA: la clave se guarda y nunca vuelve al renderer'
+  )
+
+  const settingsRaw = readFileSync(join(userData, 'settings.json'), 'utf8')
+  check(
+    aiWithKey.encrypted ? !settingsRaw.includes(FAKE_KEY) : settingsRaw.includes('raw:'),
+    'IA: la clave se guarda cifrada por el sistema operativo',
+    aiWithKey.encrypted ? 'cifrada' : 'este sistema no ofrece cifrado'
+  )
+
+  // Cada proveedor guarda su propia clave: cambiar a Gemini no hereda la de Claude.
+  const aiGemini = await gui.evaluate(() =>
+    window.docrecorder.invoke('ai:set-settings', { provider: 'gemini' })
+  )
+  check(
+    aiGemini.settings.provider === 'gemini' &&
+      aiGemini.ready === false &&
+      aiGemini.configured.anthropic === true,
+    'IA: cada proveedor tiene su propia clave (Gemini sigue sin configurar)'
+  )
+  const aiBack = await gui.evaluate(() =>
+    window.docrecorder.invoke('ai:set-settings', { provider: 'anthropic', useScreenshot: false })
+  )
+  check(
+    aiBack.ready && aiBack.settings.useScreenshot === false,
+    'IA: los ajustes (proveedor y envío de captura) se guardan'
+  )
+
+  // Los ajustes se abren desde la barra superior y releen el estado real: la
+  // clave se guardó por IPC, sin pasar por la GUI, y aun así debe reflejarse.
+  await gui.locator('.btn-ai-settings').click()
+  await gui.waitForSelector('.ai-modal', { timeout: 5000 })
+  await gui.waitForSelector('.ai-modal .ai-ok', { timeout: 5000 })
+  check(
+    (await gui.locator('.ai-modal .ai-ok').count()) > 0,
+    'IA: los ajustes releen el estado y muestran la clave como configurada'
+  )
+  await gui.keyboard.press('Escape')
+  await gui.waitForSelector('.ai-modal', { state: 'detached', timeout: 3000 })
+
+  // Circuito completo en la GUI: se graban dos pasos nuevos y se redactan.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('[data-testid="nueva-matricula"]')
+  await waitSteps(1, 'ia: clic')
+  // `select` emite su paso en cuanto cambia el valor; un `fill` suelto espera al
+  // blur, y aquí no hay un campo siguiente que lo provoque.
+  await target.selectOption('#curso', '2b')
+  await waitSteps(2, 'ia: select')
+  // Pausar evita que lleguen pasos nuevos mientras se comprueban los botones.
+  await gui.locator('.panel-header .controls .ctrl').nth(1).click()
+
+  const aiTitles = () =>
+    gui.locator('.step-card .step-title').evaluateAll((els) => els.map((e) => e.value))
+  const titlesBeforeOne = await aiTitles()
+  await gui.locator('.step-card').first().getByRole('button', { name: /Redactar el paso 1/ }).click()
+  await gui.waitForFunction(
+    () => document.querySelector('.step-card .step-title')?.value?.startsWith('Redactado: '),
+    null,
+    { timeout: 15000 }
+  )
+  const titlesAfterOne = await aiTitles()
+  const descAfterOne = await gui.locator('.step-card .step-desc').first().inputValue()
+  check(
+    titlesAfterOne[0] !== titlesBeforeOne[0] && descAfterOne.length > 0,
+    'IA: el botón ✨ de un paso rellena su título y su descripción',
+    `${titlesBeforeOne[0]} → ${titlesAfterOne[0]}`
+  )
+  check(
+    titlesAfterOne[1] === titlesBeforeOne[1],
+    'IA: redactar un paso no toca los demás',
+    titlesAfterOne[1]
+  )
+
+  // «Redactar todos» solo debe tocar los pasos que van al manual: pagar tokens
+  // por un paso excluido de la documentación no tendría sentido.
+  await gui.locator('.step-card').nth(1).locator('.include-toggle input').uncheck()
+  const titlesBeforeAll = await aiTitles()
+  await gui.getByRole('button', { name: /Redactar todos/ }).click()
+  await gui.waitForFunction(
+    (before) =>
+      document.querySelectorAll('.step-card .step-title')[0]?.value !== before[0],
+    titlesBeforeAll,
+    { timeout: 15000 }
+  )
+  const titlesAfterAll = await aiTitles()
+  check(
+    titlesAfterAll[0].startsWith('Redactado: ') && titlesAfterAll[1] === titlesBeforeAll[1],
+    'IA: «Redactar todos» omite los pasos excluidos de la documentación',
+    `incluido: ${titlesAfterAll[0]} | excluido: ${titlesAfterAll[1]}`
+  )
+
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+  // Estos pasos solo servían para probar la IA: se descartan para que el
+  // autoguardado no siga escribiendo el borrador durante el desmontaje.
+  await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
+
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
   await gui.evaluate(() => localStorage.removeItem('docrecorder.groupFormFields')).catch(() => {})
 
@@ -1001,6 +1142,13 @@ try {
   await browser?.close().catch(() => {})
   fixture.close()
   child.kill('SIGTERM')
-  rmSync(userData, { recursive: true, force: true })
+  // Limpieza de un directorio temporal: si la app aún estaba escribiendo su
+  // borrador al recibir la señal, el borrado puede fallar. Es ruido de
+  // desmontaje y no debe enmascarar el resultado de las comprobaciones.
+  try {
+    rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (err) {
+    console.log(`(no se pudo borrar el userData temporal: ${err.code ?? err.message})`)
+  }
   setTimeout(() => process.exit(process.exitCode ?? 0), 600)
 }

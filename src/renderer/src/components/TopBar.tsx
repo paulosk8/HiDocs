@@ -29,6 +29,8 @@ export function TopBar(): React.JSX.Element {
     applyEngineState,
     setProjectsOpen,
     setHelpOpen,
+    setAiOpen,
+    aiStatus,
     theme,
     toggleTheme,
     setViewportActive,
@@ -171,6 +173,17 @@ export function TopBar(): React.JSX.Element {
           title="Re-ejecuta el flujo de una funcionalidad y actualiza sus capturas (reutiliza tu sesión iniciada)"
         >
           {runnerPhase === 'running' ? `Regenerando ${runnerProgress.length}…` : 'Regenerar…'}
+        </button>
+        <button
+          className="btn btn-ai-settings"
+          onClick={() => setAiOpen(true)}
+          title={
+            aiStatus?.ready
+              ? 'Ajustes de la redacción con IA (clave configurada)'
+              : 'Configura la clave para redactar los pasos con IA'
+          }
+        >
+          IA{aiStatus?.ready ? ' ✓' : '…'}
         </button>
         <button
           className="btn btn-icon"

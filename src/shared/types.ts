@@ -179,6 +179,76 @@ export interface CommitDocs {
   session: DocSession
 }
 
+/* ---------- asistencia de IA para redactar los pasos (§11) ---------- */
+
+/** Proveedores admitidos para redactar títulos y descripciones. */
+export type AiProvider = 'anthropic' | 'gemini'
+
+export interface AiSettings {
+  /** proveedor que se usa al redactar */
+  provider: AiProvider
+  /** modelo elegido para cada proveedor; se recuerda uno por proveedor */
+  models: Record<AiProvider, string>
+  /**
+   * Enviar también la captura del paso. Con ella el modelo ve la pantalla real y
+   * sitúa el paso («en la pestaña Datos personales»); sin ella solo recibe la
+   * acción, el elemento y el valor, que es bastante más barato.
+   */
+  useScreenshot: boolean
+}
+
+/**
+ * Lo que la GUI puede saber de la configuración de IA. Las claves nunca salen
+ * del proceso principal: aquí solo viaja si hay o no hay clave.
+ */
+export interface AiStatus {
+  settings: AiSettings
+  /** proveedores con clave guardada */
+  configured: Record<AiProvider, boolean>
+  /** el proveedor activo tiene clave: se puede redactar */
+  ready: boolean
+  /** las claves se guardan cifradas por el sistema operativo */
+  encrypted: boolean
+}
+
+/** Redacción propuesta para un paso. */
+export interface AiStepDraft {
+  id: string
+  title: string
+  description: string
+}
+
+export interface AiDraftResult {
+  drafts: AiStepDraft[]
+  /**
+   * Motivo por el que no se pudo completar. Puede venir junto a `drafts`: si
+   * falla a mitad, lo ya redactado se aprovecha en vez de perderse.
+   */
+  error?: string
+}
+
+/**
+ * Modelos ofrecidos por proveedor. Todos aceptan imágenes y salida estructurada,
+ * que es lo que necesita la redacción; el primero de cada lista es el de partida.
+ */
+export const AI_MODELS: Record<AiProvider, string[]> = {
+  anthropic: ['claude-opus-4-8', 'claude-sonnet-5'],
+  gemini: ['gemini-3.5-flash', 'gemini-2.5-flash']
+}
+
+export const AI_PROVIDER_LABEL: Record<AiProvider, string> = {
+  anthropic: 'Claude (Anthropic)',
+  gemini: 'Gemini (Google)'
+}
+
+export const AI_PROVIDERS: AiProvider[] = ['anthropic', 'gemini']
+
+export const DEFAULT_AI_SETTINGS: AiSettings = {
+  provider: 'anthropic',
+  models: { anthropic: AI_MODELS.anthropic[0], gemini: AI_MODELS.gemini[0] },
+  useScreenshot: true
+}
+
 /** Resultado de regenerar la captura de un paso (runner). */
 export interface RegenStepResult {
   order: number

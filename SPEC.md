@@ -19,10 +19,7 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
 - **Integración Git** (ramas, commits, explorador de repositorios). Se planificó como fuera de alcance, pero está construida; ver §10.
 - **Generación de MDX para Docusaurus**. Cada grabación produce, además del paquete JSON, la página del manual en `.mdx` (con su categoría de módulo) que Docusaurus renderiza directamente; ver §7 y §10.
 - **Runner de regeneración**. Re-ejecuta el `flow.json` de una funcionalidad en el visor autenticado y actualiza sus capturas cuando el sistema documentado cambia de interfaz; ver §12.
-
-**Fuera de alcance** (etapas futuras, pero el diseño debe dejarlas fáciles):
-
-- Asistencia de IA para redactar descripciones.
+- **Asistencia de IA para redactar los pasos**. Propone título y descripción de cada paso a partir de la acción grabada y de su captura; ver §14. Con esto se completa la lista de «fuera de alcance» del planteamiento inicial.
 
 ## 2. Stack técnico
 
@@ -321,3 +318,17 @@ Cuando el sistema documentado cambia de interfaz, las capturas quedan desactuali
 5. Panel de tarjetas completo (edición, reorden, eliminación).
 6. Guardado a disco + renombrado de imágenes + validaciones.
 7. Pruebas manuales contra un sitio Next.js real; ajustar esperas y portales.
+
+## 14. Asistencia de IA para redactar los pasos
+
+El motor titula cada paso de forma mecánica (`Clic en «Guardar»`) y deja la descripción vacía. La asistencia de IA propone un **título** y una **descripción** mejores, que el usuario edita y acepta. Nada se escribe en la documentación hasta el guardado normal.
+
+- **Proveedores:** Claude (Anthropic, `@anthropic-ai/sdk`) y Gemini (Google, `@google/genai`). Se elige uno; cada uno guarda su propia clave y su propio modelo. Los dos reciben **el mismo prompt y el mismo esquema de respuesta** (`src/main/ai/prompt.ts`), para que la redacción no dependa del proveedor.
+- **Dónde vive la llamada:** en el **proceso principal** (`src/main/ai/`), como las de Git. La clave nunca pasa por el renderer y las capturas se leen del disco allí.
+- **Clave:** se guarda en `userData/settings.json` (`src/main/settings.ts`), **cifrada con `safeStorage`** (llavero del sistema operativo). Nunca en el repositorio de documentación. Si el sistema no ofrece cifrado, se guarda en claro y la GUI lo advierte.
+- **Contexto enviado:** los metadatos del manual, el **índice completo del flujo** (todos los títulos, para situar cada paso) y, por cada paso a redactar, su acción, el valor o los campos, la URL y —si el ajuste está activo— su **captura**. Las contraseñas ya viajan enmascaradas (`***`).
+- **Lotes:** los pasos se redactan de seis en seis. El contexto del flujo se envía una vez por lote, así que sale más coherente y más barato que una llamada por paso; el lote se mantiene pequeño para que el progreso avance a la vista y la petición no se dispare de tamaño.
+- **Salida estructurada:** `output_config.format` en Claude y `responseSchema` en Gemini, con el mismo esquema. Solo se aceptan los `id` que se pidieron: un modelo que se invente un paso no puede sobrescribir otro.
+- **Alcance en la GUI:** botón ✨ por paso y «✨ Redactar todos» en el encabezado del panel. «Todos» solo toca los pasos marcados como *incluir en docs*.
+- **Fallos:** un error a mitad devuelve **lo ya redactado** más el motivo (clave inválida, límite de peticiones, modelo no disponible, sin conexión), traducido a un mensaje accionable.
+- **Pruebas:** la variable de entorno `DOCRECORDER_AI_FAKE` sustituye la llamada al proveedor por una respuesta determinista, después de comprobar que hay clave. Así el smoke recorre el circuito completo (ajustes → IPC → aplicar en el panel) sin red ni clave real.

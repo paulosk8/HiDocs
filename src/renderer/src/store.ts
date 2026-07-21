@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import type { DraftPayload, RecordedStep } from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
+  type AiStatus,
+  type AiStepDraft,
   type FlowAction,
   type GitRepoInfo,
   type EngineState,
@@ -71,6 +73,20 @@ interface SessionState {
    */
   groupFormFields: boolean
 
+  /**
+   * Configuración de IA, tal como la conoce el main. `null` mientras no ha
+   * llegado; la clave nunca está aquí, solo si existe o no.
+   */
+  aiStatus: AiStatus | null
+  /** los ajustes de IA están abiertos */
+  aiOpen: boolean
+  /** pasos que la IA está redactando ahora mismo */
+  aiBusyIds: string[]
+  /** avance del último «redactar todos», para la etiqueta del botón */
+  aiProgress: { done: number; total: number } | null
+  /** último fallo de la IA, para avisar sin romper la grabación */
+  aiError: string | null
+
   setMeta: (patch: Partial<SessionMeta>) => void
   setOutputDir: (dir: string) => void
   applyEngineState: (state: EngineState) => void
@@ -104,6 +120,14 @@ interface SessionState {
   runnerProgressAdd: (result: RegenStepResult) => void
   runnerFinish: (report: RegenReport) => void
   runnerClose: () => void
+
+  setAiStatus: (status: AiStatus) => void
+  setAiOpen: (open: boolean) => void
+  setAiBusy: (ids: string[]) => void
+  setAiProgress: (progress: { done: number; total: number } | null) => void
+  setAiError: (message: string | null) => void
+  /** vuelca las redacciones propuestas sobre sus pasos */
+  applyAiDrafts: (drafts: AiStepDraft[]) => void
 }
 
 const GROUP_FIELDS_KEY = 'docrecorder.groupFormFields'
@@ -223,6 +247,11 @@ export const useSession = create<SessionState>((set) => ({
   runnerProgress: [],
   runnerReport: null,
   groupFormFields: initialGroupFormFields(),
+  aiStatus: null,
+  aiOpen: false,
+  aiBusyIds: [],
+  aiProgress: null,
+  aiError: null,
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
   setOutputDir: (outputDir) => set({ outputDir }),
@@ -381,5 +410,26 @@ export const useSession = create<SessionState>((set) => ({
   runnerStart: () => set({ runnerPhase: 'running', runnerProgress: [], runnerReport: null }),
   runnerProgressAdd: (result) => set((s) => ({ runnerProgress: [...s.runnerProgress, result] })),
   runnerFinish: (report) => set({ runnerPhase: 'done', runnerReport: report }),
-  runnerClose: () => set({ runnerPhase: 'idle', runnerProgress: [], runnerReport: null })
+  runnerClose: () => set({ runnerPhase: 'idle', runnerProgress: [], runnerReport: null }),
+
+  setAiStatus: (aiStatus) => set({ aiStatus }),
+  setAiOpen: (aiOpen) => set({ aiOpen }),
+  setAiBusy: (aiBusyIds) => set({ aiBusyIds }),
+  setAiProgress: (aiProgress) => set({ aiProgress }),
+  setAiError: (aiError) => set({ aiError }),
+
+  // La propuesta se aplica como si el usuario hubiera escrito: queda editable y
+  // el autoguardado del borrador la recoge. Un paso borrado mientras se redactaba
+  // simplemente no encuentra destino.
+  applyAiDrafts: (drafts) =>
+    set((s) => {
+      if (!drafts.length) return {}
+      const byId = new Map(drafts.map((d) => [d.id, d]))
+      return {
+        steps: s.steps.map((step) => {
+          const draft = byId.get(step.id)
+          return draft ? { ...step, title: draft.title, description: draft.description } : step
+        })
+      }
+    })
 }))

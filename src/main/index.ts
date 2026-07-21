@@ -14,6 +14,7 @@ import { TargetViewport } from './viewport'
 import { RecorderEngine } from './engine/recorder'
 import {
   SHOT_PROTOCOL,
+  type AiDraftRequest,
   type DraftPayload,
   type RecordedStep,
   type SavePayload,
@@ -21,6 +22,8 @@ import {
 } from '../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
+  type AiProvider,
+  type AiSettings,
   type DocSession,
   type EngineState,
   type RegenReport
@@ -30,6 +33,8 @@ import { inspectRepo, listBranches, listCommits, readCommitDocs, readDocImage } 
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
 import { saveDraft, loadDraft, clearDraft } from './draft'
+import { aiStatus, setAiKey, setAiSettings } from './settings'
+import { draftSteps } from './ai'
 
 /**
  * El puerto de depuración remota debe quedar fijado ANTES de `app.whenReady`:
@@ -229,6 +234,13 @@ function registerIpc(): void {
     await shell.openPath(path)
   })
 
+  // Solo http/https: el canal existe para abrir la consola del proveedor de IA,
+  // no para que el renderer pueda lanzar `file://` ni esquemas del sistema.
+  ipcMain.handle('shell:open-external', async (_e, url: string) => {
+    if (!/^https?:\/\//i.test(url)) return
+    await shell.openExternal(url)
+  })
+
   ipcMain.handle('git:inspect', async (_e, outputDir: string) => {
     // Devuelve null tanto si no hay repositorio como si `git` no está
     // instalado: en ambos casos la GUI simplemente no ofrece la integración.
@@ -276,6 +288,22 @@ function registerIpc(): void {
   ipcMain.handle('draft:load', async () => loadDraft().catch(() => null))
   ipcMain.handle('draft:clear', async () => {
     await clearDraft().catch(() => undefined)
+  })
+
+  // La clave de IA no sale nunca del proceso principal: el renderer solo puede
+  // guardarla y preguntar si existe.
+  ipcMain.handle('ai:status', async () => aiStatus())
+
+  ipcMain.handle('ai:set-key', async (_e, args: { provider: AiProvider; key: string }) => {
+    return setAiKey(args.provider, args.key)
+  })
+
+  ipcMain.handle('ai:set-settings', async (_e, patch: Partial<AiSettings>) => {
+    return setAiSettings(patch)
+  })
+
+  ipcMain.handle('ai:draft', async (_e, request: AiDraftRequest) => {
+    return draftSteps(request, (progress) => mainWindow?.webContents.send('ai:progress', progress))
   })
 
   ipcMain.handle('runner:regenerate', async (_e, given?: string): Promise<RegenReport> => {

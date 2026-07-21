@@ -23,6 +23,7 @@ import { ShotModal } from './ShotModal'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitSection } from './GitSection'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
+import { useAiDraft } from '../useAiDraft'
 
 export function StepsPanel(): React.JSX.Element {
   const steps = useSession((s) => s.steps)
@@ -41,6 +42,12 @@ export function StepsPanel(): React.JSX.Element {
   const runnerReportOpen = useSession((s) => s.runnerPhase === 'done')
   const groupFormFields = useSession((s) => s.groupFormFields)
   const setGroupFormFields = useSession((s) => s.setGroupFormFields)
+  const aiOpen = useSession((s) => s.aiOpen)
+  const aiBusyIds = useSession((s) => s.aiBusyIds)
+  const aiProgress = useSession((s) => s.aiProgress)
+  const aiError = useSession((s) => s.aiError)
+  const setAiError = useSession((s) => s.setAiError)
+  const { draft } = useAiDraft()
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
@@ -185,7 +192,9 @@ export function StepsPanel(): React.JSX.Element {
     projectsOpen ||
     helpOpen ||
     docusaurusIntroOpen ||
-    runnerReportOpen
+    runnerReportOpen ||
+    aiOpen ||
+    aiError !== null
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])
@@ -265,6 +274,15 @@ export function StepsPanel(): React.JSX.Element {
           confirmLabel="Guardar de todos modos"
           onConfirm={() => void write()}
           onCancel={() => setPendingSave(null)}
+        />
+      )}
+
+      {aiError && (
+        <ConfirmDialog
+          title="No se pudo redactar con IA"
+          body={aiError}
+          confirmLabel="Entendido"
+          onConfirm={() => setAiError(null)}
         />
       )}
 
@@ -352,6 +370,20 @@ export function StepsPanel(): React.JSX.Element {
           />
           agrupar campos
         </label>
+        {/* Solo se redactan los pasos que van al manual: pagar tokens por un paso
+            excluido de la documentación no tendría sentido. */}
+        <button
+          className="btn btn-ai"
+          disabled={aiBusyIds.length > 0 || !steps.some((s) => s.includeInDocs)}
+          title="Propone título y descripción para todos los pasos incluidos en la documentación"
+          onClick={() =>
+            void draft(steps.filter((s) => s.includeInDocs).map((s) => s.id))
+          }
+        >
+          {aiBusyIds.length > 0
+            ? `Redactando ${aiProgress ? `${aiProgress.done}/${aiProgress.total}` : ''}…`
+            : '✨ Redactar todos'}
+        </button>
         <div className="controls">{controls}</div>
       </div>
 

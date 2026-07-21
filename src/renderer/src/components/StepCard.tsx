@@ -3,6 +3,7 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { shotUrl, type RecordedStep } from '../../../shared/ipc-contract'
 import { useSession } from '../store'
+import { useAiDraft } from '../useAiDraft'
 
 const STRATEGY_LABEL: Record<string, string> = {
   testid: 'test-id',
@@ -31,6 +32,8 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
   const removeStep = useSession((s) => s.removeStep)
   const focusStepId = useSession((s) => s.focusStepId)
   const clearFocus = useSession((s) => s.clearFocus)
+  const aiBusy = useSession((s) => s.aiBusyIds.includes(step.id))
+  const { draft } = useAiDraft()
 
   const titleRef = useRef<HTMLInputElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -87,6 +90,15 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
         </button>
         <span className="step-badge">{step.order}</span>
         <span className="action-chip">{ACTION_LABEL[step.action] ?? step.action}</span>
+        <button
+          className="icon-btn ai-btn"
+          disabled={aiBusy}
+          title="Redactar el título y la descripción de este paso con IA"
+          aria-label={`Redactar el paso ${step.order} con IA`}
+          onClick={() => void draft([step.id])}
+        >
+          {aiBusy ? '⋯' : '✨'}
+        </button>
         <button
           className="icon-btn danger"
           title="Eliminar paso"

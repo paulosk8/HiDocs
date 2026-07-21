@@ -21,6 +21,7 @@ const SECTIONS = [
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
   { id: 'regenerar', label: 'Regenerar capturas' },
+  { id: 'ia', label: 'Redactar con IA' },
   { id: 'interfaz', label: 'Panel y tema' },
   { id: 'atajos', label: 'Atajos y solución de problemas' }
 ]
@@ -379,6 +380,47 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 captura anterior) y el runner sigue con el resto. Al final, un informe indica qué
                 pasos se actualizaron y cuáles hay que revisar. Las capturas se sobrescriben en
                 disco; tú revisas y comiteas con el flujo de Git normal.
+              </p>
+            </section>
+
+            <section id="ia" data-help-section>
+              <h3>Redactar con IA</h3>
+              <p>
+                El motor titula cada paso de forma mecánica (<i>Clic en «Guardar»</i>) y deja la
+                descripción vacía. La <b>redacción con IA</b> propone un título y una descripción
+                mejores a partir de la acción grabada, del valor introducido y —si lo permites— de
+                la <b>captura</b> del paso, que es lo que le da el contexto de la pantalla.
+              </p>
+              <ol className="help-steps">
+                <li>
+                  Pulsa <b>IA…</b> en la barra superior, elige proveedor (<b>Claude</b> de Anthropic
+                  o <b>Gemini</b> de Google) y pega tu clave de la API.
+                </li>
+                <li>
+                  Redacta un paso suelto con el botón <b>✨</b> de su tarjeta, o todos de golpe con{' '}
+                  <b>✨ Redactar todos</b> en el encabezado del panel.
+                </li>
+                <li>
+                  Revisa y edita: la propuesta se escribe en los mismos campos de siempre y no se
+                  guarda en la documentación hasta que pulsas <b>Detener y guardar</b>.
+                </li>
+              </ol>
+              <p>
+                <b>Dónde va la clave</b> · se guarda cifrada por el sistema operativo en la carpeta
+                de datos de la aplicación, nunca en el repositorio de documentación, y no sale del
+                proceso principal: la llamada a la API se hace ahí, como las de Git.
+              </p>
+              <p>
+                <b>Coste</b> · cada llamada se factura en tu cuenta del proveedor. Los pasos se
+                envían en lotes pequeños para que el flujo completo dé contexto sin repetirlo en
+                cada paso. Si quieres abaratar, desmarca <b>Enviar también la captura</b>: el modelo
+                recibirá solo la acción, el elemento y el valor. Solo se redactan los pasos marcados
+                como <b>incluir en docs</b>.
+              </p>
+              <p>
+                <b>Privacidad</b> · con la captura activada, la pantalla del sistema que documentas
+                (con sus datos de prueba) se envía al proveedor. Si documentas con datos reales,
+                desactívala. Las contraseñas ya viajan enmascaradas como <code>***</code>.
               </p>
             </section>
 

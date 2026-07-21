@@ -1575,3 +1575,127 @@ select {
 .runner-results li.failed .runner-badge {
   color: var(--danger);
 }
+
+/* ---------- redacción con IA ---------- */
+
+/* Botón ✨ de cada paso: discreto en reposo, evidente al pasar por encima. */
+.icon-btn.ai-btn {
+  color: var(--muted);
+}
+
+/* `.icon-btn` empuja con `margin-left: auto`. Con dos seguidos, el hueco libre
+   se repartiría entre ambos y quedarían separados; el segundo va pegado. */
+.icon-btn + .icon-btn {
+  margin-left: 0;
+}
+
+.icon-btn.ai-btn:hover:not(:disabled) {
+  color: var(--blue);
+}
+
+/* «Redactar todos», en el encabezado del panel. */
+.btn.btn-ai {
+  font-size: 11px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.ai-modal {
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-modal);
+  width: min(520px, 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ai-modal > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ai-modal > header h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.ai-modal > header button {
+  border: 0;
+  background: none;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.ai-body {
+  padding: 14px 16px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ai-body .field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-intro {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ai-hint {
+  margin: -4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.ai-warn {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.ai-ok {
+  color: var(--green);
+  font-weight: 600;
+}
+
+.ai-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.ai-key {
+  font-family: var(--mono);
+}
+
+.ai-saved {
+  font-size: 11px;
+  color: var(--muted);
+  margin-right: auto;
+}
+
+/* Los botones van a la derecha; `.ai-saved` (si aparece) empuja desde la
+   izquierda. Un único margen automático, para que no se repartan el hueco. */
+.ai-modal > footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}

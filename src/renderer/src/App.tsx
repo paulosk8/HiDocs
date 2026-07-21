@@ -8,6 +8,7 @@ import { HelpModal } from './components/HelpModal'
 import { DocusaurusIntroModal } from './components/DocusaurusIntroModal'
 import { RestoreDraftModal } from './components/RestoreDraftModal'
 import { RunnerReportModal } from './components/RunnerReportModal'
+import { AiSettingsModal } from './components/AiSettingsModal'
 import { ipc } from './ipc'
 import { useSession } from './store'
 import { useRepoInspection } from './useRepoInspection'
@@ -28,6 +29,10 @@ export function App(): React.JSX.Element {
   const runnerProgressAdd = useSession((s) => s.runnerProgressAdd)
   const runnerClose = useSession((s) => s.runnerClose)
   const theme = useSession((s) => s.theme)
+  const aiOpen = useSession((s) => s.aiOpen)
+  const setAiOpen = useSession((s) => s.setAiOpen)
+  const setAiStatus = useSession((s) => s.setAiStatus)
+  const setAiProgress = useSession((s) => s.setAiProgress)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
 
   // Mantiene `gitRepo` al día aunque el panel (y su sección Git) esté colapsado.
@@ -52,13 +57,18 @@ export function App(): React.JSX.Element {
     const offState = ipc.on('engine:state', applyEngineState)
     const offStep = ipc.on('recorder:step', addStep)
     const offRegen = ipc.on('runner:progress', runnerProgressAdd)
+    const offAi = ipc.on('ai:progress', setAiProgress)
     void ipc.invoke('engine:get-state').then(applyEngineState)
+    // La configuración de IA vive en el main (con la clave); la GUI solo sabe
+    // qué proveedor está activo y si tiene clave.
+    void ipc.invoke('ai:status').then(setAiStatus)
     return () => {
       offState()
       offStep()
       offRegen()
+      offAi()
     }
-  }, [applyEngineState, addStep, runnerProgressAdd])
+  }, [applyEngineState, addStep, runnerProgressAdd, setAiProgress, setAiStatus])
 
   return (
     <div className="app">
@@ -70,6 +80,7 @@ export function App(): React.JSX.Element {
       </main>
       {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      {aiOpen && <AiSettingsModal onClose={() => setAiOpen(false)} />}
       {/* El aviso inicial de Docusaurus espera a resolver antes un borrador. */}
       {docusaurusIntroOpen && !draft && <DocusaurusIntroModal />}
       {draft && (

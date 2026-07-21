@@ -7,6 +7,10 @@
  */
 
 import type {
+  AiDraftResult,
+  AiProvider,
+  AiSettings,
+  AiStatus,
   CommitDocs,
   DocStep,
   EngineState,
@@ -19,6 +23,7 @@ import type {
   RegenStepResult,
   SaveResult,
   SessionMeta,
+  StepAction,
   Viewport
 } from './types'
 
@@ -79,6 +84,39 @@ export interface SavePayload {
   git?: GitSaveOptions
 }
 
+/**
+ * Un paso tal como se le describe a la IA. Es un subconjunto deliberado de
+ * `RecordedStep`: los selectores y los rectángulos no ayudan a redactar y solo
+ * gastarían tokens.
+ */
+export interface AiStepInput {
+  id: string
+  order: number
+  action: StepAction
+  /** título actual (el que generó el motor, o el que ya editó el usuario) */
+  title: string
+  description: string
+  value?: string
+  fields?: Array<{ label: string; value: string }>
+  url: string
+  /**
+   * Ruta absoluta de la captura. La lee el proceso principal, no el renderer, y
+   * solo si la configuración pide enviarla.
+   */
+  screenshot?: string
+}
+
+export interface AiDraftRequest {
+  meta: SessionMeta
+  /**
+   * Título de TODOS los pasos de la sesión, en orden. Da a la IA el hilo del
+   * flujo completo aunque solo se le pida redactar unos pocos.
+   */
+  outline: Array<{ order: number; title: string }>
+  /** pasos que hay que redactar */
+  steps: AiStepInput[]
+}
+
 /** Canales renderer → main con respuesta (ipcRenderer.invoke). */
 export interface IpcInvokeMap {
   'viewport:navigate': (url: string) => EngineState
@@ -95,6 +133,8 @@ export interface IpcInvokeMap {
   'dialog:pick-output-dir': () => string | null
   'session:save': (payload: SavePayload) => SaveResult
   'shell:open-path': (path: string) => void
+  /** abre una URL en el navegador del sistema (solo http/https) */
+  'shell:open-external': (url: string) => void
   /** inspecciona el repositorio que contenga la carpeta de salida, si lo hay */
   'git:inspect': (outputDir: string) => GitRepoInfo | null
   /** ramas locales del repositorio, para el explorador (solo lectura) */
@@ -126,6 +166,13 @@ export interface IpcInvokeMap {
    * directamente. El progreso llega por el evento `runner:progress`.
    */
   'runner:regenerate': (featureDir?: string) => RegenReport
+  /** configuración de IA y si cada proveedor tiene clave (nunca la clave en sí) */
+  'ai:status': () => AiStatus
+  /** guarda o borra (cadena vacía) la clave de un proveedor */
+  'ai:set-key': (args: { provider: AiProvider; key: string }) => AiStatus
+  'ai:set-settings': (patch: Partial<AiSettings>) => AiStatus
+  /** redacta título y descripción de los pasos pedidos; progreso por `ai:progress` */
+  'ai:draft': (request: AiDraftRequest) => AiDraftResult
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -137,6 +184,8 @@ export interface IpcEventMap {
   'engine:log': { level: 'info' | 'warn' | 'error'; message: string }
   /** progreso de la regeneración, un paso a la vez */
   'runner:progress': RegenStepResult
+  /** progreso de la redacción con IA, tras cada lote */
+  'ai:progress': { done: number; total: number }
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -157,6 +206,7 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'dialog:pick-output-dir',
   'session:save',
   'shell:open-path',
+  'shell:open-external',
   'git:inspect',
   'git:branches',
   'git:commits',
@@ -168,7 +218,11 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'draft:save',
   'draft:load',
   'draft:clear',
-  'runner:regenerate'
+  'runner:regenerate',
+  'ai:status',
+  'ai:set-key',
+  'ai:set-settings',
+  'ai:draft'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
@@ -176,7 +230,8 @@ export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'recorder:step',
   'recorder:toggle-shortcut',
   'engine:log',
-  'runner:progress'
+  'runner:progress',
+  'ai:progress'
 ]
 
 /** Protocolo custom que sirve las capturas temporales al renderer. */
