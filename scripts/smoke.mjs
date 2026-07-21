@@ -840,7 +840,8 @@ try {
             tempFile: '',
             fields: [
               { label: 'Nombre', value: 'ACME' },
-              { label: 'Clave', value: '***' }
+              { label: 'Clave', value: '***' },
+              { label: 'Fecha', value: '' }
             ]
           }
         ]
@@ -849,8 +850,12 @@ try {
   )
   const fieldsMdx = readFileSync(join(outDir, 'formularios', 'con-campos', 'index.mdx'), 'utf8')
   check(
-    fieldsMdx.includes('- **Nombre:** ACME') && fieldsMdx.includes('- **Clave:** ***'),
-    'Agrupar campos: la página MDX lista los campos del formulario agrupado',
+    fieldsMdx.includes('- **Nombre:** ACME') &&
+      fieldsMdx.includes('- **Clave:** ***') &&
+      // Un campo solo enfocado (sin valor) se lista sin «: valor».
+      fieldsMdx.includes('- **Fecha**\n') &&
+      !fieldsMdx.includes('- **Fecha:**'),
+    'Agrupar campos: la página MDX lista los campos (con y sin valor)',
     fieldsMdx
       .split('\n')
       .filter((l) => l.startsWith('- **'))

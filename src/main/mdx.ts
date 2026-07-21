@@ -112,10 +112,13 @@ export function renderFeatureMdx(
       out.push(mdxSafe(step.description.trim()))
       out.push('')
     }
-    // Campos de un formulario agrupado: una lista de etiqueta → valor.
+    // Campos de un formulario agrupado: una lista de etiqueta → valor. Si el
+    // campo solo se enfocó (sin valor), se lista sin «: valor».
     if (step.fields?.length) {
       for (const f of step.fields) {
-        out.push(`- **${mdxSafe(f.label)}:** ${mdxSafe(f.value)}`)
+        out.push(
+          f.value ? `- **${mdxSafe(f.label)}:** ${mdxSafe(f.value)}` : `- **${mdxSafe(f.label)}**`
+        )
       }
       out.push('')
     }

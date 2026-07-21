@@ -27,6 +27,13 @@ import type {
 export interface RecordedStep extends DocStep {
   /** ruta absoluta al PNG temporal (fuera del paquete final) */
   tempFile: string
+  /**
+   * El elemento es un campo de formulario (input de texto, textarea o select).
+   * Solo se usa en la GUI para agrupar: un clic en un campo (enfocarlo antes de
+   * escribir) cuenta como parte del formulario; un clic en un botón, no. No se
+   * persiste.
+   */
+  isFormField?: boolean
 }
 
 export interface ViewportBounds {

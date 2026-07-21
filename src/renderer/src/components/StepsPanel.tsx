@@ -333,7 +333,7 @@ export function StepsPanel(): React.JSX.Element {
         <span className="count">{steps.length}</span>
         <label
           className="group-toggle"
-          title="Une los campos de un mismo formulario en un solo paso (una captura en vez de una por campo)"
+          title="Une los campos que RELLENAS o SELECCIONAS de un mismo formulario en un solo paso (una captura en vez de una por campo). No afecta a los clics."
         >
           <input
             type="checkbox"

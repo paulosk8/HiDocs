@@ -100,10 +100,42 @@ function initialGroupFormFields(): boolean {
   }
 }
 
-/** Nombre del campo de un paso `fill`/`select`, tomado del último «…» del título. */
+/** Nombre del campo de un paso `fill`/`select`/clic, del último «…» del título. */
 function fieldLabel(step: RecordedStep): string {
   const matches = [...step.title.matchAll(/«([^»]*)»/g)]
   return matches.length ? matches[matches.length - 1][1] : step.title
+}
+
+/**
+ * Un paso pertenece a un formulario si escribe o selecciona un valor, o si es un
+ * clic para enfocar un campo. Así, la secuencia real de rellenar (clic en el
+ * campo → escribir → clic en el siguiente → escribir…) se agrupa entera; un clic
+ * en un botón la rompe.
+ */
+function isFormInput(step: RecordedStep): boolean {
+  return (
+    step.action === 'fill' ||
+    step.action === 'select' ||
+    (step.action === 'click' && step.isFormField === true)
+  )
+}
+
+/**
+ * Añade o actualiza un campo por etiqueta: el clic para enfocar («…», sin valor)
+ * y la escritura posterior del mismo campo se funden en una sola entrada, y un
+ * valor real no lo pisa un clic vacío posterior.
+ */
+function upsertField(
+  fields: Array<{ label: string; value: string }>,
+  label: string,
+  value: string
+): Array<{ label: string; value: string }> {
+  const i = fields.findIndex((f) => f.label === label)
+  if (i < 0) return [...fields, { label, value }]
+  if (!value) return fields
+  const next = fields.slice()
+  next[i] = { label, value }
+  return next
 }
 
 const THEME_KEY = 'docrecorder.theme'
@@ -177,23 +209,22 @@ export const useSession = create<SessionState>((set) => ({
   addStep: (step) =>
     set((s) => {
       const last = s.steps[s.steps.length - 1]
-      const isInput = step.action === 'fill' || step.action === 'select'
-      // Se funde con el paso anterior si ambos son campos del MISMO formulario:
-      // acciones de entrada seguidas, en la misma URL, sin un clic/envío/navegación
-      // que rompa la secuencia (eso ya crea un paso distinto). No se funde en un
-      // paso excluido de docs.
+      // Se funde con el paso anterior si ambos son campos del MISMO formulario
+      // (escribir, seleccionar o enfocar un campo con un clic), en la misma URL.
+      // Un clic en un botón, un envío o una navegación rompe la secuencia. No se
+      // funde dentro de un paso excluido de docs.
       const mergeable =
         s.groupFormFields &&
-        isInput &&
+        isFormInput(step) &&
         last &&
-        (last.action === 'fill' || last.action === 'select') &&
+        isFormInput(last) &&
         last.url === step.url &&
         last.includeInDocs
 
       if (mergeable) {
         // La captura pasa a ser la más reciente (el formulario más completo) y el
-        // valor del campo se acumula en la lista. La primera vez se siembra con el
-        // campo del paso anterior.
+        // campo se acumula (deduplicado por etiqueta). La primera vez se siembra
+        // con el campo del paso anterior.
         const seeded = last.fields ?? [{ label: fieldLabel(last), value: last.value ?? '' }]
         const merged: RecordedStep = {
           ...last,
@@ -203,7 +234,7 @@ export const useSession = create<SessionState>((set) => ({
           boundingRect: step.boundingRect,
           timestamp: step.timestamp,
           value: undefined,
-          fields: [...seeded, { label: fieldLabel(step), value: step.value ?? '' }],
+          fields: upsertField(seeded, fieldLabel(step), step.value ?? ''),
           selectorCandidates: step.selectorCandidates
         }
         return {
