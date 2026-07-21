@@ -2,9 +2,12 @@ import { create } from 'zustand'
 import type { DraftPayload, RecordedStep } from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
+  type FlowAction,
   type GitRepoInfo,
   type EngineState,
   type RecorderStatus,
+  type RegenReport,
+  type RegenStepResult,
   type SessionMeta,
   type Viewport
 } from '../../shared/types'
@@ -56,6 +59,12 @@ interface SessionState {
    * DOM: si no, `about:blank` taparía ese onboarding con un rectángulo vacío.
    */
   viewportActive: boolean
+  /** estado del runner de regeneración de capturas */
+  runnerPhase: 'idle' | 'running' | 'done'
+  /** resultados por paso, según van llegando */
+  runnerProgress: RegenStepResult[]
+  /** informe final de la regeneración */
+  runnerReport: RegenReport | null
   /**
    * Agrupar los `fill`/`select` seguidos de un mismo formulario en un solo paso,
    * para no generar una captura por cada campo. Preferencia persistida.
@@ -91,6 +100,10 @@ interface SessionState {
   toggleTheme: () => void
   setViewportActive: (active: boolean) => void
   setGroupFormFields: (value: boolean) => void
+  runnerStart: () => void
+  runnerProgressAdd: (result: RegenStepResult) => void
+  runnerFinish: (report: RegenReport) => void
+  runnerClose: () => void
 }
 
 const GROUP_FIELDS_KEY = 'docrecorder.groupFormFields'
@@ -108,6 +121,18 @@ function initialGroupFormFields(): boolean {
 function fieldLabel(step: RecordedStep): string {
   const matches = [...step.title.matchAll(/«([^»]*)»/g)]
   return matches.length ? matches[matches.length - 1][1] : step.title
+}
+
+/** Acción reproducible de un paso, para el `flow.json` que usa el runner. */
+function toFlowAction(step: RecordedStep): FlowAction {
+  const action: FlowAction = {
+    order: 0, // se renumera al guardar
+    action: step.action,
+    selectorCandidates: step.selectorCandidates,
+    url: step.url
+  }
+  if (step.value !== undefined) action.value = step.value
+  return action
 }
 
 /**
@@ -194,6 +219,9 @@ export const useSession = create<SessionState>((set) => ({
   theme: initialTheme(),
   panelCollapsed: false,
   viewportActive: false,
+  runnerPhase: 'idle',
+  runnerProgress: [],
+  runnerReport: null,
   groupFormFields: initialGroupFormFields(),
 
   setMeta: (patch) => set((s) => ({ meta: { ...s.meta, ...patch } })),
@@ -230,6 +258,7 @@ export const useSession = create<SessionState>((set) => ({
         // campo se acumula (deduplicado por etiqueta). La primera vez se siembra
         // con el campo del paso anterior.
         const seeded = last.fields ?? [{ label: fieldLabel(last), value: last.value ?? '' }]
+        const seededActions = last.mergedActions ?? [toFlowAction(last)]
         const merged: RecordedStep = {
           ...last,
           action: 'fill',
@@ -239,6 +268,8 @@ export const useSession = create<SessionState>((set) => ({
           timestamp: step.timestamp,
           value: undefined,
           fields: upsertField(seeded, fieldLabel(step), step.value ?? ''),
+          // Cada campo se conserva como acción individual para el runner (replay).
+          mergedActions: [...seededActions, toFlowAction(step)],
           selectorCandidates: step.selectorCandidates
         }
         return {
@@ -345,5 +376,10 @@ export const useSession = create<SessionState>((set) => ({
       // sin persistencia vale para esta sesión
     }
     set({ groupFormFields })
-  }
+  },
+
+  runnerStart: () => set({ runnerPhase: 'running', runnerProgress: [], runnerReport: null }),
+  runnerProgressAdd: (result) => set((s) => ({ runnerProgress: [...s.runnerProgress, result] })),
+  runnerFinish: (report) => set({ runnerPhase: 'done', runnerReport: report }),
+  runnerClose: () => set({ runnerPhase: 'idle', runnerProgress: [], runnerReport: null })
 }))

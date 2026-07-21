@@ -87,16 +87,29 @@ export async function saveSession(
     }
     if (step.value !== undefined) persisted.value = step.value
     if (step.fields?.length) persisted.fields = step.fields
+    // El runner necesita las acciones individuales del paso agrupado para
+    // reproducirlo (una captura tras re-ejecutarlas todas).
+    if (step.mergedActions?.length) persisted.mergedActions = step.mergedActions
     steps.push(persisted)
 
-    const action: FlowAction = {
-      order,
-      action: step.action,
-      selectorCandidates: step.selectorCandidates,
-      url: step.url
+    // flow.json es la receta reproducible para el runner: un paso de formulario
+    // agrupado se expande en sus acciones individuales (una por campo), aunque en
+    // el manual sea un solo paso. Los demás pasos aportan una acción.
+    const stepActions =
+      step.mergedActions && step.mergedActions.length > 0
+        ? step.mergedActions
+        : [
+            {
+              order,
+              action: step.action,
+              selectorCandidates: step.selectorCandidates,
+              url: step.url,
+              ...(step.value !== undefined ? { value: step.value } : {})
+            }
+          ]
+    for (const a of stepActions) {
+      actions.push({ ...a, order: actions.length + 1 })
     }
-    if (step.value !== undefined) action.value = step.value
-    actions.push(action)
   }
 
   const session: DocSession = {

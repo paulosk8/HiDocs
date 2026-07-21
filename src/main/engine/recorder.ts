@@ -12,7 +12,9 @@ import {
 } from './observer'
 import { buildSelectorCandidates } from './selectors'
 import { waitForStability } from './stability'
+import { regenerateSession, type RegenStepResult } from './runner'
 import type { RecordedStep } from '../../shared/ipc-contract'
+import type { DocSession } from '../../shared/types'
 import type { BoundingRect, EngineState, RecorderStatus, StepAction } from '../../shared/types'
 
 export interface EngineHooks {
@@ -216,6 +218,34 @@ export class RecorderEngine {
     await this.queue
     this.log('info', 'Grabación detenida')
     this.emitState()
+  }
+
+  /**
+   * Regenera las capturas de una funcionalidad re-ejecutando su flujo en el
+   * visor autenticado (§ runner). Detiene la grabación primero y desactiva el
+   * observador para no capturar las propias acciones del runner.
+   */
+  async regenerate(
+    session: DocSession,
+    targetDir: string,
+    onProgress?: (result: RegenStepResult) => void
+  ): Promise<RegenStepResult[]> {
+    const page = this.attachment?.page
+    if (!page) {
+      throw new Error(
+        'Abre el sistema en el visor e inicia sesión antes de regenerar: el runner reutiliza esa sesión.'
+      )
+    }
+    if (this.status !== 'idle') await this.stop()
+    await this.setObserverEnabled(false)
+    this.log('info', `Regenerando capturas de ${session.module}/${session.feature}…`)
+    const results = await regenerateSession(page, session, targetDir, onProgress)
+    const failed = results.filter((r) => r.status === 'failed').length
+    this.log(
+      failed ? 'warn' : 'info',
+      `Regeneración terminada: ${results.length - failed} ok, ${failed} fallido(s).`
+    )
+    return results
   }
 
   /** Reinicia el contador de pasos: se llama al empezar una sesión nueva. */

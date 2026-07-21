@@ -15,6 +15,8 @@ import type {
   GitRepoInfo,
   GitSaveOptions,
   ProjectEntry,
+  RegenReport,
+  RegenStepResult,
   SaveResult,
   SessionMeta,
   Viewport
@@ -118,6 +120,12 @@ export interface IpcInvokeMap {
   'draft:load': () => DraftPayload | null
   /** descarta el borrador (al finalizar o al desecharlo) */
   'draft:clear': () => void
+  /**
+   * Regenera las capturas de una funcionalidad re-ejecutando su flujo en el visor
+   * autenticado. Sin `featureDir`, pide la carpeta con un selector; con él, la usa
+   * directamente. El progreso llega por el evento `runner:progress`.
+   */
+  'runner:regenerate': (featureDir?: string) => RegenReport
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -127,6 +135,8 @@ export interface IpcEventMap {
   /** el atajo global Ctrl+Shift+R pide alternar pausa */
   'recorder:toggle-shortcut': void
   'engine:log': { level: 'info' | 'warn' | 'error'; message: string }
+  /** progreso de la regeneración, un paso a la vez */
+  'runner:progress': RegenStepResult
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -157,14 +167,16 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'docusaurus:suggest-docs',
   'draft:save',
   'draft:load',
-  'draft:clear'
+  'draft:clear',
+  'runner:regenerate'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'engine:state',
   'recorder:step',
   'recorder:toggle-shortcut',
-  'engine:log'
+  'engine:log',
+  'runner:progress'
 ]
 
 /** Protocolo custom que sirve las capturas temporales al renderer. */

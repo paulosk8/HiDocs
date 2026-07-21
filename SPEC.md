@@ -18,10 +18,10 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
 
 - **Integración Git** (ramas, commits, explorador de repositorios). Se planificó como fuera de alcance, pero está construida; ver §10.
 - **Generación de MDX para Docusaurus**. Cada grabación produce, además del paquete JSON, la página del manual en `.mdx` (con su categoría de módulo) que Docusaurus renderiza directamente; ver §7 y §10.
+- **Runner de regeneración**. Re-ejecuta el `flow.json` de una funcionalidad en el visor autenticado y actualiza sus capturas cuando el sistema documentado cambia de interfaz; ver §12.
 
 **Fuera de alcance** (etapas futuras, pero el diseño debe dejarlas fáciles):
 
-- Runner de regeneración headless con Playwright.
 - Asistencia de IA para redactar descripciones.
 
 ## 2. Stack técnico
@@ -301,7 +301,18 @@ La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o 
 10. Nunca se indexan ni se comprometen archivos ajenos; sin remoto, el push no se intenta.
 11. El explorador muestra repositorios, ramas e historial, y permite elegir la rama base de la próxima grabación sin escribir nada en el repositorio.
 
-## 12. Sugerencia de plan de implementación (para el agente)
+## 12. Runner de regeneración
+
+Cuando el sistema documentado cambia de interfaz, las capturas quedan desactualizadas. El runner (`src/main/engine/runner.ts`) re-ejecuta el flujo de una funcionalidad y **actualiza sus capturas** sin volver a grabar a mano.
+
+- **Autenticación:** reutiliza la **sesión del visor**. El usuario inicia sesión en el sistema (visor) y luego lanza «Regenerar…»; el runner conduce esa misma página autenticada, así que hereda el login. No es un proceso aparte.
+- **Entrada:** una carpeta de funcionalidad con su `session.json` (elegida con un selector). El runner navega a `baseUrl` y re-ejecuta cada paso.
+- **Reproducibilidad:** cada paso se localiza probando sus `selectorCandidates` en orden (fallback). Un paso de formulario agrupado se re-ejecuta como sus acciones individuales (`DocStep.mergedActions`, que también expande `flow.json`) y captura **una** imagen tras completarlas.
+- **Fallo:** si ningún selector encuentra el elemento, el paso se **marca como fallido**, conserva su captura anterior y el runner **sigue** con el resto. Al final, un informe por paso (regenerado / fallido).
+- **Salida:** sobrescribe los `img/paso-NN.png` en disco; el usuario revisa y comitea con el flujo de Git normal (no se re-commitea solo).
+- **UX:** el replay ocurre en el visor **visible** (para que las capturas salgan con el tamaño correcto); el informe se muestra al terminar.
+
+## 13. Sugerencia de plan de implementación (para el agente)
 
 1. Scaffold electron-vite + React + TS, ventana con layout dividido y `WebContentsView` navegable.
 2. Conexión CDP: lanzar con remote debugging, adjuntar Playwright al target del viewport, verificar `page.title()`.

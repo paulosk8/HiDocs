@@ -31,9 +31,25 @@ export function TopBar(): React.JSX.Element {
     setHelpOpen,
     theme,
     toggleTheme,
-    setViewportActive
+    setViewportActive,
+    runnerPhase,
+    runnerProgress,
+    runnerStart,
+    runnerFinish
   } = useSession()
   const [opening, setOpening] = useState(false)
+
+  // Regenera las capturas de una funcionalidad: pide la carpeta y re-ejecuta el
+  // flujo en el visor autenticado. El progreso llega por evento (lo escucha App).
+  const regenerate = async (): Promise<void> => {
+    runnerStart()
+    const report = await ipc.invoke('runner:regenerate')
+    if (report.canceled) {
+      useSession.getState().runnerClose()
+      return
+    }
+    runnerFinish(report)
+  }
 
   const open = async (): Promise<void> => {
     const url = normalizeUrl(meta.baseUrl)
@@ -147,6 +163,14 @@ export function TopBar(): React.JSX.Element {
           title="Repositorios ya usados, sus ramas y su historial"
         >
           Proyectos…
+        </button>
+        <button
+          className="btn"
+          disabled={runnerPhase === 'running'}
+          onClick={() => void regenerate()}
+          title="Re-ejecuta el flujo de una funcionalidad y actualiza sus capturas (reutiliza tu sesión iniciada)"
+        >
+          {runnerPhase === 'running' ? `Regenerando ${runnerProgress.length}…` : 'Regenerar…'}
         </button>
         <button
           className="btn btn-icon"

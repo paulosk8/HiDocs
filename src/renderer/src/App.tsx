@@ -7,6 +7,7 @@ import { ProjectsModal } from './components/ProjectsModal'
 import { HelpModal } from './components/HelpModal'
 import { DocusaurusIntroModal } from './components/DocusaurusIntroModal'
 import { RestoreDraftModal } from './components/RestoreDraftModal'
+import { RunnerReportModal } from './components/RunnerReportModal'
 import { ipc } from './ipc'
 import { useSession } from './store'
 import { useRepoInspection } from './useRepoInspection'
@@ -22,6 +23,10 @@ export function App(): React.JSX.Element {
   const helpOpen = useSession((s) => s.helpOpen)
   const setHelpOpen = useSession((s) => s.setHelpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
+  const runnerPhase = useSession((s) => s.runnerPhase)
+  const runnerReport = useSession((s) => s.runnerReport)
+  const runnerProgressAdd = useSession((s) => s.runnerProgressAdd)
+  const runnerClose = useSession((s) => s.runnerClose)
   const theme = useSession((s) => s.theme)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
 
@@ -46,12 +51,14 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const offState = ipc.on('engine:state', applyEngineState)
     const offStep = ipc.on('recorder:step', addStep)
+    const offRegen = ipc.on('runner:progress', runnerProgressAdd)
     void ipc.invoke('engine:get-state').then(applyEngineState)
     return () => {
       offState()
       offStep()
+      offRegen()
     }
-  }, [applyEngineState, addStep])
+  }, [applyEngineState, addStep, runnerProgressAdd])
 
   return (
     <div className="app">
@@ -77,6 +84,9 @@ export function App(): React.JSX.Element {
             setDraft(null)
           }}
         />
+      )}
+      {runnerPhase === 'done' && runnerReport && (
+        <RunnerReportModal report={runnerReport} onClose={runnerClose} />
       )}
     </div>
   )

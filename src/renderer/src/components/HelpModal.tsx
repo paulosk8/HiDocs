@@ -20,6 +20,7 @@ const SECTIONS = [
   { id: 'git', label: 'Integración con Git' },
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
+  { id: 'regenerar', label: 'Regenerar capturas' },
   { id: 'interfaz', label: 'Panel y tema' },
   { id: 'atajos', label: 'Atajos y solución de problemas' }
 ]
@@ -350,6 +351,35 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   disco.
                 </li>
               </ul>
+            </section>
+
+            <section id="regenerar" data-help-section>
+              <h3>Regenerar capturas</h3>
+              <p>
+                Cuando el sistema documentado <b>cambia de interfaz</b>, sus capturas quedan
+                desactualizadas. En vez de volver a grabar, el botón <b>Regenerar…</b> re-ejecuta el
+                flujo de una funcionalidad y actualiza sus capturas:
+              </p>
+              <ol className="help-steps">
+                <li>
+                  Abre el sistema en el visor e <b>inicia sesión</b> (el runner reutiliza esa
+                  sesión).
+                </li>
+                <li>
+                  Pulsa <b>Regenerar…</b> y elige la carpeta de la funcionalidad (la que contiene su{' '}
+                  <code>session.json</code>).
+                </li>
+                <li>
+                  El runner reproduce cada paso en el visor y vuelve a capturar. Localiza los
+                  elementos por sus selectores, con <b>fallback</b> a los alternativos.
+                </li>
+              </ol>
+              <p>
+                Si un paso ya no encuentra su elemento, se <b>marca como fallido</b> (conserva su
+                captura anterior) y el runner sigue con el resto. Al final, un informe indica qué
+                pasos se actualizaron y cuáles hay que revisar. Las capturas se sobrescriben en
+                disco; tú revisas y comiteas con el flujo de Git normal.
+              </p>
             </section>
 
             <section id="interfaz" data-help-section>

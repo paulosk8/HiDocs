@@ -36,6 +36,9 @@ export function StepsPanel(): React.JSX.Element {
   const projectsOpen = useSession((s) => s.projectsOpen)
   const helpOpen = useSession((s) => s.helpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
+  // El informe del runner se muestra al terminar; durante el replay el visor
+  // debe quedar VISIBLE (se ve la reproducción y las capturas salen con tamaño).
+  const runnerReportOpen = useSession((s) => s.runnerPhase === 'done')
   const groupFormFields = useSession((s) => s.groupFormFields)
   const setGroupFormFields = useSession((s) => s.setGroupFormFields)
 
@@ -181,7 +184,8 @@ export function StepsPanel(): React.JSX.Element {
     problem !== null ||
     projectsOpen ||
     helpOpen ||
-    docusaurusIntroOpen
+    docusaurusIntroOpen ||
+    runnerReportOpen
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])

@@ -38,6 +38,13 @@ export interface DocStep {
    * `value` deja de usarse.
    */
   fields?: Array<{ label: string; value: string }>
+  /**
+   * Acciones individuales que se fundieron en este paso (formulario agrupado).
+   * El runner de regeneración las re-ejecuta todas y luego captura UNA imagen del
+   * paso; `flow.json` también las expande. Ausente en pasos no agrupados: su
+   * acción es `action` + `selectorCandidates` + `value`.
+   */
+  mergedActions?: FlowAction[]
   /** metadato: URL en el momento de la interacción */
   url: string
   /** ruta relativa dentro del paquete exportado: img/paso-03.png */
@@ -170,6 +177,26 @@ export interface CommitDocs {
   /** ruta del session.json en el repo, p. ej. `matriculas/crear/session.json` */
   path: string
   session: DocSession
+}
+
+/** Resultado de regenerar la captura de un paso (runner). */
+export interface RegenStepResult {
+  order: number
+  title: string
+  status: 'ok' | 'failed'
+  /** motivo del fallo, si lo hubo */
+  detail: string
+}
+
+/** Resultado global de una regeneración. */
+export interface RegenReport {
+  /** el usuario canceló el selector de carpeta */
+  canceled?: boolean
+  /** no se pudo ni empezar (p. ej. sin session.json, o sin sesión iniciada) */
+  error?: string
+  /** carpeta de la funcionalidad regenerada */
+  featureDir?: string
+  results: RegenStepResult[]
 }
 
 export interface GitCommitOptions {

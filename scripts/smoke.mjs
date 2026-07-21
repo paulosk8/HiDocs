@@ -662,15 +662,87 @@ try {
     dataUri ? `${dataUri.slice(0, 24)}… (${dataUri.length} b)` : 'null'
   )
 
+  // --- Runner de regeneración: re-ejecutar el flujo y actualizar capturas ---
+  // El diálogo de resultado de la Etapa 6 sigue abierto y oculta el visor; el
+  // runner necesita el visor VISIBLE para capturar, así que se cierra primero.
+  await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
+  // Se escribe una funcionalidad con dos pasos: uno con selector válido (el botón
+  // del fixture) y otro con selector inexistente, para probar ok + fallo marcado.
+  // El visor sigue adjunto al fixture, así que el runner reutiliza esa sesión.
+  const regenDir = mkdtempSync(join(tmpdir(), 'regen-'))
+  const featureDir = join(regenDir, 'pruebas', 'regenerar')
+  mkdirSync(join(featureDir, 'img'), { recursive: true })
+  writeFileSync(
+    join(featureDir, 'session.json'),
+    JSON.stringify({
+      id: 'r1',
+      module: 'pruebas',
+      feature: 'regenerar',
+      title: 'Regenerar',
+      role: '',
+      baseUrl: fixture.url,
+      viewport: { width: 800, height: 600 },
+      createdAt: new Date().toISOString(),
+      steps: [
+        {
+          id: 'a',
+          order: 1,
+          action: 'click',
+          title: 'Abrir «Nueva matrícula»',
+          description: '',
+          selectorCandidates: [
+            { strategy: 'testid', value: '[data-testid="nueva-matricula"]', score: 100 }
+          ],
+          url: fixture.url,
+          screenshot: 'img/paso-01.png',
+          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
+          includeInDocs: true,
+          timestamp: 't'
+        },
+        {
+          id: 'b',
+          order: 2,
+          action: 'click',
+          title: 'Elemento que ya no existe',
+          description: '',
+          selectorCandidates: [{ strategy: 'css', value: '#no-existe-jamas', score: 10 }],
+          url: fixture.url,
+          screenshot: 'img/paso-02.png',
+          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
+          includeInDocs: true,
+          timestamp: 't'
+        }
+      ]
+    }),
+    'utf8'
+  )
+  const regen = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('runner:regenerate', dir),
+    featureDir
+  )
+  check(
+    !regen.error && regen.results.length === 2,
+    'Runner: re-ejecuta el flujo de la funcionalidad',
+    regen.error ?? `${regen.results.length} paso(s)`
+  )
+  check(
+    regen.results[0]?.status === 'ok' && existsSync(join(featureDir, 'img', 'paso-01.png')),
+    'Runner: regenera la captura del paso con selector válido'
+  )
+  check(
+    regen.results[1]?.status === 'failed',
+    'Runner: marca el paso cuyo elemento no se encuentra (no aborta)',
+    regen.results[1]?.detail
+  )
+  rmSync(regenDir, { recursive: true, force: true })
+
   // --- Renderizado del modal (lo que los checks IPC de arriba NO cubren) ---
   // Un fallo de React —JSX roto, onClick sin cablear, columnas colapsadas—
   // pasaría todos los checks anteriores y aun así dejaría la ventana inservible.
   // Aquí se maneja el DOM real, con esperas web-first en vez de tiempos fijos.
 
-  // El diálogo de guardado sigue abierto y su overlay taparía el clic; se cierra
-  // con «Cerrar» antes de tocar la barra superior.
-  await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
-  await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
+  // El diálogo de resultado ya se cerró antes del runner; se abre el explorador.
   await gui.getByRole('button', { name: 'Proyectos…', exact: true }).click()
   await gui.waitForSelector('.projects-modal', { timeout: 5000 })
   check(

@@ -19,7 +19,12 @@ import {
   type SavePayload,
   type ViewportBounds
 } from '../shared/ipc-contract'
-import { DEFAULT_VIEWPORT, type EngineState } from '../shared/types'
+import {
+  DEFAULT_VIEWPORT,
+  type DocSession,
+  type EngineState,
+  type RegenReport
+} from '../shared/types'
 import { saveSession } from './storage'
 import { inspectRepo, listBranches, listCommits, readCommitDocs, readDocImage } from './git'
 import { listProjects, forgetProject } from './projects'
@@ -271,6 +276,47 @@ function registerIpc(): void {
   ipcMain.handle('draft:load', async () => loadDraft().catch(() => null))
   ipcMain.handle('draft:clear', async () => {
     await clearDraft().catch(() => undefined)
+  })
+
+  ipcMain.handle('runner:regenerate', async (_e, given?: string): Promise<RegenReport> => {
+    if (!mainWindow) return { results: [] }
+    let featureDir: string
+    if (given) {
+      featureDir = given
+    } else {
+      // Se pide la carpeta; la vista nativa se oculta mientras el selector nativo
+      // está abierto (como en la carpeta de salida).
+      viewport.setVisible(false)
+      try {
+        const picked = await dialog.showOpenDialog(mainWindow, {
+          title: 'Carpeta de la funcionalidad a regenerar (con su session.json)',
+          properties: ['openDirectory']
+        })
+        if (picked.canceled || !picked.filePaths[0]) return { canceled: true, results: [] }
+        featureDir = picked.filePaths[0]
+      } finally {
+        viewport.setVisible(true)
+      }
+    }
+
+    try {
+      const json = await readFile(join(featureDir, 'session.json'), 'utf8')
+      const session = JSON.parse(json) as DocSession
+      const results = await engine.regenerate(session, featureDir, (r) =>
+        mainWindow?.webContents.send('runner:progress', r)
+      )
+      return { featureDir, results }
+    } catch (err) {
+      return {
+        error:
+          err instanceof Error && /ENOENT/.test(err.message)
+            ? 'La carpeta elegida no contiene un session.json.'
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        results: []
+      }
+    }
   })
 }
 
