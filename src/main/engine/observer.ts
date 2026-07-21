@@ -596,7 +596,7 @@ export function observerScript(config: ObserverConfig): void {
    * así que acabaría contradiciendo al paso que ilustra. El número lo pone quien
    * sí puede mantenerlo al día: la tarjeta del panel y el encabezado del manual.
    */
-  const drawBox = (rect: DOMRect): HTMLElement => {
+  const drawBox = (rect: DOMRect, dimmed: boolean): HTMLElement => {
     const box = document.createElement('div')
     box.style.cssText = [
       'position:fixed',
@@ -609,10 +609,32 @@ export function observerScript(config: ObserverConfig): void {
       'box-sizing:border-box',
       'pointer-events:none',
       'margin:0',
-      'padding:0'
-    ].join(';')
+      'padding:0',
+      // Si algo tapa al elemento —el fondo translúcido de un modal, casi
+      // siempre—, se le devuelve el brillo solo dentro del recuadro. Si no, el
+      // paso señala un elemento apagado justo cuando pide mirarlo. Sin tapar
+      // nada: `backdrop-filter` aclara lo que ya hay pintado debajo.
+      dimmed ? 'backdrop-filter:brightness(1.9) saturate(1.15)' : ''
+    ]
+      .filter(Boolean)
+      .join(';')
 
     return box
+  }
+
+  /**
+   * ¿Hay algo pintado por encima del elemento? Se pregunta por su centro: si lo
+   * que hay ahí no es él ni parte de él, algo se le ha puesto delante.
+   *
+   * Los overlays del propio grabador no interfieren: `pointer-events:none` los
+   * excluye de `elementFromPoint`.
+   */
+  const isCovered = (el: Element, rect: DOMRect): boolean => {
+    const x = rect.x + rect.width / 2
+    const y = rect.y + rect.height / 2
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false
+    const top = document.elementFromPoint(x, y)
+    return !!top && top !== el && !el.contains(top) && !top.contains(el)
   }
 
   /**
@@ -640,7 +662,7 @@ export function observerScript(config: ObserverConfig): void {
       if (!el || !el.isConnected) continue
       const rect = el.getBoundingClientRect()
       if (rect.width === 0 && rect.height === 0) continue
-      container.appendChild(drawBox(rect))
+      container.appendChild(drawBox(rect, isCovered(el, rect)))
       painted++
       last = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
     }

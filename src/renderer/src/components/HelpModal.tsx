@@ -209,7 +209,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>
                 Durante la grabación, cada clic, escritura, selección o envío relevante genera un
                 paso. La app espera a que la página se estabilice, resalta el elemento y toma la
-                captura. Los campos de texto se consolidan en <b>un solo paso</b> (el valor final),
+                captura. Si para entonces algo ha quedado encima —el fondo oscuro de un modal
+                recién abierto, típicamente— el recuadro le devuelve el brillo, para que el
+                elemento que el paso señala se siga viendo. Los campos de texto se consolidan en <b>un solo paso</b> (el valor final),
                 y las <b>contraseñas se enmascaran</b> como <code>***</code>.
               </p>
               <p>

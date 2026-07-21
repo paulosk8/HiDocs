@@ -19,12 +19,72 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { inflateSync } from 'node:zlib'
 import electronPath from 'electron'
 import { chromium } from 'playwright-core'
 import { startFixtureServer } from './fixture/server.mjs'
 
 const PORT = 9333
 const root = process.cwd()
+
+/**
+ * Decodificador PNG mínimo (8 bits, sin entrelazar), que es lo que produce
+ * Playwright. Sirve para comprobar sobre los píxeles reales lo que ninguna
+ * aserción del DOM puede: que el elemento señalado se VE en la captura.
+ *
+ * Se hace en Node y no con un canvas del renderer porque las capturas se sirven
+ * por el protocolo `docshot://`, que es otro origen y contamina el canvas;
+ * abrirle CORS solo para una prueba sería peor.
+ */
+function decodePng(buf) {
+  let pos = 8
+  let width = 0
+  let height = 0
+  let channels = 0
+  const chunks = []
+  while (pos < buf.length) {
+    const len = buf.readUInt32BE(pos)
+    const type = buf.toString('ascii', pos + 4, pos + 8)
+    const data = buf.subarray(pos + 8, pos + 8 + len)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+      channels = data[9] === 6 ? 4 : data[9] === 2 ? 3 : 0
+      if (data[8] !== 8 || !channels || data[12] !== 0) throw new Error('PNG no soportado')
+    } else if (type === 'IDAT') chunks.push(data)
+    else if (type === 'IEND') break
+    pos += 12 + len
+  }
+  const raw = inflateSync(Buffer.concat(chunks))
+  const stride = width * channels
+  const out = Buffer.alloc(height * stride)
+  const zero = Buffer.alloc(stride)
+  let p = 0
+  for (let y = 0; y < height; y++) {
+    const filter = raw[p++]
+    const line = raw.subarray(p, p + stride)
+    p += stride
+    const prev = y ? out.subarray((y - 1) * stride, y * stride) : zero
+    const cur = out.subarray(y * stride, (y + 1) * stride)
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? cur[x - channels] : 0
+      const b = prev[x]
+      const c = x >= channels ? prev[x - channels] : 0
+      let v = line[x]
+      if (filter === 1) v += a
+      else if (filter === 2) v += b
+      else if (filter === 3) v += (a + b) >> 1
+      else if (filter === 4) {
+        const pa = Math.abs(b - c)
+        const pb = Math.abs(a - c)
+        const pc = Math.abs(a + b - 2 * c)
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+      }
+      cur[x] = v & 255
+    }
+  }
+  return { width, height, channels, data: out }
+}
 
 const checks = []
 function check(ok, label, detail = '') {
@@ -1161,8 +1221,88 @@ try {
   await gui.waitForFunction(() =>
     document.querySelector('.status')?.textContent?.includes('Grabando')
   )
+  // Referencia: el mismo botón sin nada encima, para saber cuánto brillo tenía
+  // antes de que el modal lo oscureciera.
+  const shotBeforeModal = decodePng(await target.screenshot({ type: 'png' }))
   await target.click('[data-testid="nueva-matricula"]')
   await waitSteps(beforeGroup + 1, 'grupo: abrir el modal')
+
+  // --- Elemento tapado por el fondo de un modal ---
+  // Al pulsar un botón que abre un modal, la captura se toma cuando el modal ya
+  // está: su fondo translúcido oscurece justo el botón que el paso señala. Se le
+  // devuelve el brillo dentro del recuadro. Se comprueba sobre los píxeles del
+  // PNG, que es lo único que demuestra que se ve.
+  // El último paso es el clic que acaba de abrir el modal con fondo oscuro.
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      return !!img && img.complete && img.naturalWidth > 0
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const modalStepShot = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return cards[cards.length - 1]?.querySelector('.thumb img')?.src ?? null
+  })
+  const dimCheck = (() => {
+    // `docshot://shot/<ruta>` → ruta absoluta del PNG en disco.
+    const file = decodeURIComponent(new URL(modalStepShot).pathname.replace(/^\//, ''))
+    const shot = decodePng(readFileSync(file))
+
+    // El recuadro se localiza por su color (#FF5722): sin coordenadas fijas.
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -1
+    let maxY = -1
+    for (let y = 0; y < shot.height; y++) {
+      for (let x = 0; x < shot.width; x++) {
+        const i = (y * shot.width + x) * shot.channels
+        const d = shot.data
+        if (Math.abs(d[i] - 255) < 30 && Math.abs(d[i + 1] - 87) < 30 && Math.abs(d[i + 2] - 34) < 30) {
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+      }
+    }
+    if (maxX < 0) return { found: false }
+
+    const luminance = (png, x0, y0, x1, y1) => {
+      let sum = 0
+      let n = 0
+      for (let y = Math.max(0, y0); y < Math.min(png.height, y1); y++) {
+        for (let x = Math.max(0, x0); x < Math.min(png.width, x1); x++) {
+          const i = (y * png.width + x) * png.channels
+          sum += 0.299 * png.data[i] + 0.587 * png.data[i + 1] + 0.114 * png.data[i + 2]
+          n++
+        }
+      }
+      return n ? sum / n : 0
+    }
+
+    // Misma zona en las dos capturas: el botón antes del modal y después.
+    const box = [minX + 6, minY + 6, maxX - 5, maxY - 5]
+    return {
+      found: true,
+      before: luminance(shotBeforeModal, ...box),
+      after: luminance(shot, ...box)
+    }
+  })()
+
+  // Sin compensar, el fondo del modal (negro al 40 %) deja el botón en torno al
+  // 60 % de su brillo. Se exige que conserve al menos el 85 %: la diferencia
+  // entre verlo y no verlo.
+  check(
+    dimCheck.found && dimCheck.after > dimCheck.before * 0.85,
+    'Captura: el elemento señalado no queda apagado bajo el fondo del modal',
+    dimCheck.found
+      ? `brillo ${Math.round(dimCheck.before)} antes del modal → ${Math.round(dimCheck.after)} en la captura`
+      : 'no se encontró el recuadro'
+  )
+
 
   await target.fill('#alumno', 'Ana Pérez')
   await target.fill('#clave', 'secreto123')

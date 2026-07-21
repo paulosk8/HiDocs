@@ -60,7 +60,7 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
 - El engine entonces:
   1. Espera estabilidad del DOM tras el efecto del clic (ver §5 sobre Next.js).
   2. Genera los selectores candidatos (ver §4).
-  3. Dibuja el **highlight** inyectando un overlay absoluto (borde 3px `#FF5722`, radio 6px) sobre el `boundingRect`. **Sin número**: el orden de los pasos cambia al eliminar o reordenar, y un número pintado en el PNG no se puede rehacer —son píxeles—, así que acabaría contradiciendo al paso que ilustra. El número lo ponen quienes sí pueden mantenerlo al día: la tarjeta del panel y el encabezado del MDX.
+  3. Dibuja el **highlight** inyectando un overlay absoluto (borde 3px `#FF5722`, radio 6px) sobre el `boundingRect`. Si algo ha quedado **por encima** del elemento (`isCovered`, vía `elementFromPoint`) —el fondo translúcido de un modal recién abierto, casi siempre— el recuadro añade `backdrop-filter: brightness()`, que le devuelve el brillo solo en esa zona: si no, el paso señalaría un elemento apagado justo cuando pide mirarlo. **Sin número**: el orden de los pasos cambia al eliminar o reordenar, y un número pintado en el PNG no se puede rehacer —son píxeles—, así que acabaría contradiciendo al paso que ilustra. El número lo ponen quienes sí pueden mantenerlo al día: la tarjeta del panel y el encabezado del MDX.
   4. Toma la captura (`page.screenshot`, viewport completo, PNG).
   5. Remueve el overlay.
   6. Emite el paso a la GUI por IPC.
