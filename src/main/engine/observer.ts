@@ -424,6 +424,15 @@ export function observerScript(config: ObserverConfig): void {
     if (!enabled || !emit) return
     const ref = nextRef++
     refs.set(ref, el)
+    // Las acciones que pueden navegar se resaltan AQUÍ, de forma síncrona,
+    // antes de que el navegador ejecute la acción por defecto. Una vez iniciada
+    // la navegación, Chromium aplaza la ejecución de scripts, así que el motor
+    // ya no podría dibujar nada: cuando lo intentase, la página sería otra y el
+    // elemento que el paso señala habría desaparecido. El motor solo tiene que
+    // capturar —eso sí llega—, y luego quita el overlay.
+    if (action === 'click' || action === 'submit' || action === 'press') {
+      highlight([ref])
+    }
     // Las referencias ya no se liberan tras capturar: un paso puede fundirse
     // más tarde con los siguientes y hay que poder volver a marcar sus campos.
     // Se conservan las más recientes y se sueltan las viejas, para no retener

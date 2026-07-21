@@ -1,7 +1,7 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { Page } from 'playwright-core'
+import type { CDPSession, Page } from 'playwright-core'
 import { attachToViewport, type CdpAttachment } from './cdp'
 import {
   EMIT_BINDING,
@@ -22,6 +22,9 @@ export interface EngineHooks {
   onStep: (step: RecordedStep) => void
   onLog: (level: 'info' | 'warn' | 'error', message: string) => void
 }
+
+/** Acciones tras las que la página puede irse y llevarse el elemento señalado. */
+const NAVIGATING_ACTIONS: StepAction[] = ['click', 'press', 'submit', 'navigate']
 
 const OBSERVER_CONFIG: ObserverConfig = {
   bindingName: EMIT_BINDING,
@@ -97,6 +100,8 @@ export class RecorderEngine {
   private observerInstalled = false
   private stepCount = 0
   private shotDir: string | null = null
+  /** Sesión CDP en crudo, para capturar sin esperar a navegaciones pendientes. */
+  private cdp: CDPSession | null = null
 
   /**
    * Los eventos se procesan de uno en uno: cada paso implica esperar
@@ -138,6 +143,10 @@ export class RecorderEngine {
     if (this.attachment) return
     try {
       this.attachment = await attachToViewport(this.port, targetWebContents)
+      this.cdp = await this.attachment.page
+        .context()
+        .newCDPSession(this.attachment.page)
+        .catch(() => null)
       this.lastError = undefined
 
       const title = await this.attachment.page.title().catch(() => '(sin título)')
@@ -145,6 +154,7 @@ export class RecorderEngine {
 
       this.attachment.browser.on('disconnected', () => {
         this.attachment = null
+        this.cdp = null
         this.observerInstalled = false
         this.status = 'idle'
         this.log('warn', 'Se perdió la conexión CDP con el viewport')
@@ -335,47 +345,106 @@ export class RecorderEngine {
     return file
   }
 
+  /**
+   * Captura inmediata, por CDP en crudo, para las acciones que pueden navegar.
+   *
+   * El resaltado ya lo dibujó el observador de forma síncrona al recibir el
+   * clic, antes de que arrancara la navegación: una vez arranca, Chromium
+   * aplaza la ejecución de scripts y sería imposible pintarlo (se midió:
+   * `Runtime.evaluate` tardaba 900 ms y respondía ya sobre la página siguiente).
+   *
+   * Aquí solo se captura, que sí llega mientras la página anterior siga a la
+   * vista —lo normal mientras el servidor responde—. Se usa la API CDP en crudo
+   * y no la de Playwright porque esta espera a que termine toda navegación
+   * pendiente, que es justo lo que hay que adelantar.
+   */
+  private async earlyShoot(file: string): Promise<boolean> {
+    const cdp = this.cdp
+    if (!cdp) return false
+    try {
+      const shot = (await cdp.send('Page.captureScreenshot', { format: 'png' })) as { data: string }
+      writeFileSync(file, Buffer.from(shot.data, 'base64'))
+      return true
+    } catch {
+      // La página se fue antes de que llegara: el paso sigue su curso normal.
+      return false
+    }
+  }
+
+  /**
+   * Resalta los elementos, captura el viewport y quita el overlay.
+   *
+   * Devuelve el rectángulo del último elemento señalado, o `null` si no se pudo
+   * señalar ninguno (se fueron con un cambio de página) o si la captura falló.
+   * El overlay se quita siempre; las referencias NO se liberan, porque el paso
+   * puede fundirse después con los siguientes y habrá que volver a marcarlo.
+   */
+  private async shoot(page: Page, refs: number[], file: string): Promise<BoundingRect | null> {
+    const rect = await page
+      .evaluate(
+        ([ns, targets]) => {
+          const api = (
+            window as unknown as Record<string, { highlight(r: number[]): BoundingRect | null }>
+          )[ns as string]
+          return api ? api.highlight(targets as number[]) : null
+        },
+        [OBSERVER_NAMESPACE, refs] as [string, number[]]
+      )
+      .catch(() => null)
+
+    let captured = true
+    try {
+      await page.screenshot({ path: file, type: 'png' })
+    } catch {
+      captured = false
+    }
+    await page
+      .evaluate(
+        (ns) => {
+          const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
+          api?.clearHighlight()
+        },
+        OBSERVER_NAMESPACE
+      )
+      .catch(() => undefined)
+
+    return captured ? (rect as BoundingRect | null) : null
+  }
+
   private async processEvent(event: RawEvent): Promise<void> {
     const page = this.attachment?.page
     if (!page || this.status !== 'recording') return
 
     const order = ++this.stepCount
+    const file = join(this.shotDir!, `step-${String(order).padStart(3, '0')}.png`)
+    const earlyFile = join(this.shotDir!, `step-${String(order).padStart(3, '0')}-previo.png`)
     try {
-      // 1. Esperar a que el efecto de la interacción termine (§5).
+      // 1. Captura inmediata para las acciones que pueden navegar. «Cerrar
+      //    sesión» se lleva por delante el menú que hay que señalar: al capturar
+      //    después ya no queda nada que marcar y el paso ilustraba la pantalla
+      //    siguiente, sin recuadro. Solo se usa si la definitiva no puede
+      //    señalar el elemento.
+      const early =
+        NAVIGATING_ACTIONS.includes(event.action) && (await this.earlyShoot(earlyFile))
+
+      // 2. Esperar a que el efecto de la interacción termine (§5).
       await waitForStability(page)
 
-      // 2. Resaltar el elemento y recalcular su rectángulo.
-      const freshRect = await page
-        .evaluate(
-          ([ns, refs]) => {
-            const api = (
-              window as unknown as Record<string, { highlight(r: number[]): BoundingRect | null }>
-            )[ns as string]
-            return api ? api.highlight(refs as number[]) : null
-          },
-          [OBSERVER_NAMESPACE, [event.ref]] as [string, number[]]
+      // 3. Resaltar el elemento y recalcular su rectángulo, ya estabilizado.
+      const freshRect = await this.shoot(page, [event.ref], file)
+
+      // La definitiva manda salvo que el elemento ya no exista; entonces vale
+      // más la previa, que sí lo muestra, que una imagen de la pantalla nueva.
+      const usePrevious = !freshRect && early
+      const tempFile = usePrevious ? earlyFile : file
+      const boundingRect = freshRect ?? event.boundingRect
+      if (usePrevious) {
+        this.log(
+          'info',
+          `Paso ${order}: la página cambió al instante, se usa la captura previa al clic.`
         )
-        .catch(() => null)
-
-      const boundingRect = (freshRect as BoundingRect | null) ?? event.boundingRect
-
-      // 3. Capturar el viewport completo con el resaltado dibujado.
-      const file = join(this.shotDir!, `step-${String(order).padStart(3, '0')}.png`)
-      await page.screenshot({ path: file, type: 'png' })
-
-      // 4. Quitar el overlay para no dejar rastro en el sistema documentado. La
-      //    referencia al elemento NO se libera: si este paso acaba fundido con
-      //    los siguientes en un paso de formulario, habrá que volver a marcarlo
-      //    junto a sus compañeros. El observador suelta las más antiguas solo.
-      await page
-        .evaluate(
-          (ns) => {
-            const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
-            api?.clearHighlight()
-          },
-          OBSERVER_NAMESPACE
-        )
-        .catch(() => undefined)
+      }
+      rmSync(usePrevious ? file : earlyFile, { force: true })
 
       const step: RecordedStep = {
         id: randomUUID(),
@@ -389,7 +458,7 @@ export class RecorderEngine {
         boundingRect,
         includeInDocs: true,
         timestamp: event.timestamp,
-        tempFile: file,
+        tempFile,
         isFormField: isFormField(event.signals),
         ref: event.ref
       }

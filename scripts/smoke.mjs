@@ -1410,6 +1410,50 @@ try {
     `quitado ${removedLabel} · quedan ${remaining.join(' ')}`
   )
 
+  // --- Clic que navega al instante («cerrar sesión») ---
+  // La captura se toma tras esperar estabilidad, así que para entonces la página
+  // ya es otra y el elemento no existe: el paso ilustraba la pantalla siguiente
+  // y sin recuadro. Debe quedarse con la captura previa al clic, que sí lo
+  // muestra. Se comprueba que la imagen contiene el recuadro (#FF5722).
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeLogout = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#logout')
+  await waitSteps(beforeLogout + 1, 'cerrar sesión')
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      return !!img && img.complete && img.naturalWidth > 0
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const logoutShot = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return cards[cards.length - 1]?.querySelector('.thumb img')?.src ?? null
+  })
+  const logoutPng = decodePng(
+    readFileSync(decodeURIComponent(new URL(logoutShot).pathname.replace(/^\//, '')))
+  )
+  let highlightPixels = 0
+  for (let i = 0; i < logoutPng.data.length; i += logoutPng.channels) {
+    const d = logoutPng.data
+    if (Math.abs(d[i] - 255) < 30 && Math.abs(d[i + 1] - 87) < 30 && Math.abs(d[i + 2] - 34) < 30) {
+      highlightPixels++
+    }
+  }
+  check(
+    highlightPixels > 200,
+    'Captura: un clic que navega al instante conserva el elemento señalado',
+    `${highlightPixels} píxeles de resaltado`
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
 
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
