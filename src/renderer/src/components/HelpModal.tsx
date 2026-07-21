@@ -95,9 +95,15 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 su captura de pantalla, el elemento resaltado y un selector reutilizable.
               </p>
               <p>
-                El resultado es un paquete portable (JSON + imágenes) pensado para alimentar un
-                proyecto <b>Docusaurus</b>, y opcionalmente se registra en Git como una rama lista
-                para abrir un Pull Request.
+                El resultado es un paquete portable (JSON + imágenes) más la página del manual en{' '}
+                <b>MDX</b>, lista para que <b>Docusaurus</b> la renderice, y opcionalmente se
+                registra en Git como una rama lista para abrir un Pull Request.
+              </p>
+              <p>
+                Dos ayudas más, una vez grabado: la{' '}
+                <a onClick={() => go('ia')}>redacción con IA</a> propone el título y la descripción
+                de cada paso, y el <a onClick={() => go('regenerar')}>runner de regeneración</a>{' '}
+                actualiza las capturas cuando el sistema documentado cambia de interfaz.
               </p>
             </section>
 
@@ -163,6 +169,14 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>Proyectos…</b> · abre el explorador de repositorios ya usados.
                 </li>
                 <li>
+                  <b>Regenerar…</b> · actualiza las capturas de una funcionalidad ya documentada
+                  (ver <a onClick={() => go('regenerar')}>Regenerar capturas</a>).
+                </li>
+                <li>
+                  <b>IA</b> · ajustes de la redacción con IA; muestra <b>✓</b> cuando hay clave
+                  configurada (ver <a onClick={() => go('ia')}>Redactar con IA</a>).
+                </li>
+                <li>
                   <b>☾ / ☀</b> · alterna el modo claro y oscuro.
                 </li>
                 <li>
@@ -226,6 +240,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>Título y descripción</b> · edítalos para explicar el paso.
                 </li>
                 <li>
+                  <b>✨</b> · propone título y descripción para ese paso con IA (ver{' '}
+                  <a onClick={() => go('ia')}>Redactar con IA</a>).
+                </li>
+                <li>
                   <b>Selector</b> · la estrategia detectada (test-id, rol, texto…) para reproducir
                   el paso más adelante.
                 </li>
@@ -235,6 +253,20 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 </li>
                 <li>
                   <b>Arrastrar</b> para reordenar, <b>eliminar</b> para descartar.
+                </li>
+              </ul>
+              <p>En el encabezado del panel:</p>
+              <ul className="help-defs">
+                <li>
+                  <b>agrupar campos</b> · une los <i>fill</i> y <i>select</i> seguidos de un mismo
+                  formulario en un solo paso, con una sola captura en vez de una por campo.
+                </li>
+                <li>
+                  <b>✨ Redactar todos</b> · redacta de una vez todos los pasos marcados como
+                  <b> incluir en docs</b>.
+                </li>
+                <li>
+                  <b>● ⏸ ■</b> · grabar, pausar/reanudar y detener para guardar.
                 </li>
               </ul>
               <p>

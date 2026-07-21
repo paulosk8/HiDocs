@@ -6,8 +6,9 @@ normalidad y cada interacción se convierte en una tarjeta con captura resaltada
 selectores robustos y textos editables. Al detener, se exporta un paquete
 portable a disco.
 
-Implementación del MVP descrito en [`SPEC.md`](./SPEC.md), más la fase de integración
-con Git.
+Implementación del MVP descrito en [`SPEC.md`](./SPEC.md), más las fases posteriores:
+integración con Git, generación de MDX para Docusaurus, runner de regeneración de
+capturas y redacción de los pasos con IA.
 
 ## Uso
 
@@ -26,7 +27,8 @@ Flujo de trabajo:
 3. Elige la **carpeta de salida** (el campo también acepta una ruta pegada).
 4. Pulsa **●** y navega. Cada clic, campo rellenado, selección y envío genera una tarjeta.
    `Ctrl+Shift+R` pausa y reanuda sin salir del sistema documentado.
-5. Edita títulos y descripciones, reordena arrastrando y elimina lo que sobre.
+5. Edita títulos y descripciones, reordena arrastrando y elimina lo que sobre. Con **✨** (o
+   **Redactar todos**) la IA los propone por ti; hay que configurar la clave en **IA** primero.
 6. Pulsa **■** para detener y guardar.
 
 Salida:
@@ -34,7 +36,7 @@ Salida:
 ```
 <carpeta>/<module>/<feature>/
   ├── session.json   # sesión completa con textos y capturas
-  ├── flow.json      # solo acciones + selectores (insumo del runner futuro)
+  ├── flow.json      # solo acciones + selectores (insumo del runner de regeneración)
   └── img/paso-01.png …
 ```
 
@@ -46,12 +48,24 @@ src/
     index.ts       ventana, IPC, protocolo docshot:, atajo global
     viewport.ts    WebContentsView del sistema documentado
     storage.ts     escritura del paquete en disco
+    mdx.ts         página del manual para Docusaurus
+    git.ts         ramas, commits y lectura del repositorio
+    projects.ts    registro de repositorios ya usados
+    docusaurus.ts  detección de la carpeta docs/ del proyecto destino
+    draft.ts       borrador de la grabación en curso (userData)
+    settings.ts    preferencias y claves de IA, cifradas con safeStorage
+    ai/
+      index.ts     orquestación: lotes, capturas, progreso, errores
+      prompt.ts    prompt y esquema comunes a los dos proveedores
+      anthropic.ts llamada a Claude
+      gemini.ts    llamada a Gemini
     engine/
       cdp.ts       conexión Playwright ↔ viewport por CDP
       observer.ts  script inyectado en la página documentada
       selectors.ts ranking y puntuación de selectores
       stability.ts espera de estabilidad del DOM antes de capturar
       recorder.ts  orquestación: cola de eventos → paso documentado
+      runner.ts    replay del flujo para regenerar capturas
   preload/         contextBridge con canales tipados
   renderer/        GUI React
   shared/          tipos y contrato IPC comunes
@@ -108,7 +122,7 @@ Tres detalles de implementación que costaron encontrar y que conviene no revert
 
 ```bash
 npm run build
-node scripts/smoke.mjs        # 40 comprobaciones de extremo a extremo
+node scripts/smoke.mjs        # 92 comprobaciones de extremo a extremo
 node scripts/smoke-next.mjs   # contra un Next.js real (por defecto nextjs.org)
 ```
 
@@ -134,5 +148,5 @@ y sus salvaguardas.
 
 ## Fases pendientes
 
-Generación de MDX para Docusaurus, runner headless de regeneración y asistencia de IA
-para redactar descripciones. El modelo de datos y `flow.json` ya están pensados para ello.
+Ninguna del planteamiento inicial: la lista «fuera de alcance» de `SPEC.md` §1 (MDX para
+Docusaurus, runner de regeneración y asistencia de IA) está construida.
