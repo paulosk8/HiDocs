@@ -123,6 +123,19 @@
               <option value="2b">2º B</option>
             </select>
 
+            <!--
+              Interruptor al estilo de los diseños actuales: el <input> real
+              está escondido y lo que se pulsa es el texto, que es HERMANO suyo.
+              Al pulsarlo, el widget reenvía el clic al input por código. Sin
+              tratarlo, un solo gesto generaría dos pasos y ninguno se agruparía
+              con el formulario, porque el texto no es un campo por sí mismo.
+            -->
+            <div id="estado-row" class="switch-row">
+              <span class="switch-track" aria-hidden="true"></span>
+              <span class="switch-text">Matrícula activa</span>
+              <input id="activa" name="activa" type="checkbox" class="switch-input" />
+            </div>
+
             <p>
               <button type="submit" class="Button_primary__b3n1q">Guardar matrícula</button>
               <button type="button" data-testid="cancelar">Cancelar</button>
@@ -157,6 +170,14 @@
 
       portalRoot.addEventListener('click', (e) => {
         if (e.target.closest('[data-testid="cancelar"]')) portalRoot.replaceChildren()
+
+        // El interruptor reenvía el clic a su <input> escondido, como hacen las
+        // librerías de componentes. Genera un segundo evento de clic para lo
+        // que la persona vivió como un solo gesto.
+        const row = e.target.closest('#estado-row')
+        if (row && e.target.id !== 'activa') {
+          row.querySelector('#activa').click()
+        }
       })
 
       portalRoot.addEventListener('submit', (e) => {

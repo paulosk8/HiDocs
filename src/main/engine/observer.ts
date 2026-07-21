@@ -22,6 +22,15 @@ export interface ElementSignals {
   placeholder: string | null
   name: string | null
   cssPath: string | null
+  /**
+   * El elemento ES, CONTIENE o ETIQUETA un control donde se introduce un valor.
+   *
+   * Se resuelve aquí porque hace falta el DOM: un interruptor moderno es un
+   * envoltorio con un `<input>` escondido dentro, y por su etiqueta y su rol
+   * pasaría por un botón cualquiera. Sin esto rompería el grupo del formulario
+   * al que pertenece.
+   */
+  fieldControl: boolean
   /** cuántos elementos del documento comparten cada señal (1 = selector único) */
   matches: {
     testId: number
@@ -92,6 +101,10 @@ export function observerScript(config: ObserverConfig): void {
    */
   let lastFill: { el: Element; value: string } | null = null
   let lastFormInteraction: { form: HTMLFormElement; at: number } | null = null
+  /** Último clic documentado, para descartar los que reenvía el propio widget. */
+  let lastClick: { el: Element; at: number } | null = null
+  /** Ventana dentro de la cual un clic anidado se considera el mismo gesto. */
+  const SAME_GESTURE_MS = 400
 
   const clean = (s: string | null | undefined): string | null => {
     if (!s) return null
@@ -297,6 +310,7 @@ export function observerScript(config: ObserverConfig): void {
       text,
       placeholder: el.getAttribute('placeholder'),
       name: el.getAttribute('name'),
+      fieldControl: controlsField(el),
       cssPath,
       matches: {
         testId: testId ? countMatches(`[data-testid="${CSS.escape(testId)}"]`) : 0,
@@ -345,6 +359,49 @@ export function observerScript(config: ObserverConfig): void {
     let depth = 0
     for (let n: Element | null = el; n && n !== ancestor; n = n.parentElement) depth++
     return depth <= 4 ? ancestor : el
+  }
+
+  /** Controles donde se introduce un valor, por etiqueta HTML y por rol ARIA. */
+  const CONTROL_SELECTOR =
+    'input:not([type=submit]):not([type=button]):not([type=reset]):not([type=image]),' +
+    'select,textarea,' +
+    '[role=switch],[role=checkbox],[role=radio],[role=combobox],[role=listbox],' +
+    '[role=textbox],[role=searchbox],[role=spinbutton],[role=slider]'
+
+  /** Elementos interactivos que NUNCA son un campo, aunque estén junto a uno. */
+  const NON_FIELD_SELECTOR =
+    'button,a,summary,[role=button],[role=link],[role=tab],[role=menuitem]'
+
+  /**
+   * Envoltorio del widget de un campo: el ancestro más cercano (pocos niveles)
+   * que alberga EXACTAMENTE un control.
+   *
+   * Es la pieza clave para los interruptores modernos, donde el `<input>` real
+   * está escondido y el texto que se pulsa es un hermano suyo, no un ancestro.
+   * Exigir un único control evita que un formulario o una sección entera pasen
+   * por widget.
+   */
+  const fieldWrapperOf = (el: Element): Element | null => {
+    let node: Element | null = el
+    for (let depth = 0; node && depth <= 3; depth++, node = node.parentElement) {
+      if (node.tagName === 'FORM' || node.tagName === 'FIELDSET') return null
+      if (node.querySelectorAll(CONTROL_SELECTOR).length === 1) return node
+    }
+    return null
+  }
+
+  /**
+   * ¿Este clic acciona un campo? Cubre los casos reales: el propio control, una
+   * `<label>` que lo acciona, y el envoltorio de un control estilizado.
+   */
+  const controlsField = (el: Element): boolean => {
+    if (el.matches(CONTROL_SELECTOR)) return true
+    // Un botón o un enlace junto a un campo siguen siendo botón y enlace: deben
+    // cerrar el grupo del formulario, no unirse a él.
+    if (el.matches(NON_FIELD_SELECTOR)) return false
+    const label = el.closest('label') as HTMLLabelElement | null
+    if (label && (label.control || label.querySelector(CONTROL_SELECTOR))) return true
+    return fieldWrapperOf(el) !== null
   }
 
   const isTextLike = (el: Element): el is HTMLInputElement | HTMLTextAreaElement => {
@@ -417,6 +474,32 @@ export function observerScript(config: ObserverConfig): void {
       const hit = (e.composedPath()[0] as Element) ?? (e.target as Element)
       if (!hit || hit.nodeType !== 1) return
       const target = resolveInteractive(hit)
+
+      // Un solo clic del usuario puede producir varios eventos: al pulsar una
+      // `<label>` el navegador reenvía el clic a su control, y un interruptor
+      // estilizado acciona por código el `<input>` que esconde. Serían dos o
+      // tres pasos para lo que la persona vivió como uno, y encima el reenviado
+      // trae peor selector (el `<input>` oculto no tiene nombre accesible).
+      //
+      // Se documenta el primero —el que se ve y se pulsa— y se descartan los
+      // reenvíos. Son el mismo gesto si llegan enseguida y, además, uno contiene
+      // al otro, comparten el envoltorio de un mismo campo, o el segundo no lo
+      // generó una persona (`isTrusted` distingue el clic sintético).
+      const now = Date.now()
+      const wrapper = fieldWrapperOf(target)
+      if (
+        lastClick &&
+        now - lastClick.at < SAME_GESTURE_MS &&
+        lastClick.el !== target &&
+        (lastClick.el.contains(target) ||
+          target.contains(lastClick.el) ||
+          !e.isTrusted ||
+          (wrapper !== null && wrapper === fieldWrapperOf(lastClick.el)))
+      ) {
+        return
+      }
+      lastClick = { el: target, at: now }
+
       flushPending()
       noteFormInteraction(target)
       send('click', target, { point: { x: e.clientX, y: e.clientY } })

@@ -1168,19 +1168,38 @@ try {
   await target.fill('#clave', 'secreto123')
   await target.selectOption('#curso', '2b')
 
-  // Los tres campos deben quedar en UN paso, no en tres.
+  // Un interruptor estilizado: el <input> real está escondido y el widget
+  // reenvía el clic. Debe dar UN paso, no dos, y unirse al mismo formulario en
+  // vez de romperlo (era lo que pasaba al documentar el sistema real).
+  await target.click('.switch-text')
   await gui.waitForFunction(
     () => {
       const cards = [...document.querySelectorAll('.step-card')]
-      return (cards[cards.length - 1]?.querySelectorAll('.field-list li').length ?? 0) >= 3
+      const labels = [...(cards[cards.length - 1]?.querySelectorAll('.field-label') ?? [])]
+      return labels.some((l) => /Matrícula activa/.test(l.textContent ?? ''))
     },
     null,
     { timeout: 20000 }
   )
+  // Margen para que un segundo paso indebido llegase a aparecer.
+  await new Promise((r) => setTimeout(r, 1500))
   check(
     (await stepCount()) === beforeGroup + 2,
-    'Agrupar campos: los tres campos se funden en un solo paso',
+    'Agrupar campos: un interruptor se une al formulario y no genera dos pasos',
     `${beforeGroup} → ${await stepCount()}`
+  )
+
+  // Los tres campos y el interruptor deben quedar en UN paso.
+  const groupedFields = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return [...(cards[cards.length - 1]?.querySelectorAll('.field-label') ?? [])].map((l) =>
+      l.textContent.replace(/:$/, '')
+    )
+  })
+  check(
+    groupedFields.length === 4 && groupedFields.includes('Matrícula activa'),
+    'Agrupar campos: los tres campos y el interruptor se funden en un solo paso',
+    groupedFields.join(' · ')
   )
 
   // La captura del grupo la genera el motor aparte (`group-*.png`); mientras no
@@ -1216,18 +1235,18 @@ try {
   const removedLabel = await groupedCard.locator('.field-list li .field-label').first().textContent()
   await groupedCard.locator('.field-list li .field-remove').first().click({ force: true })
   await gui.waitForFunction(
-    () => {
+    (expected) => {
       const cards = [...document.querySelectorAll('.step-card')]
-      return (cards[cards.length - 1]?.querySelectorAll('.field-list li').length ?? 0) === 2
+      return (cards[cards.length - 1]?.querySelectorAll('.field-list li').length ?? 0) === expected
     },
-    null,
+    groupedFields.length - 1,
     { timeout: 5000 }
   )
   const remaining = await groupedCard
     .locator('.field-list li .field-label')
     .evaluateAll((els) => els.map((e) => e.textContent))
   check(
-    remaining.length === 2 && !remaining.includes(removedLabel),
+    remaining.length === groupedFields.length - 1 && !remaining.includes(removedLabel),
     'Agrupar campos: se puede quitar un campo suelto del grupo',
     `quitado ${removedLabel} · quedan ${remaining.join(' ')}`
   )

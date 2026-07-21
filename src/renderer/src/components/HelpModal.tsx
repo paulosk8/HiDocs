@@ -220,9 +220,15 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <li>
                   <b>Qué entra en el grupo</b> · escribir, elegir de una lista, marcar una casilla o
                   accionar un <b>interruptor</b>, y también los <b>clics en un campo</b> (enfocarlo
-                  antes de escribir). Se reconocen tanto los campos HTML clásicos como los
-                  construidos a mano, que es lo habitual hoy: un interruptor suele ser un botón con
-                  rol <code>switch</code> y un desplegable un <code>combobox</code>.
+                  antes de escribir). Se reconocen tanto los campos clásicos como los construidos a
+                  mano, que es lo habitual hoy: un interruptor puede ser un botón con rol{' '}
+                  <code>switch</code>, o un texto con la casilla real escondida al lado. Un botón,
+                  un enlace o una pestaña nunca cuentan como campo aunque estén junto a uno.
+                </li>
+                <li>
+                  <b>Un gesto, un paso</b> · esos controles suelen reenviar el clic a la casilla que
+                  esconden, lo que generaría dos o tres pasos para lo que tú viviste como uno. Se
+                  documenta solo el que pulsaste y se descartan los reenvíos.
                 </li>
                 <li>
                   <b>Qué lo cierra</b> · un clic en un botón, un envío o una navegación. Lo que

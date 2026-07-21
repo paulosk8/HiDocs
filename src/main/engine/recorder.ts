@@ -60,7 +60,10 @@ function isFormField(signals: RawEvent['signals']): boolean {
     const type = (signals.type ?? 'text').toLowerCase()
     return !['submit', 'button', 'reset', 'image'].includes(type)
   }
-  return FIELD_ROLES.includes((signals.role ?? '').toLowerCase())
+  if (FIELD_ROLES.includes((signals.role ?? '').toLowerCase())) return true
+  // El observador ya miró el DOM: el elemento pulsado puede ser la etiqueta o el
+  // envoltorio de un control, no el control en sí.
+  return signals.fieldControl === true
 }
 
 /** Título por defecto de cada paso, editable después por el usuario. */
