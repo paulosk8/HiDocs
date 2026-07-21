@@ -214,10 +214,30 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <b>Agrupar campos</b> (interruptor en el encabezado del panel, activado por
                 defecto): une los campos seguidos de un mismo formulario en <b>un solo paso</b> —una
                 captura del formulario relleno y la lista de campos y valores— en vez de una captura
-                por campo. Incluye los <b>clics en campos</b> (enfocar antes de escribir); un clic
-                en un botón rompe el grupo. Desactívalo si prefieres documentar cada campo por
-                separado.
+                por campo. Desactívalo si prefieres documentar cada campo por separado.
               </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Qué entra en el grupo</b> · escribir, elegir de una lista, marcar una casilla o
+                  accionar un <b>interruptor</b>, y también los <b>clics en un campo</b> (enfocarlo
+                  antes de escribir). Se reconocen tanto los campos HTML clásicos como los
+                  construidos a mano, que es lo habitual hoy: un interruptor suele ser un botón con
+                  rol <code>switch</code> y un desplegable un <code>combobox</code>.
+                </li>
+                <li>
+                  <b>Qué lo cierra</b> · un clic en un botón, un envío o una navegación. Lo que
+                  venga después empieza un grupo nuevo, aunque sea del mismo formulario.
+                </li>
+                <li>
+                  <b>La captura</b> · resalta en rojo <b>todos</b> los campos del grupo, con el
+                  número del paso en el primero. Se rehace cada vez que el grupo cambia.
+                </li>
+                <li>
+                  <b>Revisar y depurar</b> · la tarjeta lista los campos con su valor; el <b>✕</b>{' '}
+                  de cada uno lo quita del paso (y del flujo reproducible). No se puede vaciar el
+                  grupo entero: para eso está eliminar el paso.
+                </li>
+              </ul>
               <p>
                 <b>Continuar otro día:</b> la grabación en curso se <b>autoguarda</b> como borrador.
                 Puedes cerrar la app y, al volver a abrirla, te ofrecerá{' '}
@@ -255,6 +275,13 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>Arrastrar</b> para reordenar, <b>eliminar</b> para descartar.
                 </li>
               </ul>
+              <p>
+                <b>Escribir los textos</b> · el título y la descripción se publican tal cual en el
+                manual, así que llevan <b>corrector ortográfico</b>: las palabras dudosas aparecen
+                subrayadas. Con el <b>clic derecho</b> sobre una de ellas salen las sugerencias, la
+                opción de <b>añadirla al diccionario</b> (útil con nombres propios y siglas del
+                sistema que documentas) y cortar, copiar, pegar y seleccionar todo.
+              </p>
               <p>En el encabezado del panel:</p>
               <ul className="help-defs">
                 <li>
@@ -497,6 +524,16 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <li>
                   <b>El push falla</b> · el commit local queda hecho igualmente; revisa el remoto y
                   las credenciales.
+                </li>
+                <li>
+                  <b>Un campo del formulario no se agrupó</b> · algo cerró el grupo justo antes: un
+                  clic en un botón, un envío o un cambio de pantalla. Lo que viene después empieza
+                  un grupo nuevo. Puedes documentarlo aparte o volver a grabar ese tramo seguido.
+                </li>
+                <li>
+                  <b>El corrector no subraya nada</b> · usa el diccionario del sistema operativo.
+                  Comprueba que tienes el español instalado en las preferencias de idioma del
+                  sistema.
                 </li>
               </ul>
             </section>
