@@ -1,25 +1,36 @@
 import { useEffect, useState } from 'react'
+import { suggestBranchName } from '../../../shared/naming'
 import { ipc } from '../ipc'
 import { useSession } from '../store'
+import { invalidateBranches, useBranches } from '../useBranches'
+import { BranchPicker } from './BranchPicker'
 
 /**
  * Franja de estado del repositorio de la sesión actual.
  *
  * Vive entre la barra superior y el workspace —fuera del rectángulo que cubre la
  * vista nativa—, así que sigue visible aunque el panel de pasos esté colapsado.
- * Resume de un vistazo todo lo relativo a Git: dónde se documenta, de qué rama
- * nacerá la próxima grabación, si hay cambios que bloquearían el commit y cuántos
- * repositorios se han usado ya.
+ * Resume de un vistazo todo lo relativo a Git: dónde se documenta, en qué rama
+ * se registrará lo que se grabe, si hay cambios que bloquearían el commit y
+ * cuántos repositorios se han usado ya.
+ *
+ * La rama de trabajo es aquí un control, no un dato: es el sitio donde se
+ * empieza a trabajar, y por eso el selector cuelga de ella (§10 de SPEC).
  */
 export function ProjectStatus(): React.JSX.Element {
   const repo = useSession((s) => s.gitRepo)
+  const meta = useSession((s) => s.meta)
   const outputDir = useSession((s) => s.outputDir)
   const setOutputDir = useSession((s) => s.setOutputDir)
   const baseBranch = useSession((s) => s.gitBaseBranch)
+  const branchOverride = useSession((s) => s.gitBranchOverride)
+  const pickerOpen = useSession((s) => s.branchPickerOpen)
+  const setPickerOpen = useSession((s) => s.setBranchPickerOpen)
   const projectsOpen = useSession((s) => s.projectsOpen)
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
   const [projectCount, setProjectCount] = useState<number | null>(null)
   const [docsDir, setDocsDir] = useState<string | null>(null)
+  const branches = useBranches(repo?.root)
 
   // Se recuenta al cambiar de repositorio y al cerrar el explorador (donde se
   // pueden olvidar proyectos). Mientras está abierto no: el número no cambia a la
@@ -57,13 +68,13 @@ export function ProjectStatus(): React.JSX.Element {
 
   if (!repo) {
     return (
-      <>
+      <div className="status-strip">
         {docsWarning}
         <div className="project-status muted">
           <span>La carpeta de salida no está en un repositorio Git.</span>
           {projectsChip}
         </div>
-      </>
+      </div>
     )
   }
 
@@ -71,11 +82,19 @@ export function ProjectStatus(): React.JSX.Element {
   // distinguen archivo a archivo, pero cualquier cambio pendiente o indexado
   // merece un aviso antes de guardar.
   const pending = repo.stagedPaths.length + repo.dirtyPaths.length
-  const nextBase = baseBranch ?? repo.defaultBranch ?? repo.branch
   const clean = pending === 0
+  // Rama donde irá el commit: la elegida, o la sugerida por el módulo mientras
+  // no se elija ninguna.
+  const target = branchOverride ?? suggestBranchName(meta.module)
+  // Mientras las ramas no han llegado no se puede afirmar que la rama no exista,
+  // y decir «nacerá de main» sobre una rama que sí existe confunde más que callar.
+  const isNew = branches !== null && !branches.some((b) => b.name === target)
+  const nextBase = baseBranch ?? repo.defaultBranch ?? repo.branch
 
   return (
-    <>
+    // El selector cuelga de la franja, así que la franja es su contexto de
+    // posicionamiento: el desplegable debe poder salirse de ella sin recortarse.
+    <div className="status-strip">
       {docsWarning}
       <div className="project-status">
         <span className={`status-dot ${clean ? 'ok' : 'warn'}`} aria-hidden />
@@ -84,17 +103,39 @@ export function ProjectStatus(): React.JSX.Element {
         </span>
         <span className="status-sep">·</span>
         <span>
-          rama <code>{repo.branch}</code>
+          rama de trabajo{' '}
+          <button
+            className="branch-chip"
+            onClick={() => {
+              // Al abrirlo se releen las ramas: puede haber nacido alguna por
+              // fuera (o en el último guardado) desde la última vez.
+              if (!pickerOpen) invalidateBranches()
+              setPickerOpen(!pickerOpen)
+            }}
+            title="Elegir en qué rama continuar, o estrenar una"
+            aria-expanded={pickerOpen}
+          >
+            <code>{target}</code>
+            <span aria-hidden>▾</span>
+          </button>
+          {branchOverride && <em className="status-tag">elegida</em>}
         </span>
-        <span className="status-sep">·</span>
-        <span>
-          próxima grabación desde <code>{nextBase}</code>
-          {baseBranch && baseBranch !== repo.defaultBranch && (
-            <em className="status-tag" title="Base elegida en el explorador">
-              elegida
-            </em>
-          )}
-        </span>
+        {isNew && (
+          <>
+            <span className="status-sep">·</span>
+            <span>
+              nacerá de <code>{nextBase}</code>
+            </span>
+          </>
+        )}
+        {!isNew && repo.branch !== target && (
+          <>
+            <span className="status-sep">·</span>
+            <span className="muted">
+              ahora en <code>{repo.branch}</code>; se cambiará al guardar
+            </span>
+          </>
+        )}
         <span className="status-sep">·</span>
         <span className={clean ? 'status-clean' : 'status-pending'}>
           {clean ? 'sin cambios pendientes' : `${pending} cambio(s) pendiente(s)`}
@@ -108,6 +149,7 @@ export function ProjectStatus(): React.JSX.Element {
         <span className="status-spacer" />
         {projectsChip}
       </div>
-    </>
+      {pickerOpen && <BranchPicker branches={branches} onClose={() => setPickerOpen(false)} />}
+    </div>
   )
 }

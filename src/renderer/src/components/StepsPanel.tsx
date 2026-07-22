@@ -18,6 +18,7 @@ import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
 import { useSession } from '../store'
+import { invalidateBranches } from '../useBranches'
 import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -35,6 +36,7 @@ export function StepsPanel(): React.JSX.Element {
   const collapsed = useSession((s) => s.panelCollapsed)
   const togglePanel = useSession((s) => s.togglePanel)
   const projectsOpen = useSession((s) => s.projectsOpen)
+  const branchPickerOpen = useSession((s) => s.branchPickerOpen)
   const helpOpen = useSession((s) => s.helpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
   // El informe del runner se muestra al terminar; durante el replay el visor
@@ -102,6 +104,12 @@ export function StepsPanel(): React.JSX.Element {
           : undefined
       })
       setResult(saved)
+      // Guardar es lo único que mueve el repositorio desde dentro de la app: el
+      // commit cambia de rama, puede crear una y deja el árbol limpio. Sin releer
+      // aquí, la franja de estado y el selector seguirían describiendo el
+      // repositorio de antes del commit hasta el próximo cambio de carpeta.
+      void ipc.invoke('git:inspect', s.outputDir).then(useSession.getState().setGitRepo)
+      invalidateBranches()
       // Guardado con éxito: se descarta el borrador y se estrena sesión para la
       // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
       // un autoguardado pendiente no vuelva a crear el borrador.
@@ -208,6 +216,9 @@ export function StepsPanel(): React.JSX.Element {
     result !== null ||
     problem !== null ||
     projectsOpen ||
+    // El selector de rama es pequeño y cuelga de la franja, pero cae justo sobre
+    // el rectángulo de la vista nativa: sin esto quedaría tapado por la página.
+    branchPickerOpen ||
     helpOpen ||
     docusaurusIntroOpen ||
     runnerReportOpen ||

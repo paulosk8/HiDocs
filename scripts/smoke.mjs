@@ -444,7 +444,16 @@ try {
     `${finalDialog.title}: ${finalDialog.body}`
   )
   // Al guardar con éxito, el borrador se descarta (ya está en Git).
-  const draftAfter = await gui.evaluate(() => window.docrecorder.invoke('draft:load'))
+  // `draft:clear` viaja sin esperar a que termine, y el main atiende los canales
+  // en paralelo: leerlo una sola vez llegaría a veces antes del borrado.
+  const draftAfter = await gui.evaluate(async () => {
+    for (let i = 0; i < 40; i++) {
+      const d = await window.docrecorder.invoke('draft:load')
+      if (d === null) return null
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    return window.docrecorder.invoke('draft:load')
+  })
   check(draftAfter === null, 'Borrador: se descarta al guardar con éxito', String(draftAfter))
 
   const dir = join(outDir, 'matriculas', 'crear-matricula')
@@ -688,6 +697,38 @@ try {
     `${history.length} commit(s)`
   )
 
+  // La rama sabe lo que documenta: de aquí salen los metadatos con los que se
+  // retoma una rama sin volver a escribirlos.
+  const branchDocs = await gui.evaluate(
+    (root) =>
+      window.docrecorder.invoke('git:branch-docs', { repoRoot: root, branch: 'docs/matriculas' }),
+    outDir
+  )
+  check(
+    branchDocs[0]?.feature === 'editar-matricula' &&
+      branchDocs.some((d) => d.feature === 'crear-matricula'),
+    'Rama de trabajo: lista lo documentado en la rama, de lo más reciente a lo más antiguo',
+    branchDocs.map((d) => d.feature).join(', ')
+  )
+  check(
+    branchDocs[0]?.module === 'matriculas' && branchDocs[0]?.role === 'secretaria',
+    'Rama de trabajo: cada entrada trae módulo y rol para recuperarlos',
+    `${branchDocs[0]?.module} / ${branchDocs[0]?.role}`
+  )
+  const otherBranchDocs = await gui.evaluate(
+    (root) =>
+      window.docrecorder.invoke('git:branch-docs', {
+        repoRoot: root,
+        branch: 'docs/matriculas-anular-matricula'
+      }),
+    outDir
+  )
+  check(
+    otherBranchDocs.length === 1 && otherBranchDocs[0].feature === 'anular-matricula',
+    'Rama de trabajo: cada rama solo ve su propia documentación',
+    otherBranchDocs.map((d) => d.feature).join(', ')
+  )
+
   const registered = await gui.evaluate(() => window.docrecorder.invoke('projects:list'))
   check(
     registered.some((p) => p.root === g('rev-parse --show-toplevel')),
@@ -730,6 +771,64 @@ try {
   // runner necesita el visor VISIBLE para capturar, así que se cierra primero.
   await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
+
+  // --- Selector de rama de trabajo: retomar una rama sin reescribir la cabecera ---
+  // Se vacía la cabecera, que es como se llega otro día: la rama existe, pero los
+  // metadatos ya no están en pantalla.
+  await gui.fill('.topbar input[placeholder="matriculas"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', '')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', '')
+  await gui.fill('.topbar input[placeholder="secretaria"]', '')
+  await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', '')
+
+  await gui.click('.branch-chip')
+  await gui.waitForSelector('.branch-picker', { timeout: 5000 })
+  await gui.waitForSelector('.branch-list .row[data-branch="docs/matriculas"]', { timeout: 5000 })
+  await gui.click('.branch-list .row[data-branch="docs/matriculas"]')
+  await gui.waitForFunction(
+    () => document.querySelector('.branch-chip code')?.textContent === 'docs/matriculas',
+    null,
+    { timeout: 5000 }
+  )
+  const adopted = await gui.evaluate(() => ({
+    module: document.querySelector('.topbar input[placeholder="matriculas"]').value,
+    feature: document.querySelector('.topbar input[placeholder="crear-matricula"]').value,
+    title: document.querySelector('.topbar input[placeholder="Crear una matrícula"]').value,
+    role: document.querySelector('.topbar input[placeholder="secretaria"]').value,
+    baseUrl: document.querySelector('.topbar input[placeholder="https://sistema.ejemplo.com"]')
+      .value,
+    gitBranch: document.querySelector('.git-fields .field input')?.value
+  }))
+  check(
+    adopted.module === 'matriculas' && adopted.role === 'secretaria' && adopted.baseUrl === 'http://x',
+    'Rama de trabajo: elegir una rama recupera módulo, rol y URL base de lo ya documentado',
+    JSON.stringify(adopted)
+  )
+  check(
+    adopted.feature === '' && adopted.title === '',
+    'Rama de trabajo: funcionalidad y título quedan libres (se documenta una nueva)',
+    `${adopted.feature} / ${adopted.title}`
+  )
+  check(
+    adopted.gitBranch === 'docs/matriculas',
+    'Rama de trabajo: el campo Rama de la sección Git refleja la misma elección',
+    adopted.gitBranch
+  )
+
+  // Retomar una funcionalidad concreta sí carga sus cuatro campos: se va a
+  // ampliar o regrabar, y debe caer en su misma carpeta.
+  await gui.waitForSelector('.branch-docs .row[data-feature="crear-matricula"]', { timeout: 5000 })
+  await gui.click('.branch-docs .row[data-feature="crear-matricula"]')
+  await gui.waitForSelector('.branch-picker', { state: 'detached', timeout: 5000 })
+  const reloaded = await gui.evaluate(() => ({
+    feature: document.querySelector('.topbar input[placeholder="crear-matricula"]').value,
+    title: document.querySelector('.topbar input[placeholder="Crear una matrícula"]').value
+  }))
+  check(
+    reloaded.feature === 'crear-matricula' && reloaded.title === 'Crear una matrícula',
+    'Rama de trabajo: retomar una funcionalidad carga sus metadatos completos',
+    JSON.stringify(reloaded)
+  )
   // Se escribe una funcionalidad con dos pasos: uno con selector válido (el botón
   // del fixture) y otro con selector inexistente, para probar ok + fallo marcado.
   // El visor sigue adjunto al fixture, así que el runner reutiliza esa sesión.
@@ -898,8 +997,8 @@ try {
   )
   const statusText = (await gui.locator('.project-status').textContent()).replace(/\s+/g, ' ')
   check(
-    /rama\s*main/.test(statusText) && /próxima grabación/.test(statusText),
-    'Estado: la franja resume repositorio, rama y base de la próxima grabación',
+    /rama de trabajo/.test(statusText) && /docs\/matriculas/.test(statusText),
+    'Estado: la franja resume repositorio y rama de trabajo',
     statusText
   )
 
@@ -980,7 +1079,7 @@ try {
   )
   // Navegar a un tema debe moverlo al estado activo (scroll-spy + clic).
   await gui.getByRole('button', { name: 'Salida y Docusaurus' }).click()
-  await gui.waitForTimeout(800)
+  await gui.waitForTimeout(2000)
   const activeTopic = await gui.locator('.help-nav button.active').textContent()
   check(
     activeTopic === 'Salida y Docusaurus' && (await gui.locator('.help-tree').first().isVisible()),
@@ -990,6 +1089,80 @@ try {
   await gui.keyboard.press('Escape')
   await gui.waitForSelector('.help-modal', { state: 'detached', timeout: 3000 })
   check(true, 'Ayuda: se cierra con Escape')
+
+  // --- Retomar la rama al apuntar a un repositorio que quedó en ella ---
+  // Es el caso de volver al día siguiente: el clon está en su rama de
+  // documentación y la cabecera está vacía. Hace falta OTRO repositorio porque
+  // la herencia se hace una sola vez por repositorio y ya ocurrió con el primero.
+  const repo2 = mkdtempSync(join(tmpdir(), 'docrecorder-otro-'))
+  const g2 = (args) => execSync(`git ${args}`, { cwd: repo2, encoding: 'utf8' }).trim()
+  execSync('git init -q -b main', { cwd: repo2 })
+  g2('config user.email prueba@ejemplo.com')
+  g2('config user.name Prueba')
+  writeFileSync(join(repo2, 'README.md'), '# Documentación\n')
+  g2('add README.md')
+  g2('commit -q -m "chore: repositorio de documentación inicial"')
+  execSync('git checkout -q -b docs/tesoreria', { cwd: repo2 })
+  mkdirSync(join(repo2, 'tesoreria', 'cobrar-cuota'), { recursive: true })
+  writeFileSync(
+    join(repo2, 'tesoreria', 'cobrar-cuota', 'session.json'),
+    JSON.stringify({
+      id: 't1',
+      module: 'tesoreria',
+      feature: 'cobrar-cuota',
+      title: 'Cobrar una cuota',
+      role: 'cajera',
+      baseUrl: 'http://tesoreria.ejemplo',
+      viewport: { width: 800, height: 600 },
+      createdAt: new Date().toISOString(),
+      steps: []
+    })
+  )
+  g2('add tesoreria')
+  g2('commit -q -m "docs(tesoreria): Cobrar una cuota"')
+
+  await gui.fill('.topbar input[placeholder="matriculas"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', '')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', '')
+  await gui.fill('.topbar input[placeholder="secretaria"]', '')
+  await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', '')
+  await gui.fill('.topbar input[placeholder="Sin seleccionar"]', repo2)
+  await gui
+    .waitForFunction(
+      () => document.querySelector('.topbar input[placeholder="matriculas"]')?.value === 'tesoreria',
+      null,
+      { timeout: 15000 }
+    )
+    .catch(() => {})
+  const inherited = await gui.evaluate(() => ({
+    module: document.querySelector('.topbar input[placeholder="matriculas"]').value,
+    role: document.querySelector('.topbar input[placeholder="secretaria"]').value,
+    baseUrl: document.querySelector('.topbar input[placeholder="https://sistema.ejemplo.com"]')
+      .value,
+    branch: document.querySelector('.branch-chip code')?.textContent
+  }))
+  check(
+    inherited.module === 'tesoreria' &&
+      inherited.role === 'cajera' &&
+      inherited.baseUrl === 'http://tesoreria.ejemplo' &&
+      inherited.branch === 'docs/tesoreria',
+    'Rama de trabajo: al apuntar a un repositorio se hereda su rama y sus metadatos',
+    JSON.stringify(inherited)
+  )
+
+  // Se vuelve al repositorio de la prueba y se restaura la cabecera: lo que
+  // sigue asume ese repositorio y ese módulo.
+  await gui.fill('.topbar input[placeholder="Sin seleccionar"]', outDir)
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
+  await gui.fill('.topbar input[placeholder="secretaria"]', 'secretaria')
+  await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', '')
+  // Se compara por nombre de carpeta: el repositorio informa su ruta REAL
+  // (`/private/var/...` en macOS), que no es literalmente la de `mkdtemp`.
+  await gui.waitForFunction(
+    (name) => document.querySelector('.status-repo')?.textContent === name,
+    outDir.split('/').pop(),
+    { timeout: 15000 }
+  )
 
   // --- Aviso: carpeta = raíz de un Docusaurus ---
   const dsRoot = mkdtempSync(join(tmpdir(), 'docusaurus-'))

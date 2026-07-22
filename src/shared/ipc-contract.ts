@@ -11,6 +11,7 @@ import type {
   AiProvider,
   AiSettings,
   AiStatus,
+  BranchDocInfo,
   CommitDocs,
   DocStep,
   EngineState,
@@ -175,6 +176,11 @@ export interface IpcInvokeMap {
   'git:branches': (repoRoot: string) => GitBranchInfo[]
   /** historial de una rama, del commit más reciente hacia atrás (solo lectura) */
   'git:commits': (args: { repoRoot: string; branch: string }) => GitCommitInfo[]
+  /**
+   * Funcionalidades ya documentadas en una rama, de la más reciente a la más
+   * antigua. Con ellas se retoma una rama sin reescribir módulo, rol ni URL base.
+   */
+  'git:branch-docs': (args: { repoRoot: string; branch: string }) => BranchDocInfo[]
   /** documentación registrada en un commit, para previsualizar (solo lectura) */
   'git:commit-docs': (args: { repoRoot: string; commit: string }) => CommitDocs[]
   /** una captura commiteada como data URI, para la vista previa (solo lectura) */
@@ -245,6 +251,7 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'git:inspect',
   'git:branches',
   'git:commits',
+  'git:branch-docs',
   'git:commit-docs',
   'git:doc-image',
   'projects:list',

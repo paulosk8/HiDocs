@@ -4,6 +4,7 @@ import {
   DEFAULT_VIEWPORT,
   type AiStatus,
   type AiStepDraft,
+  type BranchDocInfo,
   type FlowAction,
   type GitRepoInfo,
   type EngineState,
@@ -32,7 +33,13 @@ interface SessionState {
   gitRepo: GitRepoInfo | null
   gitEnabled: boolean
   gitPush: boolean
-  /** null = usar el nombre sugerido a partir de los metadatos de la sesión */
+  /**
+   * Rama de trabajo: donde se registrará esta grabación. `null` = todavía no se
+   * ha elegido ninguna, y entonces se usa la sugerida a partir del módulo
+   * (`suggestBranchName`). La eligen el selector de la franja de estado, el campo
+   * de la sección Git y el explorador de proyectos: los tres escriben aquí, así
+   * que no hay dos fuentes de verdad sobre a qué rama va el commit.
+   */
   gitBranchOverride: string | null
   gitMessageOverride: string | null
   /**
@@ -41,6 +48,8 @@ interface SessionState {
    * que se quiera continuar una línea de documentación ya empezada.
    */
   gitBaseBranch: string | null
+  /** el selector de rama de trabajo (franja de estado) está desplegado */
+  branchPickerOpen: boolean
   /** el explorador de repositorios está abierto */
   projectsOpen: boolean
   /** la sección de ayuda está abierta */
@@ -118,6 +127,16 @@ interface SessionState {
   setGitBranch: (value: string | null) => void
   setGitMessage: (value: string | null) => void
   setGitBaseBranch: (value: string | null) => void
+  /**
+   * Retoma una rama ya existente: fija la rama de trabajo y, con la última
+   * funcionalidad documentada en ella, rellena los metadatos que estén vacíos.
+   * `enableGit` distingue elegirla a mano (sí: se ha pedido comitear ahí) de
+   * heredarla del repositorio al arrancar (no: nadie ha pedido nada todavía).
+   */
+  adoptBranch: (branch: string, doc?: BranchDocInfo | null, enableGit?: boolean) => void
+  /** Carga los metadatos completos de una funcionalidad ya documentada. */
+  loadBranchDoc: (doc: BranchDocInfo) => void
+  setBranchPickerOpen: (open: boolean) => void
   setProjectsOpen: (open: boolean) => void
   setHelpOpen: (open: boolean) => void
   /** cierra el aviso inicial; si `remember`, no se vuelve a mostrar */
@@ -272,6 +291,7 @@ export const useSession = create<SessionState>((set) => ({
   gitBranchOverride: null,
   gitMessageOverride: null,
   gitBaseBranch: null,
+  branchPickerOpen: false,
   projectsOpen: false,
   helpOpen: false,
   docusaurusIntroOpen: initialIntroOpen(),
@@ -436,18 +456,69 @@ export const useSession = create<SessionState>((set) => ({
 
   // Detectar un repositorio activa la integración por defecto, pero nunca el
   // push: subir cambios al repositorio de otra persona se pide a mano.
-  // Cambiar de repositorio invalida la base elegida: esa rama pertenecía al
-  // repositorio anterior y aquí puede no existir.
+  // Cambiar de repositorio invalida las ramas elegidas (la de trabajo y la
+  // base): pertenecían al repositorio anterior y aquí pueden no existir.
+  //
+  // Solo se descartan al pasar de un repositorio a OTRO. Ni al detectar el
+  // primero —la elección puede venir de un borrador restaurado, antes de que la
+  // inspección termine— ni al quedarse sin repositorio, que también ocurre si la
+  // inspección falla de forma pasajera y sería una pérdida gratuita.
   setGitRepo: (gitRepo) =>
-    set((s) => ({
-      gitRepo,
-      gitEnabled: gitRepo ? s.gitEnabled : false,
-      gitBaseBranch: gitRepo?.root === s.gitRepo?.root ? s.gitBaseBranch : null
-    })),
+    set((s) => {
+      const movedToAnother = !!s.gitRepo && !!gitRepo && s.gitRepo.root !== gitRepo.root
+      return {
+        gitRepo,
+        gitEnabled: gitRepo ? s.gitEnabled : false,
+        gitBaseBranch: movedToAnother ? null : s.gitBaseBranch,
+        gitBranchOverride: movedToAnother ? null : s.gitBranchOverride
+      }
+    }),
   setGit: (patch) => set(patch),
   setGitBranch: (gitBranchOverride) => set({ gitBranchOverride }),
   setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
+
+  // Elegir una rama existente es la forma de «seguir donde lo dejé»: los
+  // metadatos con los que se documentó esa rama vienen de su último
+  // `session.json`, no de un registro local, así que también sirven si el commit
+  // lo hizo otra persona. Solo se rellena lo que está VACÍO: lo que el usuario
+  // haya escrito manda siempre. La funcionalidad y el título no se copian: se va
+  // a documentar una nueva (para retomar una concreta está `loadBranchDoc`).
+  adoptBranch: (branch, doc, enableGit = true) =>
+    set((s) => {
+      const meta = { ...s.meta }
+      if (doc) {
+        if (!meta.module.trim()) meta.module = doc.module
+        if (!meta.role.trim()) meta.role = doc.role
+        if (!meta.baseUrl.trim()) meta.baseUrl = doc.baseUrl
+      }
+      return {
+        meta,
+        gitBranchOverride: branch,
+        // Elegir rama de trabajo es decir que esto va al repositorio; sin esto
+        // habría que acordarse de marcar además la casilla del panel.
+        gitEnabled: enableGit && s.gitRepo ? true : s.gitEnabled
+      }
+    }),
+
+  // Aquí sí se pisa todo: se está retomando una funcionalidad concreta (para
+  // ampliarla o regrabarla), y sus cuatro campos deben coincidir con los suyos o
+  // la documentación acabaría en otra carpeta.
+  loadBranchDoc: (doc) =>
+    set((s) => ({
+      meta: {
+        ...s.meta,
+        module: doc.module,
+        feature: doc.feature,
+        title: doc.title,
+        role: doc.role,
+        baseUrl: doc.baseUrl || s.meta.baseUrl
+      },
+      // El mensaje sugerido se recalcula a partir de los metadatos nuevos.
+      gitMessageOverride: null
+    })),
+
+  setBranchPickerOpen: (branchPickerOpen) => set({ branchPickerOpen }),
   setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
   dismissDocusaurusIntro: (remember) => {

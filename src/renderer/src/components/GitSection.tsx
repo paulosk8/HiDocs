@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
-import type { GitBranchInfo } from '../../../shared/types'
-import { ipc } from '../ipc'
 import { useSession } from '../store'
+import { useBranches } from '../useBranches'
 
 /**
  * Integración con el repositorio de documentación.
@@ -17,7 +15,7 @@ export function GitSection(): React.JSX.Element | null {
   const enabled = useSession((s) => s.gitEnabled)
   const push = useSession((s) => s.gitPush)
   const baseBranch = useSession((s) => s.gitBaseBranch)
-  const setProjectsOpen = useSession((s) => s.setProjectsOpen)
+  const setBranchPickerOpen = useSession((s) => s.setBranchPickerOpen)
   const branchOverride = useSession((s) => s.gitBranchOverride)
   const messageOverride = useSession((s) => s.gitMessageOverride)
   const setGit = useSession((s) => s.setGit)
@@ -28,19 +26,10 @@ export function GitSection(): React.JSX.Element | null {
   // sección se desmonta al colapsar el panel y dejaría sin datos a la franja de
   // estado. Aquí solo se lee `gitRepo` del store.
 
-  // Ramas existentes, para ofrecerlas como sugerencia en el campo. Se leen en
-  // vivo al cambiar de repositorio, así que una rama creada por fuera aparece la
-  // próxima vez que se inspecciona la carpeta. Se guardan junto a su repositorio
-  // para descartar una respuesta que llegue tras cambiar de carpeta.
-  const [branchData, setBranchData] = useState<{ root: string; items: GitBranchInfo[] } | null>(
-    null
-  )
-  const root = repo?.root
-  const branches = branchData && branchData.root === root ? branchData.items : []
-  useEffect(() => {
-    if (!root) return
-    void ipc.invoke('git:branches', root).then((items) => setBranchData({ root, items }))
-  }, [root])
+  // Ramas existentes, para ofrecerlas como sugerencia en el campo y para saber si
+  // la elegida ya existe. Vienen de la caché compartida con la franja de estado:
+  // las dos vistas hablan de lo mismo y no se consulta `git` dos veces.
+  const branches = useBranches(repo?.root)
 
   // Antes esto devolvía null y la sección desaparecía sin más: con una carpeta
   // fuera de un repositorio parecía que la integración Git no existía. Decirlo
@@ -60,6 +49,9 @@ export function GitSection(): React.JSX.Element | null {
   const branch = branchOverride ?? suggestBranchName(meta.module)
   const message = messageOverride ?? suggestCommitMessage(meta.module, meta.feature, meta.title)
   const switching = repo.branch !== branch
+  // Mientras la lista no ha llegado no se afirma nada: decir que una rama que sí
+  // existe «nacerá de main» es peor que esperar un instante a saberlo.
+  const isNew = branches !== null && !branches.some((b) => b.name === branch)
 
   return (
     <section className="git-section">
@@ -81,8 +73,9 @@ export function GitSection(): React.JSX.Element | null {
         <div className="git-fields">
           <label className="field">
             <span>Rama</span>
-            {/* `list` ofrece las ramas existentes como sugerencia sin dejar de ser
-                un campo de texto: se puede elegir una o escribir una nueva. */}
+            {/* Escribe en el MISMO estado que el selector de la franja superior
+                (`gitBranchOverride`): dos editores, una sola rama de trabajo.
+                `list` ofrece las existentes sin dejar de ser un campo de texto. */}
             <input
               value={branch}
               onChange={(e) => setGitBranch(e.target.value)}
@@ -91,7 +84,7 @@ export function GitSection(): React.JSX.Element | null {
               placeholder="docs/…"
             />
             <datalist id="git-branches">
-              {branches.map((b) => (
+              {branches?.map((b) => (
                 <option key={b.name} value={b.name}>
                   {b.current ? 'rama actual' : b.lastCommitSubject}
                 </option>
@@ -117,16 +110,23 @@ export function GitSection(): React.JSX.Element | null {
             </span>
           </label>
 
-          {/* Condicional a propósito: el renderer no sabe si la rama ya existe
-              —GitRepoInfo no lista ramas y consultarlas aquí lanzaría un proceso
-              `git` por cada tecla—, y si existe, el commit se añade encima sin
-              que la base intervenga. */}
+          {/* La base solo interviene al CREAR la rama: si ya existe, el commit se
+              añade encima. Ahora se sabe cuál de los dos casos es, porque la
+              lista de ramas está cacheada y no cuesta un `git` por tecla. */}
           <p className="git-note">
-            Si <code>{branch}</code> aún no existe, nacerá de{' '}
-            <code>{baseBranch ?? repo.defaultBranch ?? repo.branch}</code>
-            {!baseBranch && !repo.defaultBranch && ' (no se encontró la rama por defecto)'}.{' '}
-            <button className="link" onClick={() => setProjectsOpen(true)}>
-              Cambiar en Proyectos…
+            {isNew ? (
+              <>
+                <code>{branch}</code> aún no existe: nacerá de{' '}
+                <code>{baseBranch ?? repo.defaultBranch ?? repo.branch}</code>
+                {!baseBranch && !repo.defaultBranch && ' (no se encontró la rama por defecto)'}.{' '}
+              </>
+            ) : (
+              <>
+                <code>{branch}</code> ya existe: el commit se añadirá encima.{' '}
+              </>
+            )}
+            <button className="link" onClick={() => setBranchPickerOpen(true)}>
+              Elegir rama…
             </button>
           </p>
           {switching && (

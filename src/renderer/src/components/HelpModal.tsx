@@ -17,6 +17,7 @@ const SECTIONS = [
   { id: 'grabar', label: 'Grabar pasos' },
   { id: 'pasos', label: 'Panel de pasos' },
   { id: 'estado', label: 'Estado del proyecto' },
+  { id: 'rama', label: 'Rama de trabajo' },
   { id: 'git', label: 'Integración con Git' },
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
@@ -130,6 +131,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   activaste, se registra en Git.
                 </li>
               </ol>
+              <p>
+                <b>¿Continuando algo ya empezado?</b> Empieza por el final: elige la{' '}
+                <a onClick={() => go('rama')}>rama de trabajo</a> en la franja de estado y los
+                metadatos con los que se documentó esa rama se rellenan solos.
+              </p>
             </section>
 
             <section id="barra" data-help-section>
@@ -321,9 +327,53 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <h3>Estado del proyecto</h3>
               <p>
                 La franja bajo la barra superior resume, siempre visible, el repositorio de la
-                sesión: nombre, rama activa, <b>de qué rama nacerá la próxima grabación</b>, si hay
-                cambios pendientes (verde = limpio, ámbar = pendientes) y cuántos proyectos hay
-                registrados. Si la carpeta no está en un repositorio, lo indica.
+                sesión: nombre, <b>rama de trabajo</b> (donde irá el commit, y desde donde se elige
+                otra: ver <a onClick={() => go('rama')}>Rama de trabajo</a>), si esa rama aún no
+                existe y de cuál nacerá, si hay cambios pendientes (verde = limpio, ámbar =
+                pendientes) y cuántos proyectos hay registrados. Si la carpeta no está en un
+                repositorio, lo indica.
+              </p>
+            </section>
+
+            <section id="rama" data-help-section>
+              <h3>Rama de trabajo</h3>
+              <p>
+                La rama de trabajo es <b>dónde se registrará lo que grabes</b>. Se muestra en la
+                franja de estado y al pulsarla se despliega el selector, que sirve para las dos
+                cosas del día a día: <b>seguir en una rama que ya empezaste</b> o <b>estrenar una</b>
+                .
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Continuar en una rama</b> · elígela de la lista. La app lee la documentación
+                  que esa rama ya tiene commiteada y <b>rellena por ti</b> el módulo, el rol y la URL
+                  base con los que se venía trabajando: no hay que volver a escribir la cabecera
+                  para acabar donde ya estabas. Solo se rellena lo que esté vacío; lo que tú
+                  escribas manda siempre.
+                </li>
+                <li>
+                  <b>Retomar una funcionalidad concreta</b> · bajo la lista aparecen las guías que
+                  esa rama ya documenta. Pulsar una carga sus cuatro campos exactos, que es lo que
+                  necesitas para ampliarla o volver a grabarla (si no, la salida caería en otra
+                  carpeta).
+                </li>
+                <li>
+                  <b>Rama nueva</b> · escribe el nombre (se propone <code>docs/&lt;módulo&gt;</code>)
+                  y elige de qué rama <b>nace</b>. Si el nombre ya existe, se te avisa: el commit se
+                  añadirá encima en vez de crear nada.
+                </li>
+              </ul>
+              <p>
+                <b>Elegir aquí no hace checkout.</b> El cambio de rama —o su creación— ocurre al
+                guardar, con las salvaguardas de siempre: si hay cambios ajenos sin guardar que se
+                arrastrarían, el commit se aborta y te lo dice.
+              </p>
+              <p>
+                Al <b>abrir la app</b>, si el repositorio quedó en una rama de documentación, se
+                retoma sola con sus metadatos (sin activar el registro en Git: eso lo decides tú).
+                La misma rama se puede elegir desde el campo <b>Rama</b> de la sección Git y desde el
+                explorador de <a onClick={() => go('proyectos')}>Proyectos</a>: los tres sitios
+                escriben la misma rama de trabajo.
               </p>
             </section>
 
@@ -338,7 +388,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <li>
                   <b>Rama</b> · se sugiere <code>docs/&lt;módulo&gt;</code>, una por módulo: todas
                   las funcionalidades del mismo módulo se acumulan en su rama (un PR por módulo).
-                  Puedes elegir una rama existente de la lista o escribir otra.
+                  Puedes escribir otra aquí o elegirla en el selector de la franja superior (ver{' '}
+                  <a onClick={() => go('rama')}>Rama de trabajo</a>); es el mismo dato. La nota de
+                  debajo dice si esa rama ya existe (el commit se añade encima) o si va a nacer, y
+                  de dónde.
                 </li>
                 <li>
                   <b>Mensaje del commit</b> · se sugiere{' '}
@@ -346,8 +399,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 </li>
                 <li>
                   <b>Rama base</b> · las ramas nacen de la rama por defecto del repositorio (
-                  <code>main</code>), no de la anterior. Puedes cambiar la base en el explorador de
-                  Proyectos para continuar una línea ya empezada.
+                  <code>main</code>), no de la anterior. La base solo interviene al <b>crear</b> una
+                  rama, y se elige en el selector de rama, junto al nombre de la rama nueva.
                 </li>
                 <li>
                   <b>Push</b> · opcional y solo si hay remoto <code>origin</code>; nunca con{' '}
@@ -414,7 +467,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <li>Volver a un repositorio usado sin buscar la carpeta en el disco.</li>
                 <li>Ver las ramas y el historial de commits de cada una.</li>
                 <li>
-                  Elegir la <b>rama base</b> de la próxima grabación.
+                  <b>Trabajar en una rama</b> del repositorio de la sesión: hace lo mismo que el
+                  selector de la franja superior (ver{' '}
+                  <a onClick={() => go('rama')}>Rama de trabajo</a>), recuperando también sus
+                  metadatos.
                 </li>
                 <li>
                   <b>Pulsar un commit del historial</b> para ver, dentro de la app, la documentación

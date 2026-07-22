@@ -8,10 +8,10 @@ import { CommitDocsPreview } from './CommitDocsPreview'
  * Explorador de los repositorios de documentación ya usados.
  *
  * Es de SOLO LECTURA sobre el repositorio: navega repositorios → ramas →
- * historial, y lo único que escribe es la elección de rama base para la próxima
- * grabación. No hace checkout, no crea ramas y no toca el historial; el
- * repositorio Docusaurus lo mantiene otra persona y esta ventana no debe poder
- * estropearle el trabajo.
+ * historial, y lo único que escribe es la elección de rama de trabajo de la
+ * sesión. No hace checkout, no crea ramas y no toca el historial; el repositorio
+ * Docusaurus lo mantiene otra persona y esta ventana no debe poder estropearle el
+ * trabajo.
  *
  * «Quitar de la lista» solo olvida la entrada del registro: el repositorio sigue
  * en el disco intacto.
@@ -36,6 +36,7 @@ export function ProjectsModal({ onClose }: { onClose: () => void }): React.JSX.E
   const repo = useSession((s) => s.gitRepo)
   const baseBranch = useSession((s) => s.gitBaseBranch)
   const setGitBaseBranch = useSession((s) => s.setGitBaseBranch)
+  const adoptBranch = useSession((s) => s.adoptBranch)
   const setOutputDir = useSession((s) => s.setOutputDir)
 
   useEffect(() => {
@@ -211,19 +212,27 @@ export function ProjectsModal({ onClose }: { onClose: () => void }): React.JSX.E
             </button>
           )}
 
+          {/* Misma acción que el selector de la franja superior: elegir aquí una
+              rama es continuar en ella, con los metadatos que ya tenía. Antes
+              este botón solo fijaba la rama BASE, que es un ajuste distinto (de
+              dónde nace una rama nueva) y el más raro de los dos. */}
           {isSessionRepo && branch && (
             <button
               onClick={() => {
-                setGitBaseBranch(branch === repo?.defaultBranch ? null : branch)
+                const root = repo?.root
+                if (!root) return
+                void ipc
+                  .invoke('git:branch-docs', { repoRoot: root, branch })
+                  .then((docs) => adoptBranch(branch, docs[0] ?? null))
                 onClose()
               }}
             >
-              Partir de <code>{branch}</code> en la próxima grabación
+              Trabajar en <code>{branch}</code>
             </button>
           )}
           {baseBranch && (
             <p className="git-note">
-              La próxima rama nacerá de <code>{baseBranch}</code>.{' '}
+              Una rama nueva nacerá de <code>{baseBranch}</code>.{' '}
               <button className="link" onClick={() => setGitBaseBranch(null)}>
                 Volver a la rama por defecto
               </button>

@@ -289,6 +289,13 @@ select {
 
 /* ---------- franja de estado del proyecto ---------- */
 
+/* Contenedor de la franja: es el ancla del selector de rama, que debe poder
+   desbordarla sin que el `overflow: hidden` de la franja lo recorte. */
+.status-strip {
+  flex: 0 0 auto;
+  position: relative;
+}
+
 .project-status {
   flex: 0 0 auto;
   display: flex;
@@ -372,6 +379,178 @@ select {
   text-decoration: underline;
   cursor: pointer;
   flex: 0 0 auto;
+}
+
+/* ---------- selector de rama de trabajo ---------- */
+
+/* La rama es un control, no un dato: se pinta como el resto de `code` de la
+   franja, pero con el borde y el ▾ que dicen que se puede pulsar. */
+.branch-chip {
+  border: 1px solid var(--border-strong);
+  background: none;
+  border-radius: 4px;
+  padding: 0 4px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: middle;
+}
+
+.branch-chip:hover {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.branch-picker {
+  position: absolute;
+  z-index: 40;
+  top: 100%;
+  left: 8px;
+  width: 460px;
+  max-height: 70vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  font-size: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  box-shadow: var(--shadow-modal);
+}
+
+.branch-picker > header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.branch-picker .muted {
+  color: var(--muted);
+}
+
+.branch-filter {
+  width: 100%;
+  padding: 4px 6px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.branch-list,
+.branch-docs ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.branch-picker .row {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 4px 6px;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.branch-picker .row:hover {
+  background: var(--chip);
+}
+
+.branch-picker .row.selected {
+  border-color: var(--blue);
+  background: var(--chip);
+}
+
+.branch-picker .row b {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+}
+
+.branch-picker .row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.branch-docs,
+.branch-new {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.branch-new-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.branch-new-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  font: inherit;
+  font-family: var(--mono);
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.branch-new-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+}
+
+.branch-new-row select {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 4px;
+  max-width: 120px;
+}
+
+.branch-new-row button {
+  font: inherit;
+  padding: 4px 10px;
+  color: var(--text);
+  background: var(--chip);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.branch-new-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* ---------- workspace ---------- */

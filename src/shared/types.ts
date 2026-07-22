@@ -164,6 +164,26 @@ export interface GitBranchInfo {
   aheadOfDefault: number
 }
 
+/**
+ * Una funcionalidad ya documentada en una rama, leída de su `session.json`
+ * commiteado.
+ *
+ * Es lo que permite retomar una rama sin volver a escribir los metadatos: la
+ * fuente de verdad es el repositorio, no un registro local, así que también
+ * funciona con lo que documentó otra persona (u otra máquina).
+ */
+export interface BranchDocInfo {
+  /** ruta del session.json dentro del repo, p. ej. `administracion/pie/session.json` */
+  path: string
+  module: string
+  feature: string
+  title: string
+  role: string
+  baseUrl: string
+  /** ISO de creación de la sesión, para situarla en el tiempo */
+  createdAt: string
+}
+
 /** Un commit del historial de una rama (solo lectura). */
 export interface GitCommitInfo {
   hash: string

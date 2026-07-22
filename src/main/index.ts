@@ -33,7 +33,14 @@ import {
   type RegenReport
 } from '../shared/types'
 import { saveSession } from './storage'
-import { inspectRepo, listBranches, listCommits, readCommitDocs, readDocImage } from './git'
+import {
+  inspectRepo,
+  listBranches,
+  listCommits,
+  readBranchDocs,
+  readCommitDocs,
+  readDocImage
+} from './git'
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
 import { saveDraft, loadDraft, clearDraft } from './draft'
@@ -325,15 +332,19 @@ function registerIpc(): void {
     return inspectRepo(outputDir).catch(() => null)
   })
 
-  // El explorador es de solo lectura: estos tres canales no escriben nada en el
-  // repositorio, así que ante cualquier fallo devuelven vacío en vez de
-  // propagar el error. La vista queda sin datos, que es un estado inocuo.
+  // La lectura del repositorio es de solo lectura: estos canales no escriben
+  // nada, así que ante cualquier fallo devuelven vacío en vez de propagar el
+  // error. La vista queda sin datos, que es un estado inocuo.
   ipcMain.handle('git:branches', async (_e, repoRoot: string) => {
     return listBranches(repoRoot).catch(() => [])
   })
 
   ipcMain.handle('git:commits', async (_e, args: { repoRoot: string; branch: string }) => {
     return listCommits(args.repoRoot, args.branch).catch(() => [])
+  })
+
+  ipcMain.handle('git:branch-docs', async (_e, args: { repoRoot: string; branch: string }) => {
+    return readBranchDocs(args.repoRoot, args.branch).catch(() => [])
   })
 
   ipcMain.handle('git:commit-docs', async (_e, args: { repoRoot: string; commit: string }) => {

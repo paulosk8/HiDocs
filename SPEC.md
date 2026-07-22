@@ -269,9 +269,11 @@ Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 440p
 
 **Validación al guardar:** avisar si hay pasos sin título; permitir guardar de todos modos.
 
-**Sección Git** (dentro del panel, ver §10): aparece cuando la carpeta de salida está dentro de un repositorio. Casilla "Registrar en Git al guardar", campos de rama y mensaje (prerrellenados a partir de los metadatos), casilla de push (deshabilitada si no hay remoto `origin`), y avisos: de qué rama nacerá la nueva, cambios sin guardar que impedirían el cambio de rama, o archivos ajenos ya indexados. Cuando la carpeta **no** está en un repositorio, la sección lo explica en vez de desaparecer sin más.
+**Franja de estado y selector de rama de trabajo** (bajo la barra superior, ver §10): resume el repositorio de la sesión y contiene el **selector de rama de trabajo**, porque elegir dónde continuar es lo primero que se hace, no un ajuste enterrado en el panel. Muestra el repositorio, la rama de trabajo (pulsable), si esa rama va a nacer y de dónde, los cambios pendientes y el número de proyectos registrados.
 
-**Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite: usar otro proyecto para la sesión (cambia la carpeta de salida), elegir la rama base de la próxima grabación, y **previsualizar** la documentación de un commit (pulsándolo) —sus pasos y capturas, leídos de Git con `git show` sin checkout ni Docusaurus. "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
+**Sección Git** (dentro del panel, ver §10): aparece cuando la carpeta de salida está dentro de un repositorio. Casilla "Registrar en Git al guardar", campos de rama y mensaje (prerrellenados a partir de los metadatos), casilla de push (deshabilitada si no hay remoto `origin`), y avisos: si la rama ya existe o de qué rama nacerá, cambios sin guardar que impedirían el cambio de rama, o archivos ajenos ya indexados. El campo de rama edita el **mismo** estado que el selector de la franja. Cuando la carpeta **no** está en un repositorio, la sección lo explica en vez de desaparecer sin más.
+
+**Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite: usar otro proyecto para la sesión (cambia la carpeta de salida), **trabajar en una rama** del repositorio de la sesión (lo mismo que el selector de la franja), y **previsualizar** la documentación de un commit (pulsándolo) —sus pasos y capturas, leídos de Git con `git show` sin checkout ni Docusaurus. "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
 
 **Borrador (continuar otro día)**: la grabación en curso se autoguarda en `userData/draft` (pasos + capturas durables), con retardo tras cada cambio. Al arrancar, si hay borrador, se ofrece continuar o descartarlo. Se descarta al guardar con éxito. Para las pruebas, el proceso principal acepta `DOCRECORDER_USER_DATA` y aísla todo el estado persistente en un `userData` propio, sin tocar el del usuario.
 
@@ -297,7 +299,7 @@ Diseño limpio, denso en información, con **modo claro y oscuro** (interruptor 
 - `shell:open-external` solo acepta `http`/`https`: el canal existe para abrir la consola del proveedor de IA, no para que el renderer lance `file://` ni esquemas del sistema.
 - TypeScript estricto. ESLint + Prettier.
 - Estructura de código: `src/main/` (main + engine + `ai/`), `src/preload/`, `src/renderer/`, `src/shared/` (tipos y contrato IPC).
-- **Pruebas:** `npm run build && node scripts/smoke.mjs` — 100 comprobaciones de extremo a extremo que arrancan la app real y la manejan por CDP. Convención del proyecto: **cada arreglo llega con la prueba que lo demuestra**, y se comprueba que esa prueba **falla sin el arreglo**. Dos variables de entorno la sostienen: `DOCRECORDER_USER_DATA` (aísla el estado persistente) y `DOCRECORDER_AI_FAKE` (sustituye al proveedor de IA por una respuesta determinista, tras comprobar que hay clave). Lo que no se puede afirmar desde el DOM se comprueba **sobre los píxeles del PNG**, con un decodificador mínimo dentro del propio script.
+- **Pruebas:** `npm run build && node scripts/smoke.mjs` — 108 comprobaciones de extremo a extremo que arrancan la app real y la manejan por CDP. Convención del proyecto: **cada arreglo llega con la prueba que lo demuestra**, y se comprueba que esa prueba **falla sin el arreglo**. Dos variables de entorno la sostienen: `DOCRECORDER_USER_DATA` (aísla el estado persistente) y `DOCRECORDER_AI_FAKE` (sustituye al proveedor de IA por una respuesta determinista, tras comprobar que hay clave). Lo que no se puede afirmar desde el DOM se comprueba **sobre los píxeles del PNG**, con un decodificador mínimo dentro del propio script.
 
 ## 10. Integración Git (GitHub Flow)
 
@@ -324,6 +326,17 @@ Cada rama de documentación nace de la **rama por defecto** del repositorio, no 
 
 Se ramifica desde la copia **local** de esa rama: partir de `origin/main` exigiría red y credenciales en cada guardado, y un PR desactualizado se rebasa igual en GitHub. Si no hay base reconocible, se conserva el comportamiento anterior (ramificar desde HEAD) y se avisa, antes que bloquear el guardado. Regrabar una funcionalidad **reutiliza** su rama y añade el commit encima.
 
+### Rama de trabajo: continuar donde se dejó
+
+El problema que resuelve: la rama era un **derivado** de los metadatos (`docs/<módulo>`), así que para volver a una rama empezada ayer había que reescribir la cabecera entera —módulo, funcionalidad, título, rol— confiando en que el nombre volviese a salir igual. Se invierte la dependencia: **la rama de trabajo es estado de primera clase de la sesión, y de ella se derivan los metadatos**.
+
+- **La fuente de verdad es el repositorio, no un registro local.** `git:branch-docs` recorre el historial de la rama (`log --name-only -- '*session.json'`, ya ordenado por recencia) y lee esos `session.json` con `git show`. De ahí salen módulo, rol y URL base. Funciona igual si el commit lo hizo otra persona u otra máquina, que es lo que un registro en `userData` no puede garantizar. Se recorre el historial y no el árbol porque el árbol no dice cuál es el más reciente: habría que preguntar la fecha archivo a archivo.
+- **Prefill sin pisar.** Elegir una rama rellena solo los campos **vacíos**; funcionalidad y título se dejan libres porque se va a documentar una nueva. Para retomar una concreta (ampliarla o regrabarla), el selector lista las funcionalidades de la rama y al pulsar una carga sus cuatro campos: si no coincidieran, la salida caería en otra carpeta.
+- **Elegir no hace checkout.** La rama se cambia o se crea al guardar, con las salvaguardas de `commitDocs`. Hasta entonces es una declaración de intenciones, y por eso puede ofrecerse sin riesgo sobre un repositorio ajeno.
+- **Herencia al arrancar.** Si el clon quedó en una rama de documentación (≠ rama por defecto) y esa rama ya documenta algo, se adopta con sus metadatos. Sin activar el registro en Git: heredar es una comodidad, decidir que se comitea sigue siendo del usuario.
+- **Un solo estado, tres editores.** El selector de la franja, el campo Rama de la sección Git y el explorador escriben `gitBranchOverride`. La rama base (`gitBaseBranch`) queda para lo que de verdad es: de dónde nace una rama **nueva**, y se elige junto al nombre de esa rama.
+- **Caché de ramas con invalidación explícita** (`useBranches`): listar ramas cuesta un proceso `git` por rama y la piden tres vistas a la vez. Se invalida en los dos momentos en que puede haber cambiado —después de guardar y al abrir el selector— porque una lista vieja engaña justo cuando importa: acaba de nacer una rama. Por lo mismo, guardar vuelve a inspeccionar el repositorio: antes la franja seguía describiendo el estado anterior al commit.
+
 ### Registro de repositorios y explorador
 
 - El repositorio se recuerda **al commitear con éxito**, no al detectarlo: así la lista no se llena de intentos fallidos (persistencia en §7).
@@ -343,7 +356,7 @@ La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o 
 
 ### Canales IPC (todos de solo lectura salvo el guardado)
 
-`git:inspect` (repo de la carpeta de salida), `git:branches`, `git:commits`, `projects:list`, `projects:forget`. El commit ocurre dentro de `session:save`. Ante cualquier fallo, los canales de lectura devuelven vacío en vez de propagar el error: la vista queda sin datos, que es un estado inocuo.
+`git:inspect` (repo de la carpeta de salida), `git:branches`, `git:commits`, `git:branch-docs` (lo documentado en una rama), `git:commit-docs`, `git:doc-image`, `projects:list`, `projects:forget`. El commit ocurre dentro de `session:save`. Ante cualquier fallo, los canales de lectura devuelven vacío en vez de propagar el error: la vista queda sin datos, que es un estado inocuo.
 
 ## 11. Criterios de aceptación
 
@@ -362,21 +375,22 @@ La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o 
 8. Al elegir una carpeta dentro de un repositorio, la sección Git aparece sola; fuera de un repositorio, lo explica.
 9. Documentar dos funcionalidades seguidas produce dos ramas hermanas desde la rama por defecto; la segunda no arrastra los archivos de la primera.
 10. Nunca se indexan ni se comprometen archivos ajenos; sin remoto, el push no se intenta.
-11. El explorador muestra repositorios, ramas e historial, y permite elegir la rama base de la próxima grabación sin escribir nada en el repositorio.
+11. El explorador muestra repositorios, ramas e historial, y permite elegir la rama de trabajo sin escribir nada en el repositorio.
+12. **Continuar donde se dejó:** elegir una rama ya empezada recupera el módulo, el rol y la URL base con los que se documentó, sin reescribirlos, y lista sus funcionalidades para retomar una concreta. Apuntar a un repositorio que quedó en su rama de documentación hace lo mismo solo.
 
 **Fidelidad de la captura (§3):** cada una de estas nació de documentar el sistema real, y todas tienen su comprobación en el smoke.
 
-12. Un gesto del usuario produce **un** paso: un interruptor que reenvía el clic a su `<input>` escondido no genera dos ni rompe el grupo del formulario.
-13. La captura de un paso agrupado resalta **todos** sus campos, no solo el último.
-14. El elemento señalado **se ve** aunque el fondo de un modal recién abierto lo oscurezca.
-15. Un clic que cambia de pantalla (cerrar sesión) conserva la captura previa, con el elemento señalado, en vez de ilustrar la pantalla siguiente sin recuadro.
-16. Eliminar o reordenar pasos nunca deja una captura contradiciendo su número.
+13. Un gesto del usuario produce **un** paso: un interruptor que reenvía el clic a su `<input>` escondido no genera dos ni rompe el grupo del formulario.
+14. La captura de un paso agrupado resalta **todos** sus campos, no solo el último.
+15. El elemento señalado **se ve** aunque el fondo de un modal recién abierto lo oscurezca.
+16. Un clic que cambia de pantalla (cerrar sesión) conserva la captura previa, con el elemento señalado, en vez de ilustrar la pantalla siguiente sin recuadro.
+17. Eliminar o reordenar pasos nunca deja una captura contradiciendo su número.
 
 **Asistencia de IA (§14):**
 
-17. Sin clave configurada, redactar avisa de lo que falta en vez de fallar; la clave nunca vuelve al renderer y se guarda cifrada.
-18. Cada proveedor guarda su propia clave y su propio modelo.
-19. Redactar un paso no altera los demás, y «Redactar todos» omite los excluidos de la documentación.
+18. Sin clave configurada, redactar avisa de lo que falta en vez de fallar; la clave nunca vuelve al renderer y se guarda cifrada.
+19. Cada proveedor guarda su propia clave y su propio modelo.
+20. Redactar un paso no altera los demás, y «Redactar todos» omite los excluidos de la documentación.
 
 ## 12. Runner de regeneración
 
