@@ -51,6 +51,13 @@ export interface RecordedStep extends DocStep {
    */
   ref?: number
   /**
+   * Fila de tabla que contiene al elemento, o `null` si no está en ninguna.
+   * Solo se usa en la GUI para agrupar: los controles de dos filas distintas
+   * son dos registros, no un formulario, y no deben fundirse en un paso. No se
+   * persiste.
+   */
+  rowRef?: number | null
+  /**
    * Campos fundidos en este paso, en orden. Es la fuente de verdad del grupo en
    * la GUI: de aquí se derivan `fields` (lo que se publica) y `mergedActions`
    * (lo que reproduce el runner), y es lo que permite quitar un campo suelto sin

@@ -219,8 +219,17 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 recién abierto, típicamente— el recuadro le devuelve el brillo, para que el
                 elemento que el paso señala se siga viendo. Y si el clic <b>cambia de pantalla</b>{' '}
                 (cerrar sesión, un enlace), se conserva la captura tomada justo antes, que sí
-                muestra dónde pulsaste, en vez de la pantalla siguiente. Los campos de texto se consolidan en <b>un solo paso</b> (el valor final),
-                y las <b>contraseñas se enmascaran</b> como <code>***</code>.
+                muestra dónde pulsaste, en vez de la pantalla siguiente. Lo mismo con los{' '}
+                <b>menús que se cierran</b> al elegir una opción: como se desvanecen poco a poco, se
+                documenta la captura previa, con el menú aún legible, en vez de una medio borrada.
+                Los campos de texto se consolidan en <b>un solo paso</b> (el valor final), y las{' '}
+                <b>contraseñas se enmascaran</b> como <code>***</code>.
+              </p>
+              <p>
+                <b>Botones que abren su menú al presionar</b> (los de las librerías actuales) se
+                registran igual: aunque la capa que montan encima se quede con el gesto y el botón
+                nunca llegue a recibir el clic, el paso se documenta con el nombre del botón que
+                pulsaste.
               </p>
               <p>
                 <b>Agrupar campos</b> (interruptor en el encabezado del panel, activado por
@@ -245,6 +254,12 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <li>
                   <b>Qué lo cierra</b> · un clic en un botón, un envío o una navegación. Lo que
                   venga después empieza un grupo nuevo, aunque sea del mismo formulario.
+                </li>
+                <li>
+                  <b>Las tablas no se agrupan</b> · marcar la casilla o el interruptor de{' '}
+                  <b>dos filas</b> son dos acciones sobre dos registros, no un formulario que se
+                  rellena, así que cada una es su propio paso. Dentro de una misma fila sí se
+                  agrupan (edición en línea).
                 </li>
                 <li>
                   <b>La captura</b> · resalta en rojo <b>todos</b> los campos del grupo, y se
@@ -595,8 +610,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 </li>
                 <li>
                   <b>Un campo del formulario no se agrupó</b> · algo cerró el grupo justo antes: un
-                  clic en un botón, un envío o un cambio de pantalla. Lo que viene después empieza
-                  un grupo nuevo. Puedes documentarlo aparte o volver a grabar ese tramo seguido.
+                  clic en un botón, un envío o un cambio de pantalla —o los dos campos están en{' '}
+                  <b>filas distintas</b> de una tabla, que nunca se agrupan—. Lo que viene después
+                  empieza un grupo nuevo. Puedes documentarlo aparte o volver a grabar ese tramo
+                  seguido.
                 </li>
                 <li>
                   <b>El corrector no subraya nada</b> · usa el diccionario del sistema operativo.

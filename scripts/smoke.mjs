@@ -1583,6 +1583,98 @@ try {
     `quitado ${removedLabel} · quedan ${remaining.join(' ')}`
   )
 
+  // --- Tabla: los controles de filas distintas no se funden en un paso ---
+  // Marcar la casilla de dos registros son dos acciones, no un formulario que se
+  // rellena. Antes se fundían en un solo paso «Rellenar el formulario» que
+  // mezclaba filas y no describía ninguna.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  if (!(await gui.locator('.group-toggle input').isChecked())) {
+    await gui.locator('.group-toggle input').check()
+  }
+  const beforeTable = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#sel-andy')
+  await waitSteps(beforeTable + 1, 'tabla: primera fila')
+  await target.click('#sel-paulo')
+  await waitSteps(beforeTable + 2, 'tabla: segunda fila')
+  const tableSteps = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card')].slice(-2).map((card) => ({
+      title: card.querySelector('.step-title')?.value,
+      fields: card.querySelectorAll('.field-list li').length
+    }))
+  )
+  check(
+    (await stepCount()) === beforeTable + 2 && tableSteps.every((s) => s.fields === 0),
+    'Tabla: marcar dos filas produce dos pasos, no un formulario agrupado',
+    JSON.stringify(tableSteps)
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // --- Menú que se abre en `pointerdown` y se desvanece al elegir ---
+  // Dos fallos del mismo widget, el más común de las interfaces actuales:
+  //  1. El botón que lo abre no recibía `click` (la capa de descarte se traga el
+  //     `pointerup`), así que pulsarlo no generaba paso —o generaba uno inútil
+  //     sobre `<body>`—.
+  //  2. Al elegir una opción, el menú se desvanece antes de desmontarse: la
+  //     captura definitiva lo pillaba medio borrado.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeMenu = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#ver')
+  await waitSteps(beforeMenu + 1, 'menú: abrir')
+  const menuOpenTitle = await gui.evaluate(
+    () => [...document.querySelectorAll('.step-title')].pop()?.value
+  )
+  check(
+    menuOpenTitle === 'Clic en «Ver»',
+    'Menú: un botón que abre su menú en pointerdown genera su paso',
+    menuOpenTitle
+  )
+
+  await target.click('#ver-editar')
+  await waitSteps(beforeMenu + 2, 'menú: elegir opción')
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      return !!img && img.complete && img.naturalWidth > 0
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const menuShot = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return cards[cards.length - 1]?.querySelector('.thumb img')?.src ?? null
+  })
+  const menuPng = decodePng(
+    readFileSync(decodeURIComponent(new URL(menuShot).pathname.replace(/^\//, '')))
+  )
+  // El menú es un azul saturado y opaco; al desvanecerse sobre el fondo blanco
+  // se aclara hasta dejar de serlo. Se cuenta «azul saturado» en vez de un color
+  // exacto porque la captura pasa por la gestión de color de la pantalla y los
+  // valores no salen literales (medido: #00A2FF llega como 72,160,248).
+  let menuPixels = 0
+  for (let i = 0; i < menuPng.data.length; i += menuPng.channels) {
+    const d = menuPng.data
+    if (d[i] < 140 && d[i + 1] > 110 && d[i + 1] < 210 && d[i + 2] > 200) menuPixels++
+  }
+  // Medido: ~50 000 con el menú legible, ~350 (solo bordes) con el menú
+  // desvanecido, que es lo que se capturaba antes.
+  check(
+    menuPixels > 10000,
+    'Menú: al elegir una opción, el paso conserva la captura con el menú legible',
+    `${menuPixels} píxeles del menú`
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
   // --- Clic que navega al instante («cerrar sesión») ---
   // La captura se toma tras esperar estabilidad, así que para entonces la página
   // ya es otra y el elemento no existe: el paso ilustraba la pantalla siguiente

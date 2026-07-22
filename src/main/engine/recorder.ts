@@ -7,6 +7,7 @@ import {
   EMIT_BINDING,
   OBSERVER_NAMESPACE,
   observerScript,
+  type HighlightResult,
   type RawEvent,
   type ObserverConfig
 } from './observer'
@@ -15,7 +16,7 @@ import { waitForStability } from './stability'
 import { regenerateSession, type RegenStepResult } from './runner'
 import type { RecordedStep } from '../../shared/ipc-contract'
 import type { DocSession } from '../../shared/types'
-import type { BoundingRect, EngineState, RecorderStatus, StepAction } from '../../shared/types'
+import type { EngineState, RecorderStatus, StepAction } from '../../shared/types'
 
 export interface EngineHooks {
   onState: (state: EngineState) => void
@@ -315,11 +316,11 @@ export class RecorderEngine {
     const page = this.attachment?.page
     if (!page || !this.shotDir || !refs.length) return null
 
-    const rect = await page
+    const painted = await page
       .evaluate(
         ([ns, targets]) => {
           const api = (
-            window as unknown as Record<string, { highlight(r: number[]): BoundingRect | null }>
+            window as unknown as Record<string, { highlight(r: number[]): HighlightResult | null }>
           )[ns as string]
           return api ? api.highlight(targets as number[]) : null
         },
@@ -327,7 +328,7 @@ export class RecorderEngine {
       )
       .catch(() => null)
 
-    if (!rect) return null
+    if (!painted) return null
 
     const file = join(this.shotDir, `group-${randomUUID()}.png`)
     try {
@@ -374,17 +375,18 @@ export class RecorderEngine {
   /**
    * Resalta los elementos, captura el viewport y quita el overlay.
    *
-   * Devuelve el rectángulo del último elemento señalado, o `null` si no se pudo
-   * señalar ninguno (se fueron con un cambio de página) o si la captura falló.
-   * El overlay se quita siempre; las referencias NO se liberan, porque el paso
-   * puede fundirse después con los siguientes y habrá que volver a marcarlo.
+   * Devuelve el rectángulo del último elemento señalado —y si está
+   * desvaneciéndose—, o `null` si no se pudo señalar ninguno (se fueron con un
+   * cambio de página) o si la captura falló. El overlay se quita siempre; las
+   * referencias NO se liberan, porque el paso puede fundirse después con los
+   * siguientes y habrá que volver a marcarlo.
    */
-  private async shoot(page: Page, refs: number[], file: string): Promise<BoundingRect | null> {
-    const rect = await page
+  private async shoot(page: Page, refs: number[], file: string): Promise<HighlightResult | null> {
+    const painted = await page
       .evaluate(
         ([ns, targets]) => {
           const api = (
-            window as unknown as Record<string, { highlight(r: number[]): BoundingRect | null }>
+            window as unknown as Record<string, { highlight(r: number[]): HighlightResult | null }>
           )[ns as string]
           return api ? api.highlight(targets as number[]) : null
         },
@@ -408,7 +410,7 @@ export class RecorderEngine {
       )
       .catch(() => undefined)
 
-    return captured ? (rect as BoundingRect | null) : null
+    return captured ? (painted as HighlightResult | null) : null
   }
 
   private async processEvent(event: RawEvent): Promise<void> {
@@ -431,17 +433,20 @@ export class RecorderEngine {
       await waitForStability(page)
 
       // 3. Resaltar el elemento y recalcular su rectángulo, ya estabilizado.
-      const freshRect = await this.shoot(page, [event.ref], file)
+      const fresh = await this.shoot(page, [event.ref], file)
 
-      // La definitiva manda salvo que el elemento ya no exista; entonces vale
-      // más la previa, que sí lo muestra, que una imagen de la pantalla nueva.
-      const usePrevious = !freshRect && early
+      // La definitiva manda salvo que el elemento ya no exista —o esté
+      // desvaneciéndose—; entonces vale más la previa, que sí lo muestra
+      // legible, que una imagen de la pantalla nueva o de un menú medio borrado.
+      const usePrevious = early && (!fresh || fresh.faded)
       const tempFile = usePrevious ? earlyFile : file
-      const boundingRect = freshRect ?? event.boundingRect
+      const boundingRect = fresh?.rect ?? event.boundingRect
       if (usePrevious) {
         this.log(
           'info',
-          `Paso ${order}: la página cambió al instante, se usa la captura previa al clic.`
+          fresh
+            ? `Paso ${order}: el elemento se estaba desvaneciendo, se usa la captura previa al clic.`
+            : `Paso ${order}: la página cambió al instante, se usa la captura previa al clic.`
         )
       }
       rmSync(usePrevious ? file : earlyFile, { force: true })
@@ -460,7 +465,8 @@ export class RecorderEngine {
         timestamp: event.timestamp,
         tempFile,
         isFormField: isFormField(event.signals),
-        ref: event.ref
+        ref: event.ref,
+        rowRef: event.rowRef
       }
       if (event.value !== undefined) {
         step.value = event.isPassword ? '***' : event.value

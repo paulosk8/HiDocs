@@ -73,6 +73,47 @@
       .hidden {
         display: none;
       }
+      /* Menú al estilo de las librerías actuales: se abre en `pointerdown`, tapa
+         la página con una capa de descarte y, al elegir una opción, se DESVANECE
+         antes de desmontarse. */
+      .dismiss-layer {
+        position: fixed;
+        inset: 0;
+        z-index: 10;
+      }
+      .menu {
+        position: absolute;
+        z-index: 20;
+        background: #00a2ff;
+        border-radius: 8px;
+        padding: 6px;
+        transition: opacity 200ms linear;
+      }
+      .menu.closing {
+        opacity: 0.15;
+      }
+      .menu-item {
+        display: block;
+        width: 160px;
+        text-align: left;
+        background: transparent;
+        border: 0;
+        color: #fff;
+        padding: 8px;
+      }
+      table {
+        border-collapse: collapse;
+        margin-top: 16px;
+      }
+      th,
+      td {
+        border: 1px solid #cbd5e1;
+        padding: 6px 10px;
+        text-align: left;
+      }
+      td input[type='checkbox'] {
+        width: auto;
+      }
     </style>
   </head>
   <body>
@@ -92,6 +133,41 @@
             Nueva matrícula
           </button>
           <button aria-label="Exportar listado">⤓</button>
+
+          <!--
+            Botón que abre su menú en `pointerdown` y monta una capa de descarte:
+            el `pointerup` cae en esa capa, así que el botón NUNCA recibe un
+            `click` y el navegador dispara el suyo sobre el ancestro común. Es el
+            patrón de Radix y compañía; sin tratarlo, pulsarlo no generaba paso.
+          -->
+          <button id="ver">Ver</button>
+          <div id="ver-menu" class="menu hidden">
+            <button class="menu-item" id="ver-editar">Editar</button>
+            <button class="menu-item" id="ver-eliminar">Eliminar</button>
+          </div>
+
+          <!--
+            Tabla de registros: cada fila tiene su casilla. Marcar dos filas son
+            dos acciones sobre dos registros, no un formulario que se rellena.
+          -->
+          <table id="tabla-usuarios">
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="sel-todos" aria-label="Seleccionar todo" /></th>
+                <th>Usuario</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><input type="checkbox" id="sel-andy" aria-label="Seleccionar Andy" /></td>
+                <td>Andy Velez</td>
+              </tr>
+              <tr>
+                <td><input type="checkbox" id="sel-paulo" aria-label="Seleccionar Paulo" /></td>
+                <td>Paulo Galarza</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section id="view-alumnos" class="hidden">
@@ -184,6 +260,32 @@
         if (row && e.target.id !== 'activa') {
           row.querySelector('#activa').click()
         }
+      })
+
+      // Menú que se abre en `pointerdown` y se traga el `pointerup` con su capa
+      // de descarte. Al elegir una opción no se desmonta: primero se desvanece,
+      // que es cuando el grabador solía capturarlo medio borrado.
+      const verBtn = document.getElementById('ver')
+      const verMenu = document.getElementById('ver-menu')
+      let dismissLayer = null
+
+      verBtn.addEventListener('pointerdown', () => {
+        verMenu.classList.remove('hidden', 'closing')
+        dismissLayer = document.createElement('div')
+        dismissLayer.className = 'dismiss-layer'
+        document.body.appendChild(dismissLayer)
+      })
+
+      verMenu.addEventListener('click', (e) => {
+        if (!e.target.closest('.menu-item')) return
+        verMenu.classList.add('closing')
+        // Se desmonta MUCHO después de la captura: así el paso se enfrenta al
+        // caso difícil (el elemento sigue ahí, pero ya no se lee).
+        setTimeout(() => {
+          verMenu.classList.add('hidden')
+          dismissLayer?.remove()
+          dismissLayer = null
+        }, 4000)
       })
 
       portalRoot.addEventListener('submit', (e) => {

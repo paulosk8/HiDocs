@@ -332,13 +332,19 @@ export const useSession = create<SessionState>((set) => ({
       // (escribir, seleccionar o enfocar un campo con un clic), en la misma URL.
       // Un clic en un botón, un envío o una navegación rompe la secuencia. No se
       // funde dentro de un paso excluido de docs.
+      //
+      // Y nunca a través de filas de una tabla: marcar la casilla de dos
+      // usuarios distintos son dos acciones sobre dos registros, no un
+      // formulario que se rellena. Fundirlas producía un paso «Rellenar el
+      // formulario» que mezclaba filas y no describía nada.
       const mergeable =
         s.groupFormFields &&
         isFormInput(step) &&
         last &&
         isFormInput(last) &&
         last.url === step.url &&
-        last.includeInDocs
+        last.includeInDocs &&
+        (last.rowRef ?? null) === (step.rowRef ?? null)
 
       if (mergeable) {
         // La captura pasa a ser la más reciente (el formulario más completo) y el

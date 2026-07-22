@@ -53,6 +53,12 @@ export interface RawEvent {
   action: StepAction
   /** referencia al elemento, válida hasta que el motor llame a `release` */
   ref: number
+  /**
+   * Identidad de la fila de tabla que contiene al elemento, o `null` si no está
+   * en ninguna. Dos filas son dos registros distintos, no un formulario: sirve
+   * para no fundir en un paso los controles de filas diferentes.
+   */
+  rowRef: number | null
   url: string
   value?: string
   isPassword: boolean
@@ -68,6 +74,19 @@ export interface ObserverConfig {
   namespace: string
   /** ms tras los que se considera que un submit ya fue documentado por el clic previo */
   submitDedupeMs: number
+}
+
+/**
+ * Resultado de resaltar: el rectángulo del último elemento marcado y si ese
+ * elemento está **desvaneciéndose**.
+ *
+ * Lo segundo decide qué captura ilustra el paso: un menú que se cierra tras
+ * elegir una opción sigue en el DOM unos cientos de milisegundos, medio
+ * transparente. Capturarlo entonces documenta algo que ya no se lee.
+ */
+export interface HighlightResult {
+  rect: BoundingRect
+  faded: boolean
 }
 
 /**
@@ -101,10 +120,40 @@ export function observerScript(config: ObserverConfig): void {
    */
   let lastFill: { el: Element; value: string } | null = null
   let lastFormInteraction: { form: HTMLFormElement; at: number } | null = null
-  /** Último clic documentado, para descartar los que reenvía el propio widget. */
-  let lastClick: { el: Element; at: number } | null = null
+  /**
+   * Último clic documentado, para descartar los que reenvía el propio widget.
+   * `viaPointer` marca los que se dieron por hechos desde `pointerdown` porque
+   * el `click` no llegó nunca: si llega tarde, no debe duplicar el paso.
+   */
+  let lastClick: { el: Element; at: number; viaPointer: boolean } | null = null
   /** Ventana dentro de la cual un clic anidado se considera el mismo gesto. */
   const SAME_GESTURE_MS = 400
+  /**
+   * Gesto empezado con `pointerdown` sobre un control, a la espera de su `click`.
+   *
+   * Los menús de las librerías actuales se abren en `pointerdown` y montan
+   * encima una capa de descarte; el `pointerup` cae en esa capa y el navegador
+   * dispara el `click` sobre el ancestro común —normalmente `<body>`—, o no lo
+   * dispara. En ambos casos el botón que se pulsó (el «Ver» de una tabla, por
+   * ejemplo) no generaba ningún paso.
+   */
+  let pendingPointer: { el: Element; point: { x: number; y: number }; timer: number } | null = null
+  /** Espera máxima por el `click` antes de dar el gesto por hecho. */
+  const CLICK_FALLBACK_MS = 400
+
+  /** Identidad de la fila de tabla que contiene al elemento, si la hay. */
+  const rowRefs = new WeakMap<Element, number>()
+  let nextRowRef = 1
+  const rowRefOf = (el: Element): number | null => {
+    const row = el.closest('tr,[role=row]')
+    if (!row) return null
+    let id = rowRefs.get(row)
+    if (id === undefined) {
+      id = nextRowRef++
+      rowRefs.set(row, id)
+    }
+    return id
+  }
 
   const clean = (s: string | null | undefined): string | null => {
     if (!s) return null
@@ -446,6 +495,7 @@ export function observerScript(config: ObserverConfig): void {
     const event: RawEvent = {
       action,
       ref,
+      rowRef: rowRefOf(el),
       url: location.href,
       isPassword: isPasswordField(el),
       boundingRect: rect,
@@ -475,6 +525,49 @@ export function observerScript(config: ObserverConfig): void {
 
   // --- listeners en fase de captura, para ver el evento antes que la app ---
 
+  const cancelPendingPointer = (): void => {
+    if (!pendingPointer) return
+    clearTimeout(pendingPointer.timer)
+    pendingPointer = null
+  }
+
+  /** Emite el paso de un clic ya decidido (llegara o no el evento `click`). */
+  const emitClick = (target: Element, point: { x: number; y: number }, viaPointer: boolean): void => {
+    lastClick = { el: target, at: Date.now(), viaPointer }
+    flushPending()
+    noteFormInteraction(target)
+    send('click', target, { point })
+  }
+
+  /**
+   * Un gesto empieza aquí, no en el `click`: si el widget se abre en
+   * `pointerdown` y tapa la página con una capa de descarte, el `click` nunca
+   * llega al control. Se anota el control y, si en `CLICK_FALLBACK_MS` no ha
+   * llegado ningún `click`, se documenta el gesto igualmente.
+   */
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (!enabled || e.button !== 0) return
+      const hit = (e.composedPath()[0] as Element) ?? (e.target as Element)
+      if (!hit || hit.nodeType !== 1) return
+      const target = resolveInteractive(hit)
+      // Solo controles: un `pointerdown` sobre texto o sobre el fondo no es un
+      // paso, y arrastrar algo tampoco (soltar fuera no es haber pulsado).
+      if (!target.matches(INTERACTIVE) || hit.closest('[draggable="true"]')) return
+
+      cancelPendingPointer()
+      const point = { x: e.clientX, y: e.clientY }
+      const timer = window.setTimeout(() => {
+        pendingPointer = null
+        if (!target.isConnected) return
+        emitClick(target, point, true)
+      }, CLICK_FALLBACK_MS)
+      pendingPointer = { el: target, point, timer }
+    },
+    true
+  )
+
   document.addEventListener(
     'click',
     (e) => {
@@ -482,7 +575,29 @@ export function observerScript(config: ObserverConfig): void {
       // composedPath resuelve el objetivo real dentro de shadow DOM y portales.
       const hit = (e.composedPath()[0] as Element) ?? (e.target as Element)
       if (!hit || hit.nodeType !== 1) return
-      const target = resolveInteractive(hit)
+      let target = resolveInteractive(hit)
+      let point = { x: e.clientX, y: e.clientY }
+
+      // El `pointerup` cayó en otra capa (la de descarte de un menú recién
+      // abierto), así que el navegador dispara el clic sobre el ancestro común:
+      // `<body>` o un contenedor cualquiera. El gesto fue sobre el control donde
+      // empezó, no sobre el fondo, y documentarlo como «clic en <body>» sería
+      // ruido inservible.
+      if (!target.matches(INTERACTIVE) && pendingPointer?.el.isConnected) {
+        target = pendingPointer.el
+        point = pendingPointer.point
+      }
+      cancelPendingPointer()
+
+      const now = Date.now()
+      // El clic llegó tarde, después de dar el gesto por hecho: ya está contado.
+      if (
+        lastClick?.viaPointer &&
+        lastClick.el === target &&
+        now - lastClick.at < SAME_GESTURE_MS
+      ) {
+        return
+      }
 
       // Un solo clic del usuario puede producir varios eventos: al pulsar una
       // `<label>` el navegador reenvía el clic a su control, y un interruptor
@@ -494,7 +609,6 @@ export function observerScript(config: ObserverConfig): void {
       // reenvíos. Son el mismo gesto si llegan enseguida y, además, uno contiene
       // al otro, comparten el envoltorio de un mismo campo, o el segundo no lo
       // generó una persona (`isTrusted` distingue el clic sintético).
-      const now = Date.now()
       const wrapper = fieldWrapperOf(target)
       if (
         lastClick &&
@@ -507,11 +621,8 @@ export function observerScript(config: ObserverConfig): void {
       ) {
         return
       }
-      lastClick = { el: target, at: now }
 
-      flushPending()
-      noteFormInteraction(target)
-      send('click', target, { point: { x: e.clientX, y: e.clientY } })
+      emitClick(target, point, false)
     },
     true
   )
@@ -647,6 +758,28 @@ export function observerScript(config: ObserverConfig): void {
   }
 
   /**
+   * ¿El elemento está desvaneciéndose (o ya invisible)?
+   *
+   * Los menús y los diálogos de las librerías actuales no se desmontan al
+   * cerrarse: bajan su opacidad durante unos cientos de milisegundos y se
+   * quitan después. Justo en esa ventana es cuando el grabador captura, y el
+   * paso acababa ilustrando un menú medio borrado. La opacidad se acumula por
+   * ancestros porque quien se desvanece es el contenedor, no la opción pulsada.
+   */
+  const FADED_BELOW = 0.6
+  const isFading = (el: Element): boolean => {
+    let opacity = 1
+    for (let n: Element | null = el; n && n.nodeType === 1; n = n.parentElement) {
+      const style = getComputedStyle(n)
+      if (style.visibility === 'hidden' || style.display === 'none') return true
+      const own = Number(style.opacity)
+      opacity *= Number.isFinite(own) ? own : 1
+      if (opacity < FADED_BELOW) return true
+    }
+    return false
+  }
+
+  /**
    * Dibuja el resaltado sobre uno o varios elementos y devuelve el rectángulo
    * del ÚLTIMO (el que motivó la captura).
    *
@@ -657,14 +790,14 @@ export function observerScript(config: ObserverConfig): void {
    * Los rectángulos se recalculan al capturar, no al registrar el evento: entre
    * uno y otro el layout puede haber cambiado o la página haber rodado.
    */
-  const highlight = (targets: number[]): BoundingRect | null => {
+  const highlight = (targets: number[]): HighlightResult | null => {
     removeOverlay()
 
     const container = document.createElement('div')
     container.setAttribute('data-docrec-overlay', '')
     container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647'
 
-    let last: BoundingRect | null = null
+    let last: HighlightResult | null = null
     let painted = 0
     for (const ref of targets) {
       const el = refs.get(ref)
@@ -673,7 +806,10 @@ export function observerScript(config: ObserverConfig): void {
       if (rect.width === 0 && rect.height === 0) continue
       container.appendChild(drawBox(rect, isCovered(el, rect)))
       painted++
-      last = { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      last = {
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+        faded: isFading(el)
+      }
     }
 
     if (!painted) return null
