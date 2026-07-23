@@ -1,4 +1,6 @@
 import type { DocSession } from '../shared/types'
+import { titleCase } from '../shared/naming'
+export { titleCase }
 
 /**
  * Genera la página del manual en formato Docusaurus (MDX) a partir de la sesión.
@@ -35,15 +37,6 @@ function yamlString(text: string): string {
   return `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 }
 
-/** `crear-matricula` o `Crear matricula` → `Crear Matricula`. */
-export function titleCase(text: string): string {
-  return text
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-}
-
 const ACTION_LABEL: Record<string, string> = {
   click: 'Clic',
   fill: 'Rellenar el campo',
@@ -51,6 +44,42 @@ const ACTION_LABEL: Record<string, string> = {
   submit: 'Enviar el formulario',
   press: 'Pulsar una tecla',
   navigate: 'Navegar'
+}
+
+/**
+ * Cuerpo de una nota destacada. La nota es texto enriquecido —su gracia es
+ * publicar el diseño de Docusaurus (negrita, `<mark>`, emojis…)—, así que el
+ * Markdown se deja pasar para que Docusaurus lo renderice. Pero el build no puede
+ * romperse por descuido: un `<` suelto (p. ej. «saldo < 0») MDX lo tomaría por
+ * una etiqueta JSX y abortaría el build entero del mantenedor (§10).
+ *
+ * Por eso se escapa TODO `<`/`>` (y las llaves `{`/`}`) y luego se restauran solo
+ * los pares BALANCEADOS de `<mark>…</mark>` que inserta la barra de herramientas.
+ * Un `<mark>` sin cerrar, o cualquier otra etiqueta, quedan escapados y visibles,
+ * nunca activos. Es exactamente lo que hace la vista previa del editor, para que
+ * lo que se ve al redactar y lo que se publica coincidan.
+ */
+function mdxNoteBody(text: string): string {
+  const escaped = text
+    .replace(/\{/g, '&#123;')
+    .replace(/\}/g, '&#125;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  return escaped.replace(/&lt;mark&gt;([\s\S]*?)&lt;\/mark&gt;/g, '<mark>$1</mark>')
+}
+
+const ADMONITION_TYPES = new Set(['note', 'tip', 'info', 'warning', 'danger'])
+
+/**
+ * Bloque «admonition» de Docusaurus para la nota de un paso. Devuelve las líneas
+ * (con sus separaciones en blanco, que MDX exige alrededor del bloque) o `[]` si
+ * la nota no tiene cuerpo.
+ */
+export function renderNote(note: DocSession['steps'][number]['note']): string[] {
+  if (!note || !note.body.trim()) return []
+  const type = ADMONITION_TYPES.has(note.type) ? note.type : 'note'
+  const title = note.title?.trim() ? `[${mdxSafe(note.title.trim())}]` : ''
+  return [`:::${type}${title}`, '', mdxNoteBody(note.body.trim()), '', ':::', '']
 }
 
 /** Etiqueta de la categoría de módulo en la barra lateral de Docusaurus. */
@@ -67,7 +96,8 @@ export function categoryJson(label: string): string {
 export function renderFeatureMdx(
   session: DocSession,
   moduleLabel: string,
-  hasImage: (relativePath: string) => boolean
+  hasImage: (relativePath: string) => boolean,
+  subLabel = ''
 ): string {
   // Los pasos marcados como «no incluir en docs» son de navegación: se omiten
   // del manual pero la numeración visible sigue siendo correlativa.
@@ -80,7 +110,9 @@ export function renderFeatureMdx(
   out.push(`sidebar_label: ${yamlString(title)}`)
   out.push(
     `description: ${yamlString(
-      `Guía paso a paso · ${moduleLabel}${session.role ? ` · Rol: ${session.role}` : ''}`
+      `Guía paso a paso · ${moduleLabel}${subLabel ? ` · ${subLabel}` : ''}${
+        session.role ? ` · Rol: ${session.role}` : ''
+      }`
     )}`
   )
   out.push('---')
@@ -90,6 +122,7 @@ export function renderFeatureMdx(
 
   const meta: string[] = []
   if (moduleLabel) meta.push(`**Módulo:** ${mdxSafe(moduleLabel)}`)
+  if (subLabel) meta.push(`**Subcategoría:** ${mdxSafe(subLabel)}`)
   if (session.role) meta.push(`**Rol:** ${mdxSafe(session.role)}`)
   if (meta.length) {
     out.push(meta.join(' · '))
@@ -122,6 +155,9 @@ export function renderFeatureMdx(
       }
       out.push('')
     }
+    // Nota destacada del paso: se publica tal cual como admonition de Docusaurus,
+    // entre la descripción y la captura.
+    out.push(...renderNote(step.note))
     if (step.screenshot && hasImage(step.screenshot)) {
       out.push(`![Paso ${n}: ${mdxSafe(heading)}](./${step.screenshot})`)
       out.push('')

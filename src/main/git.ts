@@ -316,6 +316,7 @@ export async function readBranchDocs(
       docs.push({
         path,
         module: session.module ?? '',
+        subcategory: session.subcategory ?? '',
         feature: session.feature ?? '',
         title: session.title ?? '',
         role: session.role ?? '',

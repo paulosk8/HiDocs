@@ -729,6 +729,98 @@ try {
     otherBranchDocs.map((d) => d.feature).join(', ')
   )
 
+  // --- Subcategoría (3 niveles) + nota destacada por paso ---
+  const subSave = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'administracion',
+          subcategory: 'institucion',
+          feature: 'registrar-institucion',
+          title: 'Registrar una institución',
+          role: 'admin',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-subcat',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps: [
+          {
+            id: 's1',
+            order: 1,
+            action: 'click',
+            title: 'Abrir el formulario',
+            description: '',
+            selectorCandidates: [],
+            url: 'http://x',
+            boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+            includeInDocs: true,
+            timestamp: new Date().toISOString(),
+            note: {
+              type: 'tip',
+              title: 'Importante',
+              body: 'Revisa el **RUC** antes de <mark>guardar</mark> si saldo < 0.'
+            }
+          }
+        ],
+        git: {
+          enabled: true,
+          branch: 'docs/administracion',
+          message: 'docs(administracion): Registrar una institución',
+          push: false
+        }
+      }),
+    outDir
+  )
+  check(
+    !subSave.gitError &&
+      existsSync(join(outDir, 'administracion', 'institucion', 'registrar-institucion', 'index.mdx')),
+    'Subcategoría: la estructura es de tres niveles módulo/subcategoría/funcionalidad',
+    subSave.gitError ?? subSave.path
+  )
+  const subCommitted = g('show --stat --name-only --pretty=format: docs/administracion')
+    .split('\n')
+    .filter(Boolean)
+  check(
+    subCommitted.includes('administracion/_category_.json') &&
+      subCommitted.includes('administracion/institucion/_category_.json'),
+    'Subcategoría: se crea un _category_.json por cada nivel (módulo y subcategoría)',
+    subCommitted.filter((f) => f.endsWith('_category_.json')).join(' ')
+  )
+  const subMdx = g('show docs/administracion:administracion/institucion/registrar-institucion/index.mdx')
+  check(
+    /:::tip\[Importante\]/.test(subMdx) &&
+      subMdx.includes('<mark>guardar</mark>') &&
+      /^:::$/m.test(subMdx),
+    'Nota: el paso publica un admonition de Docusaurus con su formato',
+    subMdx.split('\n').find((l) => l.startsWith(':::')) ?? '(sin admonition)'
+  )
+  check(
+    subMdx.includes('saldo &lt; 0') && !/saldo < 0/.test(subMdx),
+    'Nota: un «<» suelto se escapa (no rompe el build) pero <mark> se conserva',
+    subMdx.split('\n').find((l) => l.includes('saldo')) ?? '(sin línea)'
+  )
+  check(
+    /\*\*Subcategoría:\*\* Institucion/.test(subMdx),
+    'Subcategoría: la página refleja la subcategoría en su metadato',
+    subMdx.split('\n').find((l) => l.includes('Subcategoría')) ?? '(sin línea)'
+  )
+  const subBranchDocs = await gui.evaluate(
+    (root) =>
+      window.docrecorder.invoke('git:branch-docs', {
+        repoRoot: root,
+        branch: 'docs/administracion'
+      }),
+    outDir
+  )
+  check(
+    subBranchDocs[0]?.subcategory === 'institucion' &&
+      subBranchDocs[0]?.feature === 'registrar-institucion',
+    'Rama de trabajo: branch-docs expone la subcategoría de cada proceso',
+    `${subBranchDocs[0]?.subcategory} / ${subBranchDocs[0]?.feature}`
+  )
+
   const registered = await gui.evaluate(() => window.docrecorder.invoke('projects:list'))
   check(
     registered.some((p) => p.root === g('rev-parse --show-toplevel')),

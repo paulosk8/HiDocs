@@ -1,8 +1,38 @@
-import { useEffect, useRef, useState } from 'react'
-import { suggestBranchName, validateBranchName } from '../../../shared/naming'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { suggestBranchName, titleCase, validateBranchName } from '../../../shared/naming'
 import type { BranchDocInfo, GitBranchInfo } from '../../../shared/types'
 import { ipc } from '../ipc'
 import { useSession } from '../store'
+
+/** Un módulo con sus procesos directos y sus subcategorías, para el árbol. */
+interface CategoryNode {
+  module: string
+  directDocs: BranchDocInfo[]
+  subs: { name: string; docs: BranchDocInfo[] }[]
+}
+
+/** Agrupa lo documentado en la rama en árbol módulo → subcategoría → procesos. */
+function buildCategoryTree(docs: BranchDocInfo[]): CategoryNode[] {
+  const modules = new Map<string, CategoryNode>()
+  for (const d of docs) {
+    let node = modules.get(d.module)
+    if (!node) {
+      node = { module: d.module, directDocs: [], subs: [] }
+      modules.set(d.module, node)
+    }
+    if (d.subcategory) {
+      let sub = node.subs.find((s) => s.name === d.subcategory)
+      if (!sub) {
+        sub = { name: d.subcategory, docs: [] }
+        node.subs.push(sub)
+      }
+      sub.docs.push(d)
+    } else {
+      node.directDocs.push(d)
+    }
+  }
+  return [...modules.values()]
+}
 
 /**
  * Selector de la rama de trabajo, desplegado desde la franja de estado.
@@ -31,6 +61,8 @@ export function BranchPicker({
   const baseBranch = useSession((s) => s.gitBaseBranch)
   const adoptBranch = useSession((s) => s.adoptBranch)
   const loadBranchDoc = useSession((s) => s.loadBranchDoc)
+  const pickCategory = useSession((s) => s.pickCategory)
+  const setBranchDocs = useSession((s) => s.setBranchDocs)
   const setGitBranch = useSession((s) => s.setGitBranch)
   const setGitBaseBranch = useSession((s) => s.setGitBaseBranch)
 
@@ -69,13 +101,17 @@ export function BranchPicker({
     if (!root || !exists || docData?.key === docKey) return
     void ipc
       .invoke('git:branch-docs', { repoRoot: root, branch: current })
-      .then((items) => setDocData({ key: docKey, items }))
-  }, [root, current, exists, docKey, docData?.key])
+      .then((items) => {
+        setDocData({ key: docKey, items })
+        setBranchDocs(items)
+      })
+  }, [root, current, exists, docKey, docData?.key, setBranchDocs])
 
   const pick = async (name: string): Promise<void> => {
     if (!root) return
     const items = await ipc.invoke('git:branch-docs', { repoRoot: root, branch: name })
     setDocData({ key: `${root}\0${name}`, items })
+    setBranchDocs(items)
     // El más reciente es el que dice con qué módulo y rol se venía trabajando.
     adoptBranch(name, items[0] ?? null)
   }
@@ -86,6 +122,37 @@ export function BranchPicker({
   const base = baseBranch ?? repo?.defaultBranch ?? repo?.branch ?? ''
 
   const visible = branches?.filter((b) => b.name.includes(filter.trim())) ?? []
+
+  const tree = useMemo(() => (docs ? buildCategoryTree(docs) : []), [docs])
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
+  const toggle = (key: string): void =>
+    setCollapsed((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  // Un proceso ya documentado: pulsarlo lo retoma con sus metadatos exactos.
+  const docButton = (d: BranchDocInfo): React.JSX.Element => (
+    <li key={d.path}>
+      <button
+        className="row"
+        data-feature={d.feature}
+        onClick={() => {
+          loadBranchDoc(d)
+          onClose()
+        }}
+        title={d.path}
+      >
+        <b>{d.title || d.feature}</b>
+        <span className="muted">
+          {d.feature}
+          {d.role && ` · rol ${d.role}`}
+        </span>
+      </button>
+    </li>
+  )
 
   return (
     <div className="branch-picker" ref={box}>
@@ -141,28 +208,80 @@ export function BranchPicker({
           {docs && docs.length > 0 && (
             <>
               <p className="muted">
-                Ya documentado aquí — pulsa una para retomarla con sus datos:
+                Categorías de esta rama — pulsa <b>＋ proceso</b> para grabar uno nuevo ahí, o un
+                proceso para retomarlo:
               </p>
-              <ul>
-                {docs.map((d) => (
-                  <li key={d.path}>
-                    <button
-                      className="row"
-                      data-feature={d.feature}
-                      onClick={() => {
-                        loadBranchDoc(d)
-                        onClose()
-                      }}
-                      title={d.path}
-                    >
-                      <b>{d.title || d.feature}</b>
-                      <span className="muted">
-                        {d.module}/{d.feature}
-                        {d.role && ` · rol ${d.role}`}
-                      </span>
-                    </button>
-                  </li>
-                ))}
+              <ul className="cat-tree">
+                {tree.map((node) => {
+                  const modKey = node.module
+                  const modOpen = !collapsed.has(modKey)
+                  return (
+                    <li key={modKey} className="cat-module">
+                      <div className="cat-node">
+                        <button
+                          className="cat-toggle"
+                          aria-expanded={modOpen}
+                          onClick={() => toggle(modKey)}
+                        >
+                          <span className="cat-chevron">{modOpen ? '▾' : '▸'}</span>
+                          <span className="cat-name">{titleCase(node.module)}</span>
+                          <span className="cat-count">
+                            {node.directDocs.length + node.subs.reduce((n, s) => n + s.docs.length, 0)}
+                          </span>
+                        </button>
+                        <button
+                          className="cat-add"
+                          title={`Grabar un proceso nuevo en «${node.module}»`}
+                          onClick={() => {
+                            pickCategory(node.module, '')
+                            onClose()
+                          }}
+                        >
+                          ＋ proceso
+                        </button>
+                      </div>
+                      {modOpen && (
+                        <>
+                          {node.directDocs.length > 0 && (
+                            <ul className="cat-docs">{node.directDocs.map(docButton)}</ul>
+                          )}
+                          {node.subs.map((sub) => {
+                            const subKey = `${node.module}\0${sub.name}`
+                            const subOpen = !collapsed.has(subKey)
+                            return (
+                              <ul key={subKey} className="cat-subwrap">
+                                <li className="cat-sub">
+                                  <div className="cat-node">
+                                    <button
+                                      className="cat-toggle"
+                                      aria-expanded={subOpen}
+                                      onClick={() => toggle(subKey)}
+                                    >
+                                      <span className="cat-chevron">{subOpen ? '▾' : '▸'}</span>
+                                      <span className="cat-name">{titleCase(sub.name)}</span>
+                                      <span className="cat-count">{sub.docs.length}</span>
+                                    </button>
+                                    <button
+                                      className="cat-add"
+                                      title={`Grabar un proceso nuevo en «${node.module} / ${sub.name}»`}
+                                      onClick={() => {
+                                        pickCategory(node.module, sub.name)
+                                        onClose()
+                                      }}
+                                    >
+                                      ＋ proceso
+                                    </button>
+                                  </div>
+                                  {subOpen && <ul className="cat-docs">{sub.docs.map(docButton)}</ul>}
+                                </li>
+                              </ul>
+                            )
+                          })}
+                        </>
+                      )}
+                    </li>
+                  )
+                })}
               </ul>
             </>
           )}

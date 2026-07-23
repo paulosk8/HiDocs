@@ -6,6 +6,15 @@
  * envía. Duplicar la lógica dejaría que divergieran.
  */
 
+/** `crear-matricula` o `Crear matricula` → `Crear Matricula`. Etiqueta legible. */
+export function titleCase(text: string): string {
+  return text
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
 /** kebab-case sin acentos ni caracteres de ruta. */
 export function slug(value: string): string {
   const normalized = value

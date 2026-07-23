@@ -1,10 +1,11 @@
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { shotUrl, type RecordedStep } from '../../../shared/ipc-contract'
 import { useSession } from '../store'
 import { useAiDraft } from '../useAiDraft'
 import { useGroupCapture } from '../useGroupCapture'
+import { NoteEditor } from './NoteEditor'
 
 const STRATEGY_LABEL: Record<string, string> = {
   testid: 'test-id',
@@ -41,6 +42,9 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
   const titleRef = useRef<HTMLInputElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const descRef = useRef<HTMLTextAreaElement>(null)
+  // La nota se abre sola si el paso ya la trae (borrador restaurado), y a
+  // petición con el botón; así no estorba en los pasos sin nota.
+  const [noteOpen, setNoteOpen] = useState(!!step.note?.body.trim())
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: step.id
@@ -101,6 +105,15 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
           onClick={() => void draft([step.id])}
         >
           {aiBusy ? '⋯' : '✨'}
+        </button>
+        <button
+          className={`icon-btn note-btn${step.note?.body.trim() ? ' has-note' : ''}`}
+          title="Añadir una nota destacada (admonition de Docusaurus)"
+          aria-label={`Nota del paso ${step.order}`}
+          aria-pressed={noteOpen}
+          onClick={() => setNoteOpen((v) => !v)}
+        >
+          📝
         </button>
         <button
           className="icon-btn danger"
@@ -168,6 +181,15 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
             valor: <code>{step.value}</code>
           </div>
         )
+      )}
+
+      {noteOpen && (
+        <div className="step-note">
+          <NoteEditor
+            value={step.note}
+            onChange={(note) => updateStep(step.id, { note })}
+          />
+        </div>
       )}
 
       <div className="step-foot">

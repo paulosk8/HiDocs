@@ -16,6 +16,7 @@ const SECTIONS = [
   { id: 'barra', label: 'Barra superior' },
   { id: 'grabar', label: 'Grabar pasos' },
   { id: 'pasos', label: 'Panel de pasos' },
+  { id: 'notas', label: 'Notas destacadas' },
   { id: 'estado', label: 'Estado del proyecto' },
   { id: 'rama', label: 'Rama de trabajo' },
   { id: 'git', label: 'Integración con Git' },
@@ -147,7 +148,14 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <ul className="help-defs">
                 <li>
                   <b>Módulo</b> · agrupa funcionalidades (p. ej. <code>matriculas</code>). Define la
-                  carpeta y el ámbito del commit.
+                  carpeta y el ámbito del commit; es la categoría del sidebar de Docusaurus.
+                </li>
+                <li>
+                  <b>Subcategoría</b> (opcional) · un nivel intermedio entre módulo y funcionalidad
+                  (p. ej. <code>administracion</code> → <code>institucion</code> →{' '}
+                  <code>registrar-institucion</code>). Déjala vacía para la estructura de dos
+                  niveles de siempre; al elegir la rama puedes verlas en árbol y colocar ahí el
+                  nuevo proceso (ver <a onClick={() => go('rama')}>Rama de trabajo</a>).
                 </li>
                 <li>
                   <b>Funcionalidad</b> · el flujo concreto (p. ej. <code>crear-matricula</code>).
@@ -297,6 +305,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <a onClick={() => go('ia')}>Redactar con IA</a>).
                 </li>
                 <li>
+                  <b>📝</b> · añade una <b>nota destacada</b> al paso (ver{' '}
+                  <a onClick={() => go('notas')}>Notas destacadas</a>).
+                </li>
+                <li>
                   <b>Selector</b> · la estrategia detectada (test-id, rol, texto…) para reproducir
                   el paso más adelante.
                 </li>
@@ -335,6 +347,38 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>
                 El panel se puede <b>colapsar</b> (ver{' '}
                 <a onClick={() => go('interfaz')}>Panel y tema</a>) para dar todo el ancho al visor.
+              </p>
+            </section>
+
+            <section id="notas" data-help-section>
+              <h3>Notas destacadas</h3>
+              <p>
+                El botón <b>📝</b> de cada paso abre un recuadro para <b>recalcar algo importante</b>
+                {' '}de ese paso o del grupo. Se publica como un <b>admonition de Docusaurus</b>, el
+                mismo bloque coloreado con icono que ves en la documentación.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Tipo</b> · elige entre <b>Nota</b>, <b>Consejo</b>, <b>Info</b>, <b>Aviso</b> y{' '}
+                  <b>Peligro</b>; cada uno tiene su color e icono (<code>:::note</code>,{' '}
+                  <code>:::tip</code>, <code>:::info</code>, <code>:::warning</code>,{' '}
+                  <code>:::danger</code>).
+                </li>
+                <li>
+                  <b>Título</b> · opcional; si lo dejas vacío, Docusaurus usa el del tipo.
+                </li>
+                <li>
+                  <b>Barra de formato</b> · aplica <b>negrita</b>, <i>cursiva</i>,{' '}
+                  <mark>resaltado</mark>, <code>código</code>, enlaces, listas y emojis sobre lo que
+                  selecciones, igual que los <i>Markdown Features</i> de Docusaurus.
+                </li>
+                <li>
+                  <b>Vista previa</b> · muestra en vivo cómo quedará el recuadro.
+                </li>
+              </ul>
+              <p>
+                La nota aparece en el manual entre la descripción del paso y su captura. Si vacías su
+                contenido, deja de publicarse.
               </p>
             </section>
 
@@ -436,18 +480,22 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <pre className="help-tree">
                 {`<carpeta-de-salida>/   (idealmente la carpeta docs/ de Docusaurus)
 └── <módulo>/
-    ├── _category_.json    (etiqueta del módulo en la barra lateral)
-    └── <funcionalidad>/
-        ├── index.mdx      (la página del manual que Docusaurus muestra)
-        ├── session.json   (la sesión completa)
-        ├── flow.json      (acciones + selectores)
-        └── img/paso-01.png …`}
+    ├── _category_.json        (etiqueta del módulo en la barra lateral)
+    └── [<subcategoría>/]       (opcional; con su propio _category_.json)
+        └── <funcionalidad>/
+            ├── index.mdx      (la página del manual que Docusaurus muestra)
+            ├── session.json   (la sesión completa)
+            ├── flow.json      (acciones + selectores)
+            └── img/paso-01.png …`}
               </pre>
               <p>
                 La página <b>index.mdx</b> es el manual ya listo para Docusaurus: título, un
                 apartado numerado por paso (que alimenta el índice lateral) y su captura. Los pasos
-                sin «incluir en docs» se omiten. Los <code>.json</code> conviven sin estorbar:
-                Docusaurus solo renderiza <code>.md</code> / <code>.mdx</code>.
+                sin «incluir en docs» se omiten; las <a onClick={() => go('notas')}>notas</a> se
+                publican como admonitions. Si usas <b>subcategoría</b>, se añade un nivel de carpeta
+                con su propio <code>_category_.json</code>, y Docusaurus anida el sidebar solo. Los{' '}
+                <code>.json</code> conviven sin estorbar: Docusaurus solo renderiza <code>.md</code>{' '}
+                / <code>.mdx</code>.
               </p>
               <p>
                 Flujo completo: el repositorio de documentación <b>ya existe</b> y lo mantiene otra

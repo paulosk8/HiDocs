@@ -102,6 +102,7 @@ Guardar TODOS los candidatos en el paso; el primero es el preferido. Esto permit
 interface DocSession {
   id: string // uuid
   module: string // "matriculas"
+  subcategory?: string // opcional: nivel intermedio del sidebar ("institucion")
   feature: string // "crear-matricula"
   title: string // "Crear una matrícula"
   role: string // rol del usuario que ejecuta el flujo
@@ -121,6 +122,11 @@ interface DocStep {
   value?: string // para fill/select ("***" si es password)
   fields?: { label: string; value: string }[] // formulario agrupado (§3): campos de varios fill/select unidos
   mergedActions?: FlowAction[] // acciones individuales del paso agrupado, para que el runner lo reproduzca (§12)
+  note?: { // nota destacada → admonition de Docusaurus (§10)
+    type: 'note' | 'tip' | 'info' | 'warning' | 'danger'
+    title?: string
+    body: string // Markdown/MDX
+  }
   url: string // metadato
   screenshot: string // ruta relativa: img/paso-03.png
   boundingRect: { x: number; y: number; width: number; height: number }
@@ -237,14 +243,15 @@ interface ProjectEntry {
 <carpeta-elegida>/          # idealmente la carpeta docs/ del proyecto Docusaurus
 └── <module>/
     ├── _category_.json      # etiqueta del módulo en la barra lateral (solo si falta)
-    └── <feature>/
-        ├── index.mdx        # página del manual que renderiza Docusaurus (§10)
-        ├── session.json     # DocSession completa
-        ├── flow.json        # solo acciones + selectores (insumo del runner futuro)
-        └── img/
-            ├── paso-01.png
-            ├── paso-02.png
-            └── ...
+    └── [<subcategory>/]     # opcional (§8): nivel intermedio, con su propio _category_.json
+        └── <feature>/
+            ├── index.mdx    # página del manual que renderiza Docusaurus (§10)
+            ├── session.json # DocSession completa
+            ├── flow.json    # solo acciones + selectores (insumo del runner futuro)
+            └── img/
+                ├── paso-01.png
+                ├── paso-02.png
+                └── ...
 ```
 
 Nomenclatura: kebab-case en carpetas, `paso-NN.png` con cero a la izquierda. Al reordenar pasos en la GUI, renombrar las imágenes al guardar para que el orden en disco siempre coincida. Los `.json` conviven con el `.mdx` sin estorbar: Docusaurus solo procesa `.md`/`.mdx` y `_category_.json`.
@@ -255,7 +262,11 @@ Nomenclatura: kebab-case en carpetas, `paso-NN.png` con cero a la izquierda. Al 
 
 Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 440px).
 
-**Barra superior de sesión:** campos módulo/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, botón "Proyectos…" (explorador de repositorios), "Regenerar…" (runner, §12), "IA" (ajustes de redacción, §14; muestra ✓ cuando hay clave), interruptor de tema y ayuda, e indicador de estado (Listo / Grabando / Pausado).
+**Barra superior de sesión:** campos módulo/**subcategoría (opcional)**/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, botón "Proyectos…" (explorador de repositorios), "Regenerar…" (runner, §12), "IA" (ajustes de redacción, §14; muestra ✓ cuando hay clave), interruptor de tema y ayuda, e indicador de estado (Listo / Grabando / Pausado).
+
+**Subcategoría (opcional):** un nivel intermedio entre módulo y funcionalidad, para reproducir la anidación del sidebar de Docusaurus (p. ej. `administracion` → `institucion` → `registrar-institucion`). Vacía ⇒ estructura de dos niveles de siempre (retrocompatible). No es obligatoria para guardar. Al **elegir la rama de trabajo**, el selector muestra en **árbol** las categorías y subcategorías ya documentadas en ella (leídas del git, `git:branch-docs`); pulsar «＋ proceso» en una categoría/subcategoría deja la barra lista para grabar un proceso nuevo ahí (`pickCategory`), y pulsar un proceso lo retoma con sus metadatos.
+
+**Notas destacadas por paso:** cada tarjeta de paso tiene un botón 📝 que despliega el `NoteEditor` (§10): tipo de admonition (nota/consejo/info/aviso/peligro), título opcional, barra que aplica los *Markdown Features* (negrita, cursiva, resaltado `<mark>`, código, enlaces, listas, emojis) sobre la selección y **vista previa en vivo** con el aspecto real del recuadro. La nota viaja con el paso (borrador incluido) y se publica en el MDX.
 
 **Controles:** ● Grabar, ⏸ Pausar, ■ Detener y guardar. Atajo global `Ctrl+Shift+R` para pausar/reanudar sin tocar el panel. En el encabezado del panel conviven además el interruptor **«agrupar campos»** (§3) y **«✨ Redactar todos»** (§14); el encabezado **envuelve** a propósito, porque si no los controles de grabación se salen del panel cuando es estrecho y ■ queda inalcanzable —y con él la única salida del flujo—.
 
@@ -353,7 +364,8 @@ Detalles que hacen que el build de Docusaurus no falle:
 
 - **Escape MDX**: el texto libre del usuario escapa `<`, `>`, `{`, `}` (Docusaurus v3 compila `.md`/`.mdx` con MDX; sin escape, un `<` rompería el build entero).
 - **Sin enlaces rotos**: solo se referencia la captura de un paso si el archivo se llegó a escribir; una imagen inexistente abortaría el build.
-- **`_category_.json`** por módulo para la etiqueta de la barra lateral, creado **solo si falta** (no se pisa la personalización del mantenedor).
+- **`_category_.json`** por nivel con carpeta propia (módulo y, si la hay, subcategoría) para la etiqueta de la barra lateral, creado **solo si falta** (no se pisa la personalización del mantenedor). Con subcategoría, el sidebar de Docusaurus anida solo (categoría → subcategoría → páginas).
+- **Notas destacadas**: la `note` de un paso se publica entre su descripción y su captura como un **admonition** de Docusaurus (`:::note`/`:::tip`/`:::info`/`:::warning`/`:::danger`), con su título opcional en `[...]`. A diferencia del texto libre, el cuerpo es MDX intencionado (negrita, `<mark>`, emojis…): solo se neutralizan las llaves `{`/`}` para no romper el build por descuido. Se redacta con un editor de barra + vista previa (`NoteEditor.tsx`), sin dependencias nuevas.
 
 La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o una subcarpeta suya). Verificado con un `docusaurus build` real sobre la salida generada: compila y renderiza el manual con sus pasos e imágenes.
 

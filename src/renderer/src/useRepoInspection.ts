@@ -54,6 +54,8 @@ export function useRepoInspection(): void {
         // de otra cosa (una rama de código del repositorio) y adoptarla a ciegas
         // llevaría el commit a un sitio que el usuario no ha pedido.
         if (cancelled || !docs.length) return
+        // Se registran para el autocompletado y el árbol, aunque no se adopte.
+        useSession.getState().setBranchDocs(docs)
         // Sin activar el registro en Git: heredar la rama es una comodidad, y
         // decidir que se comitea sigue siendo del usuario.
         useSession.getState().adoptBranch(info.branch, docs[0], false)

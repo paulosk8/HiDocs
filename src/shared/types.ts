@@ -45,6 +45,12 @@ export interface DocStep {
    * acción es `action` + `selectorCandidates` + `value`.
    */
   mergedActions?: FlowAction[]
+  /**
+   * Nota destacada del paso, publicada como «admonition» de Docusaurus
+   * (`:::note`, `:::tip`, …). Sirve para recalcar algo importante de este paso
+   * o del grupo. El cuerpo se redacta en Markdown/MDX; ausente si no hay nota.
+   */
+  note?: StepNote
   /** metadato: URL en el momento de la interacción */
   url: string
   /** ruta relativa dentro del paquete exportado: img/paso-03.png */
@@ -55,6 +61,21 @@ export interface DocStep {
   timestamp: string
 }
 
+/** Los cinco tipos de «admonition» que Docusaurus renderiza de serie. */
+export type AdmonitionType = 'note' | 'tip' | 'info' | 'warning' | 'danger'
+
+/**
+ * Nota destacada de un paso. Se publica como un bloque `:::<type>[<title>]` en
+ * el MDX; el cuerpo admite el diseño de Docusaurus (negrita, `<mark>`, emojis…).
+ */
+export interface StepNote {
+  type: AdmonitionType
+  /** título opcional del recuadro; si falta, Docusaurus usa el del tipo */
+  title?: string
+  /** cuerpo en Markdown/MDX */
+  body: string
+}
+
 export interface Viewport {
   width: number
   height: number
@@ -63,6 +84,8 @@ export interface Viewport {
 export interface DocSession {
   id: string
   module: string
+  /** subcategoría opcional entre módulo y funcionalidad; ausente = 2 niveles */
+  subcategory?: string
   feature: string
   title: string
   /** rol del usuario que ejecuta el flujo */
@@ -75,6 +98,8 @@ export interface DocSession {
 
 export interface SessionMeta {
   module: string
+  /** subcategoría opcional (nivel intermedio del sidebar de Docusaurus) */
+  subcategory: string
   feature: string
   title: string
   role: string
@@ -111,6 +136,7 @@ export interface FlowAction {
 export interface Flow {
   sessionId: string
   module: string
+  subcategory?: string
   feature: string
   baseUrl: string
   viewport: Viewport
@@ -176,6 +202,8 @@ export interface BranchDocInfo {
   /** ruta del session.json dentro del repo, p. ej. `administracion/pie/session.json` */
   path: string
   module: string
+  /** subcategoría con la que se documentó, o '' si no tiene */
+  subcategory: string
   feature: string
   title: string
   role: string

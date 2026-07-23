@@ -43,6 +43,12 @@ interface SessionState {
   gitBranchOverride: string | null
   gitMessageOverride: string | null
   /**
+   * Lo que ya documenta la rama de trabajo (leído de git). Alimenta el
+   * autocompletado de módulo/subcategoría en la barra superior y el árbol del
+   * selector de rama, para no crear categorías duplicadas por variantes de slug.
+   */
+  branchDocs: BranchDocInfo[]
+  /**
    * Rama desde la que nacerá la rama de documentación, elegida en el explorador.
    * `null` = usar la rama por defecto del repositorio, que es lo correcto salvo
    * que se quiera continuar una línea de documentación ya empezada.
@@ -136,6 +142,10 @@ interface SessionState {
   adoptBranch: (branch: string, doc?: BranchDocInfo | null, enableGit?: boolean) => void
   /** Carga los metadatos completos de una funcionalidad ya documentada. */
   loadBranchDoc: (doc: BranchDocInfo) => void
+  /** Prepara una grabación nueva dentro de una categoría/subcategoría existente. */
+  pickCategory: (module: string, subcategory: string) => void
+  /** Registra lo documentado en la rama de trabajo (para autocompletar y el árbol). */
+  setBranchDocs: (docs: BranchDocInfo[]) => void
   setBranchPickerOpen: (open: boolean) => void
   setProjectsOpen: (open: boolean) => void
   setHelpOpen: (open: boolean) => void
@@ -276,7 +286,7 @@ function renumber(steps: RecordedStep[]): RecordedStep[] {
 export const useSession = create<SessionState>((set) => ({
   sessionId: crypto.randomUUID(),
   createdAt: new Date().toISOString(),
-  meta: { module: '', feature: '', title: '', role: '', baseUrl: '' },
+  meta: { module: '', subcategory: '', feature: '', title: '', role: '', baseUrl: '' },
   viewport: DEFAULT_VIEWPORT,
   outputDir: '',
   status: 'idle',
@@ -290,6 +300,7 @@ export const useSession = create<SessionState>((set) => ({
   gitPush: false,
   gitBranchOverride: null,
   gitMessageOverride: null,
+  branchDocs: [],
   gitBaseBranch: null,
   branchPickerOpen: false,
   projectsOpen: false,
@@ -495,6 +506,7 @@ export const useSession = create<SessionState>((set) => ({
       const meta = { ...s.meta }
       if (doc) {
         if (!meta.module.trim()) meta.module = doc.module
+        if (!meta.subcategory.trim()) meta.subcategory = doc.subcategory
         if (!meta.role.trim()) meta.role = doc.role
         if (!meta.baseUrl.trim()) meta.baseUrl = doc.baseUrl
       }
@@ -515,6 +527,7 @@ export const useSession = create<SessionState>((set) => ({
       meta: {
         ...s.meta,
         module: doc.module,
+        subcategory: doc.subcategory,
         feature: doc.feature,
         title: doc.title,
         role: doc.role,
@@ -523,6 +536,17 @@ export const useSession = create<SessionState>((set) => ({
       // El mensaje sugerido se recalcula a partir de los metadatos nuevos.
       gitMessageOverride: null
     })),
+
+  // Colocar un proceso NUEVO en una categoría/subcategoría ya existente: se fijan
+  // módulo y subcategoría, pero se dejan vacíos funcionalidad y título para que el
+  // usuario los escriba. Es lo que dispara un nodo del árbol del selector de rama.
+  pickCategory: (module, subcategory) =>
+    set((s) => ({
+      meta: { ...s.meta, module, subcategory, feature: '', title: '' },
+      gitMessageOverride: null
+    })),
+
+  setBranchDocs: (branchDocs) => set({ branchDocs }),
 
   setBranchPickerOpen: (branchPickerOpen) => set({ branchPickerOpen }),
   setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
