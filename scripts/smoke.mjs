@@ -19,12 +19,72 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { inflateSync } from 'node:zlib'
 import electronPath from 'electron'
 import { chromium } from 'playwright-core'
 import { startFixtureServer } from './fixture/server.mjs'
 
 const PORT = 9333
 const root = process.cwd()
+
+/**
+ * Decodificador PNG mínimo (8 bits, sin entrelazar), que es lo que produce
+ * Playwright. Sirve para comprobar sobre los píxeles reales lo que ninguna
+ * aserción del DOM puede: que el elemento señalado se VE en la captura.
+ *
+ * Se hace en Node y no con un canvas del renderer porque las capturas se sirven
+ * por el protocolo `docshot://`, que es otro origen y contamina el canvas;
+ * abrirle CORS solo para una prueba sería peor.
+ */
+function decodePng(buf) {
+  let pos = 8
+  let width = 0
+  let height = 0
+  let channels = 0
+  const chunks = []
+  while (pos < buf.length) {
+    const len = buf.readUInt32BE(pos)
+    const type = buf.toString('ascii', pos + 4, pos + 8)
+    const data = buf.subarray(pos + 8, pos + 8 + len)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+      channels = data[9] === 6 ? 4 : data[9] === 2 ? 3 : 0
+      if (data[8] !== 8 || !channels || data[12] !== 0) throw new Error('PNG no soportado')
+    } else if (type === 'IDAT') chunks.push(data)
+    else if (type === 'IEND') break
+    pos += 12 + len
+  }
+  const raw = inflateSync(Buffer.concat(chunks))
+  const stride = width * channels
+  const out = Buffer.alloc(height * stride)
+  const zero = Buffer.alloc(stride)
+  let p = 0
+  for (let y = 0; y < height; y++) {
+    const filter = raw[p++]
+    const line = raw.subarray(p, p + stride)
+    p += stride
+    const prev = y ? out.subarray((y - 1) * stride, y * stride) : zero
+    const cur = out.subarray(y * stride, (y + 1) * stride)
+    for (let x = 0; x < stride; x++) {
+      const a = x >= channels ? cur[x - channels] : 0
+      const b = prev[x]
+      const c = x >= channels ? prev[x - channels] : 0
+      let v = line[x]
+      if (filter === 1) v += a
+      else if (filter === 2) v += b
+      else if (filter === 3) v += (a + b) >> 1
+      else if (filter === 4) {
+        const pa = Math.abs(b - c)
+        const pb = Math.abs(a - c)
+        const pc = Math.abs(a + b - 2 * c)
+        v += pa <= pb && pa <= pc ? a : pb <= pc ? b : c
+      }
+      cur[x] = v & 255
+    }
+  }
+  return { width, height, channels, data: out }
+}
 
 const checks = []
 function check(ok, label, detail = '') {
@@ -73,7 +133,10 @@ const userData = mkdtempSync(join(tmpdir(), 'docrecorder-userdata-'))
 const child = spawn(electronPath, ['.'], {
   cwd: root,
   stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, DOCRECORDER_USER_DATA: userData }
+  // `DOCRECORDER_AI_FAKE` sustituye la llamada al proveedor de IA por una
+  // respuesta determinista: la prueba recorre el circuito completo (ajustes →
+  // IPC → aplicar en el panel) sin depender de la red ni de una clave real.
+  env: { ...process.env, DOCRECORDER_USER_DATA: userData, DOCRECORDER_AI_FAKE: '1' }
 })
 child.stdout.on('data', (d) => process.stdout.write(`[main] ${d}`))
 child.stderr.on('data', (d) => {
@@ -381,7 +444,16 @@ try {
     `${finalDialog.title}: ${finalDialog.body}`
   )
   // Al guardar con éxito, el borrador se descarta (ya está en Git).
-  const draftAfter = await gui.evaluate(() => window.docrecorder.invoke('draft:load'))
+  // `draft:clear` viaja sin esperar a que termine, y el main atiende los canales
+  // en paralelo: leerlo una sola vez llegaría a veces antes del borrado.
+  const draftAfter = await gui.evaluate(async () => {
+    for (let i = 0; i < 40; i++) {
+      const d = await window.docrecorder.invoke('draft:load')
+      if (d === null) return null
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    return window.docrecorder.invoke('draft:load')
+  })
   check(draftAfter === null, 'Borrador: se descarta al guardar con éxito', String(draftAfter))
 
   const dir = join(outDir, 'matriculas', 'crear-matricula')
@@ -625,6 +697,130 @@ try {
     `${history.length} commit(s)`
   )
 
+  // La rama sabe lo que documenta: de aquí salen los metadatos con los que se
+  // retoma una rama sin volver a escribirlos.
+  const branchDocs = await gui.evaluate(
+    (root) =>
+      window.docrecorder.invoke('git:branch-docs', { repoRoot: root, branch: 'docs/matriculas' }),
+    outDir
+  )
+  check(
+    branchDocs[0]?.feature === 'editar-matricula' &&
+      branchDocs.some((d) => d.feature === 'crear-matricula'),
+    'Rama de trabajo: lista lo documentado en la rama, de lo más reciente a lo más antiguo',
+    branchDocs.map((d) => d.feature).join(', ')
+  )
+  check(
+    branchDocs[0]?.module === 'matriculas' && branchDocs[0]?.role === 'secretaria',
+    'Rama de trabajo: cada entrada trae módulo y rol para recuperarlos',
+    `${branchDocs[0]?.module} / ${branchDocs[0]?.role}`
+  )
+  const otherBranchDocs = await gui.evaluate(
+    (root) =>
+      window.docrecorder.invoke('git:branch-docs', {
+        repoRoot: root,
+        branch: 'docs/matriculas-anular-matricula'
+      }),
+    outDir
+  )
+  check(
+    otherBranchDocs.length === 1 && otherBranchDocs[0].feature === 'anular-matricula',
+    'Rama de trabajo: cada rama solo ve su propia documentación',
+    otherBranchDocs.map((d) => d.feature).join(', ')
+  )
+
+  // --- Subcategoría (3 niveles) + nota destacada por paso ---
+  const subSave = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'administracion',
+          subcategory: 'institucion',
+          feature: 'registrar-institucion',
+          title: 'Registrar una institución',
+          role: 'admin',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-subcat',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps: [
+          {
+            id: 's1',
+            order: 1,
+            action: 'click',
+            title: 'Abrir el formulario',
+            description: '',
+            selectorCandidates: [],
+            url: 'http://x',
+            boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+            includeInDocs: true,
+            timestamp: new Date().toISOString(),
+            note: {
+              type: 'tip',
+              title: 'Importante',
+              body: 'Revisa el **RUC** antes de <mark>guardar</mark> si saldo < 0.'
+            }
+          }
+        ],
+        git: {
+          enabled: true,
+          branch: 'docs/administracion',
+          message: 'docs(administracion): Registrar una institución',
+          push: false
+        }
+      }),
+    outDir
+  )
+  check(
+    !subSave.gitError &&
+      existsSync(join(outDir, 'administracion', 'institucion', 'registrar-institucion', 'index.mdx')),
+    'Subcategoría: la estructura es de tres niveles módulo/subcategoría/funcionalidad',
+    subSave.gitError ?? subSave.path
+  )
+  const subCommitted = g('show --stat --name-only --pretty=format: docs/administracion')
+    .split('\n')
+    .filter(Boolean)
+  check(
+    subCommitted.includes('administracion/_category_.json') &&
+      subCommitted.includes('administracion/institucion/_category_.json'),
+    'Subcategoría: se crea un _category_.json por cada nivel (módulo y subcategoría)',
+    subCommitted.filter((f) => f.endsWith('_category_.json')).join(' ')
+  )
+  const subMdx = g('show docs/administracion:administracion/institucion/registrar-institucion/index.mdx')
+  check(
+    /:::tip\[Importante\]/.test(subMdx) &&
+      subMdx.includes('<mark>guardar</mark>') &&
+      /^:::$/m.test(subMdx),
+    'Nota: el paso publica un admonition de Docusaurus con su formato',
+    subMdx.split('\n').find((l) => l.startsWith(':::')) ?? '(sin admonition)'
+  )
+  check(
+    subMdx.includes('saldo &lt; 0') && !/saldo < 0/.test(subMdx),
+    'Nota: un «<» suelto se escapa (no rompe el build) pero <mark> se conserva',
+    subMdx.split('\n').find((l) => l.includes('saldo')) ?? '(sin línea)'
+  )
+  check(
+    /\*\*Subcategoría:\*\* Institucion/.test(subMdx),
+    'Subcategoría: la página refleja la subcategoría en su metadato',
+    subMdx.split('\n').find((l) => l.includes('Subcategoría')) ?? '(sin línea)'
+  )
+  const subBranchDocs = await gui.evaluate(
+    (root) =>
+      window.docrecorder.invoke('git:branch-docs', {
+        repoRoot: root,
+        branch: 'docs/administracion'
+      }),
+    outDir
+  )
+  check(
+    subBranchDocs[0]?.subcategory === 'institucion' &&
+      subBranchDocs[0]?.feature === 'registrar-institucion',
+    'Rama de trabajo: branch-docs expone la subcategoría de cada proceso',
+    `${subBranchDocs[0]?.subcategory} / ${subBranchDocs[0]?.feature}`
+  )
+
   const registered = await gui.evaluate(() => window.docrecorder.invoke('projects:list'))
   check(
     registered.some((p) => p.root === g('rev-parse --show-toplevel')),
@@ -662,15 +858,145 @@ try {
     dataUri ? `${dataUri.slice(0, 24)}… (${dataUri.length} b)` : 'null'
   )
 
+  // --- Runner de regeneración: re-ejecutar el flujo y actualizar capturas ---
+  // El diálogo de resultado de la Etapa 6 sigue abierto y oculta el visor; el
+  // runner necesita el visor VISIBLE para capturar, así que se cierra primero.
+  await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
+
+  // --- Selector de rama de trabajo: retomar una rama sin reescribir la cabecera ---
+  // Se vacía la cabecera, que es como se llega otro día: la rama existe, pero los
+  // metadatos ya no están en pantalla.
+  await gui.fill('.topbar input[placeholder="matriculas"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', '')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', '')
+  await gui.fill('.topbar input[placeholder="secretaria"]', '')
+  await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', '')
+
+  await gui.click('.branch-chip')
+  await gui.waitForSelector('.branch-picker', { timeout: 5000 })
+  await gui.waitForSelector('.branch-list .row[data-branch="docs/matriculas"]', { timeout: 5000 })
+  await gui.click('.branch-list .row[data-branch="docs/matriculas"]')
+  await gui.waitForFunction(
+    () => document.querySelector('.branch-chip code')?.textContent === 'docs/matriculas',
+    null,
+    { timeout: 5000 }
+  )
+  const adopted = await gui.evaluate(() => ({
+    module: document.querySelector('.topbar input[placeholder="matriculas"]').value,
+    feature: document.querySelector('.topbar input[placeholder="crear-matricula"]').value,
+    title: document.querySelector('.topbar input[placeholder="Crear una matrícula"]').value,
+    role: document.querySelector('.topbar input[placeholder="secretaria"]').value,
+    baseUrl: document.querySelector('.topbar input[placeholder="https://sistema.ejemplo.com"]')
+      .value,
+    gitBranch: document.querySelector('.git-fields .field input')?.value
+  }))
+  check(
+    adopted.module === 'matriculas' && adopted.role === 'secretaria' && adopted.baseUrl === 'http://x',
+    'Rama de trabajo: elegir una rama recupera módulo, rol y URL base de lo ya documentado',
+    JSON.stringify(adopted)
+  )
+  check(
+    adopted.feature === '' && adopted.title === '',
+    'Rama de trabajo: funcionalidad y título quedan libres (se documenta una nueva)',
+    `${adopted.feature} / ${adopted.title}`
+  )
+  check(
+    adopted.gitBranch === 'docs/matriculas',
+    'Rama de trabajo: el campo Rama de la sección Git refleja la misma elección',
+    adopted.gitBranch
+  )
+
+  // Retomar una funcionalidad concreta sí carga sus cuatro campos: se va a
+  // ampliar o regrabar, y debe caer en su misma carpeta.
+  await gui.waitForSelector('.branch-docs .row[data-feature="crear-matricula"]', { timeout: 5000 })
+  await gui.click('.branch-docs .row[data-feature="crear-matricula"]')
+  await gui.waitForSelector('.branch-picker', { state: 'detached', timeout: 5000 })
+  const reloaded = await gui.evaluate(() => ({
+    feature: document.querySelector('.topbar input[placeholder="crear-matricula"]').value,
+    title: document.querySelector('.topbar input[placeholder="Crear una matrícula"]').value
+  }))
+  check(
+    reloaded.feature === 'crear-matricula' && reloaded.title === 'Crear una matrícula',
+    'Rama de trabajo: retomar una funcionalidad carga sus metadatos completos',
+    JSON.stringify(reloaded)
+  )
+  // Se escribe una funcionalidad con dos pasos: uno con selector válido (el botón
+  // del fixture) y otro con selector inexistente, para probar ok + fallo marcado.
+  // El visor sigue adjunto al fixture, así que el runner reutiliza esa sesión.
+  const regenDir = mkdtempSync(join(tmpdir(), 'regen-'))
+  const featureDir = join(regenDir, 'pruebas', 'regenerar')
+  mkdirSync(join(featureDir, 'img'), { recursive: true })
+  writeFileSync(
+    join(featureDir, 'session.json'),
+    JSON.stringify({
+      id: 'r1',
+      module: 'pruebas',
+      feature: 'regenerar',
+      title: 'Regenerar',
+      role: '',
+      baseUrl: fixture.url,
+      viewport: { width: 800, height: 600 },
+      createdAt: new Date().toISOString(),
+      steps: [
+        {
+          id: 'a',
+          order: 1,
+          action: 'click',
+          title: 'Abrir «Nueva matrícula»',
+          description: '',
+          selectorCandidates: [
+            { strategy: 'testid', value: '[data-testid="nueva-matricula"]', score: 100 }
+          ],
+          url: fixture.url,
+          screenshot: 'img/paso-01.png',
+          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
+          includeInDocs: true,
+          timestamp: 't'
+        },
+        {
+          id: 'b',
+          order: 2,
+          action: 'click',
+          title: 'Elemento que ya no existe',
+          description: '',
+          selectorCandidates: [{ strategy: 'css', value: '#no-existe-jamas', score: 10 }],
+          url: fixture.url,
+          screenshot: 'img/paso-02.png',
+          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
+          includeInDocs: true,
+          timestamp: 't'
+        }
+      ]
+    }),
+    'utf8'
+  )
+  const regen = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('runner:regenerate', dir),
+    featureDir
+  )
+  check(
+    !regen.error && regen.results.length === 2,
+    'Runner: re-ejecuta el flujo de la funcionalidad',
+    regen.error ?? `${regen.results.length} paso(s)`
+  )
+  check(
+    regen.results[0]?.status === 'ok' && existsSync(join(featureDir, 'img', 'paso-01.png')),
+    'Runner: regenera la captura del paso con selector válido'
+  )
+  check(
+    regen.results[1]?.status === 'failed',
+    'Runner: marca el paso cuyo elemento no se encuentra (no aborta)',
+    regen.results[1]?.detail
+  )
+  rmSync(regenDir, { recursive: true, force: true })
+
   // --- Renderizado del modal (lo que los checks IPC de arriba NO cubren) ---
   // Un fallo de React —JSX roto, onClick sin cablear, columnas colapsadas—
   // pasaría todos los checks anteriores y aun así dejaría la ventana inservible.
   // Aquí se maneja el DOM real, con esperas web-first en vez de tiempos fijos.
 
-  // El diálogo de guardado sigue abierto y su overlay taparía el clic; se cierra
-  // con «Cerrar» antes de tocar la barra superior.
-  await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
-  await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
+  // El diálogo de resultado ya se cerró antes del runner; se abre el explorador.
   await gui.getByRole('button', { name: 'Proyectos…', exact: true }).click()
   await gui.waitForSelector('.projects-modal', { timeout: 5000 })
   check(
@@ -763,8 +1089,8 @@ try {
   )
   const statusText = (await gui.locator('.project-status').textContent()).replace(/\s+/g, ' ')
   check(
-    /rama\s*main/.test(statusText) && /próxima grabación/.test(statusText),
-    'Estado: la franja resume repositorio, rama y base de la próxima grabación',
+    /rama de trabajo/.test(statusText) && /docs\/matriculas/.test(statusText),
+    'Estado: la franja resume repositorio y rama de trabajo',
     statusText
   )
 
@@ -792,6 +1118,24 @@ try {
   check(
     Math.abs((await slotWidth()) - widthOpen) < 4,
     'Panel colapsable: al expandir, el viewport vuelve a su ancho'
+  )
+
+  // Regresión: el encabezado del panel ha ido ganando controles (agrupar campos,
+  // redactar con IA…). Si no envuelve, los de grabación se salen por la derecha
+  // y «detener y guardar» queda inalcanzable, que es la única salida del flujo.
+  const controlsInside = await gui.evaluate(() => {
+    const panel = document.querySelector('.panel')?.getBoundingClientRect()
+    const ctrls = [...document.querySelectorAll('.panel-header .controls .ctrl')]
+    if (!panel || ctrls.length !== 3) return null
+    return ctrls.every((c) => {
+      const r = c.getBoundingClientRect()
+      return r.width > 0 && r.left >= panel.left - 1 && r.right <= panel.right + 1
+    })
+  })
+  check(
+    controlsInside === true,
+    'Panel: los tres controles de grabación caben dentro del panel',
+    String(controlsInside)
   )
 
   // --- Tema claro/oscuro ---
@@ -827,7 +1171,7 @@ try {
   )
   // Navegar a un tema debe moverlo al estado activo (scroll-spy + clic).
   await gui.getByRole('button', { name: 'Salida y Docusaurus' }).click()
-  await gui.waitForTimeout(800)
+  await gui.waitForTimeout(2000)
   const activeTopic = await gui.locator('.help-nav button.active').textContent()
   check(
     activeTopic === 'Salida y Docusaurus' && (await gui.locator('.help-tree').first().isVisible()),
@@ -837,6 +1181,80 @@ try {
   await gui.keyboard.press('Escape')
   await gui.waitForSelector('.help-modal', { state: 'detached', timeout: 3000 })
   check(true, 'Ayuda: se cierra con Escape')
+
+  // --- Retomar la rama al apuntar a un repositorio que quedó en ella ---
+  // Es el caso de volver al día siguiente: el clon está en su rama de
+  // documentación y la cabecera está vacía. Hace falta OTRO repositorio porque
+  // la herencia se hace una sola vez por repositorio y ya ocurrió con el primero.
+  const repo2 = mkdtempSync(join(tmpdir(), 'docrecorder-otro-'))
+  const g2 = (args) => execSync(`git ${args}`, { cwd: repo2, encoding: 'utf8' }).trim()
+  execSync('git init -q -b main', { cwd: repo2 })
+  g2('config user.email prueba@ejemplo.com')
+  g2('config user.name Prueba')
+  writeFileSync(join(repo2, 'README.md'), '# Documentación\n')
+  g2('add README.md')
+  g2('commit -q -m "chore: repositorio de documentación inicial"')
+  execSync('git checkout -q -b docs/tesoreria', { cwd: repo2 })
+  mkdirSync(join(repo2, 'tesoreria', 'cobrar-cuota'), { recursive: true })
+  writeFileSync(
+    join(repo2, 'tesoreria', 'cobrar-cuota', 'session.json'),
+    JSON.stringify({
+      id: 't1',
+      module: 'tesoreria',
+      feature: 'cobrar-cuota',
+      title: 'Cobrar una cuota',
+      role: 'cajera',
+      baseUrl: 'http://tesoreria.ejemplo',
+      viewport: { width: 800, height: 600 },
+      createdAt: new Date().toISOString(),
+      steps: []
+    })
+  )
+  g2('add tesoreria')
+  g2('commit -q -m "docs(tesoreria): Cobrar una cuota"')
+
+  await gui.fill('.topbar input[placeholder="matriculas"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', '')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', '')
+  await gui.fill('.topbar input[placeholder="secretaria"]', '')
+  await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', '')
+  await gui.fill('.topbar input[placeholder="Sin seleccionar"]', repo2)
+  await gui
+    .waitForFunction(
+      () => document.querySelector('.topbar input[placeholder="matriculas"]')?.value === 'tesoreria',
+      null,
+      { timeout: 15000 }
+    )
+    .catch(() => {})
+  const inherited = await gui.evaluate(() => ({
+    module: document.querySelector('.topbar input[placeholder="matriculas"]').value,
+    role: document.querySelector('.topbar input[placeholder="secretaria"]').value,
+    baseUrl: document.querySelector('.topbar input[placeholder="https://sistema.ejemplo.com"]')
+      .value,
+    branch: document.querySelector('.branch-chip code')?.textContent
+  }))
+  check(
+    inherited.module === 'tesoreria' &&
+      inherited.role === 'cajera' &&
+      inherited.baseUrl === 'http://tesoreria.ejemplo' &&
+      inherited.branch === 'docs/tesoreria',
+    'Rama de trabajo: al apuntar a un repositorio se hereda su rama y sus metadatos',
+    JSON.stringify(inherited)
+  )
+
+  // Se vuelve al repositorio de la prueba y se restaura la cabecera: lo que
+  // sigue asume ese repositorio y ese módulo.
+  await gui.fill('.topbar input[placeholder="Sin seleccionar"]', outDir)
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
+  await gui.fill('.topbar input[placeholder="secretaria"]', 'secretaria')
+  await gui.fill('.topbar input[placeholder="https://sistema.ejemplo.com"]', '')
+  // Se compara por nombre de carpeta: el repositorio informa su ruta REAL
+  // (`/private/var/...` en macOS), que no es literalmente la de `mkdtemp`.
+  await gui.waitForFunction(
+    (name) => document.querySelector('.status-repo')?.textContent === name,
+    outDir.split('/').pop(),
+    { timeout: 15000 }
+  )
 
   // --- Aviso: carpeta = raíz de un Docusaurus ---
   const dsRoot = mkdtempSync(join(tmpdir(), 'docusaurus-'))
@@ -916,6 +1334,485 @@ try {
       .join(' | ')
   )
 
+  // --- Redacción con IA ---
+  const aiInitial = await gui.evaluate(() => window.docrecorder.invoke('ai:status'))
+  check(
+    aiInitial.settings.provider === 'anthropic' &&
+      aiInitial.settings.models.anthropic === 'claude-opus-4-8' &&
+      aiInitial.settings.models.gemini === 'gemini-3.5-flash' &&
+      aiInitial.settings.useScreenshot === true &&
+      aiInitial.ready === false,
+    'IA: arranca con Claude por defecto, sin clave y sin estar lista',
+    JSON.stringify(aiInitial.settings)
+  )
+
+  // Sin clave no se llama a nadie: se explica qué falta en vez de reventar.
+  const aiNoKey = await gui.evaluate(() =>
+    window.docrecorder.invoke('ai:draft', {
+      meta: { module: 'm', feature: 'f', title: 't', role: 'r', baseUrl: 'http://x' },
+      outline: [{ order: 1, title: 'Clic en «Guardar»' }],
+      steps: [
+        { id: 's1', order: 1, action: 'click', title: 'Clic en «Guardar»', description: '', url: 'http://x' }
+      ]
+    })
+  )
+  check(
+    aiNoKey.drafts.length === 0 && /clave/i.test(aiNoKey.error ?? ''),
+    'IA: sin clave configurada avisa en vez de fallar',
+    aiNoKey.error
+  )
+
+  const FAKE_KEY = 'sk-ant-clave-de-prueba-12345'
+  const aiWithKey = await gui.evaluate(
+    (key) => window.docrecorder.invoke('ai:set-key', { provider: 'anthropic', key }),
+    FAKE_KEY
+  )
+  check(
+    aiWithKey.ready &&
+      aiWithKey.configured.anthropic &&
+      !JSON.stringify(aiWithKey).includes(FAKE_KEY),
+    'IA: la clave se guarda y nunca vuelve al renderer'
+  )
+
+  const settingsRaw = readFileSync(join(userData, 'settings.json'), 'utf8')
+  check(
+    aiWithKey.encrypted ? !settingsRaw.includes(FAKE_KEY) : settingsRaw.includes('raw:'),
+    'IA: la clave se guarda cifrada por el sistema operativo',
+    aiWithKey.encrypted ? 'cifrada' : 'este sistema no ofrece cifrado'
+  )
+
+  // Cada proveedor guarda su propia clave: cambiar a Gemini no hereda la de Claude.
+  const aiGemini = await gui.evaluate(() =>
+    window.docrecorder.invoke('ai:set-settings', { provider: 'gemini' })
+  )
+  check(
+    aiGemini.settings.provider === 'gemini' &&
+      aiGemini.ready === false &&
+      aiGemini.configured.anthropic === true,
+    'IA: cada proveedor tiene su propia clave (Gemini sigue sin configurar)'
+  )
+  const aiBack = await gui.evaluate(() =>
+    window.docrecorder.invoke('ai:set-settings', { provider: 'anthropic', useScreenshot: false })
+  )
+  check(
+    aiBack.ready && aiBack.settings.useScreenshot === false,
+    'IA: los ajustes (proveedor y envío de captura) se guardan'
+  )
+
+  // Los ajustes se abren desde la barra superior y releen el estado real: la
+  // clave se guardó por IPC, sin pasar por la GUI, y aun así debe reflejarse.
+  await gui.locator('.btn-ai-settings').click()
+  await gui.waitForSelector('.ai-modal', { timeout: 5000 })
+  await gui.waitForSelector('.ai-modal .ai-ok', { timeout: 5000 })
+  check(
+    (await gui.locator('.ai-modal .ai-ok').count()) > 0,
+    'IA: los ajustes releen el estado y muestran la clave como configurada'
+  )
+  await gui.keyboard.press('Escape')
+  await gui.waitForSelector('.ai-modal', { state: 'detached', timeout: 3000 })
+
+  // Circuito completo en la GUI: se graban dos pasos nuevos y se redactan.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('[data-testid="nueva-matricula"]')
+  await waitSteps(1, 'ia: clic')
+  // `select` emite su paso en cuanto cambia el valor; un `fill` suelto espera al
+  // blur, y aquí no hay un campo siguiente que lo provoque.
+  await target.selectOption('#curso', '2b')
+  await waitSteps(2, 'ia: select')
+  // Pausar evita que lleguen pasos nuevos mientras se comprueban los botones.
+  await gui.locator('.panel-header .controls .ctrl').nth(1).click()
+
+  const aiTitles = () =>
+    gui.locator('.step-card .step-title').evaluateAll((els) => els.map((e) => e.value))
+  const titlesBeforeOne = await aiTitles()
+  await gui.locator('.step-card').first().getByRole('button', { name: /Redactar el paso 1/ }).click()
+  await gui.waitForFunction(
+    () => document.querySelector('.step-card .step-title')?.value?.startsWith('Redactado: '),
+    null,
+    { timeout: 15000 }
+  )
+  const titlesAfterOne = await aiTitles()
+  const descAfterOne = await gui.locator('.step-card .step-desc').first().inputValue()
+  check(
+    titlesAfterOne[0] !== titlesBeforeOne[0] && descAfterOne.length > 0,
+    'IA: el botón ✨ de un paso rellena su título y su descripción',
+    `${titlesBeforeOne[0]} → ${titlesAfterOne[0]}`
+  )
+  check(
+    titlesAfterOne[1] === titlesBeforeOne[1],
+    'IA: redactar un paso no toca los demás',
+    titlesAfterOne[1]
+  )
+
+  // «Redactar todos» solo debe tocar los pasos que van al manual: pagar tokens
+  // por un paso excluido de la documentación no tendría sentido.
+  await gui.locator('.step-card').nth(1).locator('.include-toggle input').uncheck()
+  const titlesBeforeAll = await aiTitles()
+  await gui.getByRole('button', { name: /Redactar todos/ }).click()
+  await gui.waitForFunction(
+    (before) =>
+      document.querySelectorAll('.step-card .step-title')[0]?.value !== before[0],
+    titlesBeforeAll,
+    { timeout: 15000 }
+  )
+  const titlesAfterAll = await aiTitles()
+  check(
+    titlesAfterAll[0].startsWith('Redactado: ') && titlesAfterAll[1] === titlesBeforeAll[1],
+    'IA: «Redactar todos» omite los pasos excluidos de la documentación',
+    `incluido: ${titlesAfterAll[0]} | excluido: ${titlesAfterAll[1]}`
+  )
+
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+  // Estos pasos solo servían para probar la IA: se descartan para que el
+  // autoguardado no siga escribiendo el borrador durante el desmontaje.
+  await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
+
+  // --- Agrupar campos: la captura resalta TODOS los campos del grupo ---
+  // Un paso agrupado documenta varios campos a la vez. Si su captura marcase
+  // solo el último, el manual señalaría un campo y describiría cinco: por eso,
+  // al fundir, se pide al motor una captura nueva con todo el grupo resaltado.
+  if (!(await gui.locator('.group-toggle input').isChecked())) {
+    await gui.locator('.group-toggle input').check()
+  }
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeGroup = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  // Referencia: el mismo botón sin nada encima, para saber cuánto brillo tenía
+  // antes de que el modal lo oscureciera.
+  const shotBeforeModal = decodePng(await target.screenshot({ type: 'png' }))
+  await target.click('[data-testid="nueva-matricula"]')
+  await waitSteps(beforeGroup + 1, 'grupo: abrir el modal')
+
+  // --- Elemento tapado por el fondo de un modal ---
+  // Al pulsar un botón que abre un modal, la captura se toma cuando el modal ya
+  // está: su fondo translúcido oscurece justo el botón que el paso señala. Se le
+  // devuelve el brillo dentro del recuadro. Se comprueba sobre los píxeles del
+  // PNG, que es lo único que demuestra que se ve.
+  // El último paso es el clic que acaba de abrir el modal con fondo oscuro.
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      return !!img && img.complete && img.naturalWidth > 0
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const modalStepShot = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return cards[cards.length - 1]?.querySelector('.thumb img')?.src ?? null
+  })
+  const dimCheck = (() => {
+    // `docshot://shot/<ruta>` → ruta absoluta del PNG en disco.
+    const file = decodeURIComponent(new URL(modalStepShot).pathname.replace(/^\//, ''))
+    const shot = decodePng(readFileSync(file))
+
+    // El recuadro se localiza por su color (#FF5722): sin coordenadas fijas.
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -1
+    let maxY = -1
+    for (let y = 0; y < shot.height; y++) {
+      for (let x = 0; x < shot.width; x++) {
+        const i = (y * shot.width + x) * shot.channels
+        const d = shot.data
+        if (Math.abs(d[i] - 255) < 30 && Math.abs(d[i + 1] - 87) < 30 && Math.abs(d[i + 2] - 34) < 30) {
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+        }
+      }
+    }
+    if (maxX < 0) return { found: false }
+
+    const luminance = (png, x0, y0, x1, y1) => {
+      let sum = 0
+      let n = 0
+      for (let y = Math.max(0, y0); y < Math.min(png.height, y1); y++) {
+        for (let x = Math.max(0, x0); x < Math.min(png.width, x1); x++) {
+          const i = (y * png.width + x) * png.channels
+          sum += 0.299 * png.data[i] + 0.587 * png.data[i + 1] + 0.114 * png.data[i + 2]
+          n++
+        }
+      }
+      return n ? sum / n : 0
+    }
+
+    // Misma zona en las dos capturas: el botón antes del modal y después.
+    const box = [minX + 6, minY + 6, maxX - 5, maxY - 5]
+    return {
+      found: true,
+      before: luminance(shotBeforeModal, ...box),
+      after: luminance(shot, ...box)
+    }
+  })()
+
+  // Sin compensar, el fondo del modal (negro al 40 %) deja el botón en torno al
+  // 60 % de su brillo. Se exige que conserve al menos el 85 %: la diferencia
+  // entre verlo y no verlo.
+  check(
+    dimCheck.found && dimCheck.after > dimCheck.before * 0.85,
+    'Captura: el elemento señalado no queda apagado bajo el fondo del modal',
+    dimCheck.found
+      ? `brillo ${Math.round(dimCheck.before)} antes del modal → ${Math.round(dimCheck.after)} en la captura`
+      : 'no se encontró el recuadro'
+  )
+
+
+  await target.fill('#alumno', 'Ana Pérez')
+  await target.fill('#clave', 'secreto123')
+  await target.selectOption('#curso', '2b')
+
+  // Un interruptor estilizado: el <input> real está escondido y el widget
+  // reenvía el clic. Debe dar UN paso, no dos, y unirse al mismo formulario en
+  // vez de romperlo (era lo que pasaba al documentar el sistema real).
+  await target.click('.switch-text')
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const labels = [...(cards[cards.length - 1]?.querySelectorAll('.field-label') ?? [])]
+      return labels.some((l) => /Matrícula activa/.test(l.textContent ?? ''))
+    },
+    null,
+    { timeout: 20000 }
+  )
+  // Margen para que un segundo paso indebido llegase a aparecer.
+  await new Promise((r) => setTimeout(r, 1500))
+  check(
+    (await stepCount()) === beforeGroup + 2,
+    'Agrupar campos: un interruptor se une al formulario y no genera dos pasos',
+    `${beforeGroup} → ${await stepCount()}`
+  )
+
+  // Los tres campos y el interruptor deben quedar en UN paso.
+  const groupedFields = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return [...(cards[cards.length - 1]?.querySelectorAll('.field-label') ?? [])].map((l) =>
+      l.textContent.replace(/:$/, '')
+    )
+  })
+  check(
+    groupedFields.length === 4 && groupedFields.includes('Matrícula activa'),
+    'Agrupar campos: los tres campos y el interruptor se funden en un solo paso',
+    groupedFields.join(' · ')
+  )
+
+  // La captura del grupo la genera el motor aparte (`group-*.png`); mientras no
+  // llega se conserva la del último campo, así que se espera a que la sustituya.
+  // Se espera también a que la miniatura esté decodificada: cambiar el `src` es
+  // inmediato, pero el PNG nuevo tarda un instante en cargarse.
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      if (!img || !decodeURIComponent(img.src).includes('group-')) return false
+      return img.complete && img.naturalWidth > 0
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const groupShotOk = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    const img = cards[cards.length - 1]?.querySelector('.thumb img')
+    return { src: decodeURIComponent(img?.src ?? ''), loaded: !!img?.complete && img.naturalWidth > 0 }
+  })
+  check(
+    /group-.*\.png/.test(groupShotOk.src) && groupShotOk.loaded,
+    'Agrupar campos: la captura se rehace marcando todo el grupo',
+    groupShotOk.src.split('/').pop()
+  )
+
+  // Pulsar ■ sin los metadatos rellenos debe DETENER igualmente y explicar qué
+  // falta. Antes solo avisaba y la grabación seguía viva: el botón parecía no
+  // responder y no había forma de terminar sin completar la barra superior.
+  // Se llega aquí grabando (viene de la etapa anterior), que es justo el caso.
+  const moduleInput = gui.locator('.topbar input[placeholder="matriculas"]')
+  const savedModule = await moduleInput.inputValue()
+  await moduleInput.fill('')
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 5000 })
+  const stopWarning = await gui.locator('.dialog p').textContent()
+  const statusAfterStop = await gui.locator('.status').textContent()
+  await gui.getByRole('button', { name: 'Entendido' }).click()
+  check(
+    /falta indicar/i.test(stopWarning ?? '') &&
+      /módulo/.test(stopWarning ?? '') &&
+      statusAfterStop.includes('Listo'),
+    'Detener: sin metadatos se detiene igualmente y avisa de lo que falta',
+    `estado: ${statusAfterStop?.trim()}`
+  )
+  await moduleInput.fill(savedModule)
+
+  // Quitar un campo del grupo debe llevarse también su acción del `flow.json`:
+  // si no, el runner reproduciría un campo que el manual ya no documenta.
+  const groupedCard = gui.locator('.step-card').last()
+  const removedLabel = await groupedCard.locator('.field-list li .field-label').first().textContent()
+  await groupedCard.locator('.field-list li .field-remove').first().click({ force: true })
+  await gui.waitForFunction(
+    (expected) => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      return (cards[cards.length - 1]?.querySelectorAll('.field-list li').length ?? 0) === expected
+    },
+    groupedFields.length - 1,
+    { timeout: 5000 }
+  )
+  const remaining = await groupedCard
+    .locator('.field-list li .field-label')
+    .evaluateAll((els) => els.map((e) => e.textContent))
+  check(
+    remaining.length === groupedFields.length - 1 && !remaining.includes(removedLabel),
+    'Agrupar campos: se puede quitar un campo suelto del grupo',
+    `quitado ${removedLabel} · quedan ${remaining.join(' ')}`
+  )
+
+  // --- Tabla: los controles de filas distintas no se funden en un paso ---
+  // Marcar la casilla de dos registros son dos acciones, no un formulario que se
+  // rellena. Antes se fundían en un solo paso «Rellenar el formulario» que
+  // mezclaba filas y no describía ninguna.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  if (!(await gui.locator('.group-toggle input').isChecked())) {
+    await gui.locator('.group-toggle input').check()
+  }
+  const beforeTable = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#sel-andy')
+  await waitSteps(beforeTable + 1, 'tabla: primera fila')
+  await target.click('#sel-paulo')
+  await waitSteps(beforeTable + 2, 'tabla: segunda fila')
+  const tableSteps = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card')].slice(-2).map((card) => ({
+      title: card.querySelector('.step-title')?.value,
+      fields: card.querySelectorAll('.field-list li').length
+    }))
+  )
+  check(
+    (await stepCount()) === beforeTable + 2 && tableSteps.every((s) => s.fields === 0),
+    'Tabla: marcar dos filas produce dos pasos, no un formulario agrupado',
+    JSON.stringify(tableSteps)
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // --- Menú que se abre en `pointerdown` y se desvanece al elegir ---
+  // Dos fallos del mismo widget, el más común de las interfaces actuales:
+  //  1. El botón que lo abre no recibía `click` (la capa de descarte se traga el
+  //     `pointerup`), así que pulsarlo no generaba paso —o generaba uno inútil
+  //     sobre `<body>`—.
+  //  2. Al elegir una opción, el menú se desvanece antes de desmontarse: la
+  //     captura definitiva lo pillaba medio borrado.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeMenu = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#ver')
+  await waitSteps(beforeMenu + 1, 'menú: abrir')
+  const menuOpenTitle = await gui.evaluate(
+    () => [...document.querySelectorAll('.step-title')].pop()?.value
+  )
+  check(
+    menuOpenTitle === 'Clic en «Ver»',
+    'Menú: un botón que abre su menú en pointerdown genera su paso',
+    menuOpenTitle
+  )
+
+  await target.click('#ver-editar')
+  await waitSteps(beforeMenu + 2, 'menú: elegir opción')
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      return !!img && img.complete && img.naturalWidth > 0
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const menuShot = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return cards[cards.length - 1]?.querySelector('.thumb img')?.src ?? null
+  })
+  const menuPng = decodePng(
+    readFileSync(decodeURIComponent(new URL(menuShot).pathname.replace(/^\//, '')))
+  )
+  // El menú es un azul saturado y opaco; al desvanecerse sobre el fondo blanco
+  // se aclara hasta dejar de serlo. Se cuenta «azul saturado» en vez de un color
+  // exacto porque la captura pasa por la gestión de color de la pantalla y los
+  // valores no salen literales (medido: #00A2FF llega como 72,160,248).
+  let menuPixels = 0
+  for (let i = 0; i < menuPng.data.length; i += menuPng.channels) {
+    const d = menuPng.data
+    if (d[i] < 140 && d[i + 1] > 110 && d[i + 1] < 210 && d[i + 2] > 200) menuPixels++
+  }
+  // Medido: ~50 000 con el menú legible, ~350 (solo bordes) con el menú
+  // desvanecido, que es lo que se capturaba antes.
+  check(
+    menuPixels > 10000,
+    'Menú: al elegir una opción, el paso conserva la captura con el menú legible',
+    `${menuPixels} píxeles del menú`
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // --- Clic que navega al instante («cerrar sesión») ---
+  // La captura se toma tras esperar estabilidad, así que para entonces la página
+  // ya es otra y el elemento no existe: el paso ilustraba la pantalla siguiente
+  // y sin recuadro. Debe quedarse con la captura previa al clic, que sí lo
+  // muestra. Se comprueba que la imagen contiene el recuadro (#FF5722).
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeLogout = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#logout')
+  await waitSteps(beforeLogout + 1, 'cerrar sesión')
+  await gui.waitForFunction(
+    () => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      const img = cards[cards.length - 1]?.querySelector('.thumb img')
+      return !!img && img.complete && img.naturalWidth > 0
+    },
+    null,
+    { timeout: 20000 }
+  )
+  const logoutShot = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    return cards[cards.length - 1]?.querySelector('.thumb img')?.src ?? null
+  })
+  const logoutPng = decodePng(
+    readFileSync(decodeURIComponent(new URL(logoutShot).pathname.replace(/^\//, '')))
+  )
+  let highlightPixels = 0
+  for (let i = 0; i < logoutPng.data.length; i += logoutPng.channels) {
+    const d = logoutPng.data
+    if (Math.abs(d[i] - 255) < 30 && Math.abs(d[i + 1] - 87) < 30 && Math.abs(d[i + 2] - 34) < 30) {
+      highlightPixels++
+    }
+  }
+  check(
+    highlightPixels > 200,
+    'Captura: un clic que navega al instante conserva el elemento señalado',
+    `${highlightPixels} píxeles de resaltado`
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
+
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
   await gui.evaluate(() => localStorage.removeItem('docrecorder.groupFormFields')).catch(() => {})
 
@@ -929,6 +1826,13 @@ try {
   await browser?.close().catch(() => {})
   fixture.close()
   child.kill('SIGTERM')
-  rmSync(userData, { recursive: true, force: true })
+  // Limpieza de un directorio temporal: si la app aún estaba escribiendo su
+  // borrador al recibir la señal, el borrado puede fallar. Es ruido de
+  // desmontaje y no debe enmascarar el resultado de las comprobaciones.
+  try {
+    rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+  } catch (err) {
+    console.log(`(no se pudo borrar el userData temporal: ${err.code ?? err.message})`)
+  }
   setTimeout(() => process.exit(process.exitCode ?? 0), 600)
 }

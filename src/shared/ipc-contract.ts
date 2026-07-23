@@ -7,6 +7,11 @@
  */
 
 import type {
+  AiDraftResult,
+  AiProvider,
+  AiSettings,
+  AiStatus,
+  BranchDocInfo,
   CommitDocs,
   DocStep,
   EngineState,
@@ -14,9 +19,13 @@ import type {
   GitCommitInfo,
   GitRepoInfo,
   GitSaveOptions,
+  FlowAction,
   ProjectEntry,
+  RegenReport,
+  RegenStepResult,
   SaveResult,
   SessionMeta,
+  StepAction,
   Viewport
 } from './types'
 
@@ -35,6 +44,41 @@ export interface RecordedStep extends DocStep {
    * persiste.
    */
   isFormField?: boolean
+  /**
+   * Referencia al elemento dentro del observador, para poder volver a marcarlo
+   * al re-capturar un paso de formulario agrupado. No se persiste: solo vale
+   * mientras la página siga cargada.
+   */
+  ref?: number
+  /**
+   * Fila de tabla que contiene al elemento, o `null` si no está en ninguna.
+   * Solo se usa en la GUI para agrupar: los controles de dos filas distintas
+   * son dos registros, no un formulario, y no deben fundirse en un paso. No se
+   * persiste.
+   */
+  rowRef?: number | null
+  /**
+   * Campos fundidos en este paso, en orden. Es la fuente de verdad del grupo en
+   * la GUI: de aquí se derivan `fields` (lo que se publica) y `mergedActions`
+   * (lo que reproduce el runner), y es lo que permite quitar un campo suelto sin
+   * dejar descuadrada su acción ni su resaltado.
+   */
+  groupItems?: GroupedField[]
+}
+
+/** Un campo dentro de un paso de formulario agrupado. */
+export interface GroupedField {
+  /** nombre del campo, tal como se lista en el manual */
+  label: string
+  /** valor introducido; vacío si solo se enfocó */
+  value: string
+  /**
+   * Acciones que lo produjeron (enfocar y escribir son dos), para que el runner
+   * reproduzca el paso igual que ocurrió.
+   */
+  actions: FlowAction[]
+  /** referencias a su elemento en el observador, para volver a resaltarlo */
+  refs: number[]
 }
 
 /**
@@ -77,6 +121,39 @@ export interface SavePayload {
   git?: GitSaveOptions
 }
 
+/**
+ * Un paso tal como se le describe a la IA. Es un subconjunto deliberado de
+ * `RecordedStep`: los selectores y los rectángulos no ayudan a redactar y solo
+ * gastarían tokens.
+ */
+export interface AiStepInput {
+  id: string
+  order: number
+  action: StepAction
+  /** título actual (el que generó el motor, o el que ya editó el usuario) */
+  title: string
+  description: string
+  value?: string
+  fields?: Array<{ label: string; value: string }>
+  url: string
+  /**
+   * Ruta absoluta de la captura. La lee el proceso principal, no el renderer, y
+   * solo si la configuración pide enviarla.
+   */
+  screenshot?: string
+}
+
+export interface AiDraftRequest {
+  meta: SessionMeta
+  /**
+   * Título de TODOS los pasos de la sesión, en orden. Da a la IA el hilo del
+   * flujo completo aunque solo se le pida redactar unos pocos.
+   */
+  outline: Array<{ order: number; title: string }>
+  /** pasos que hay que redactar */
+  steps: AiStepInput[]
+}
+
 /** Canales renderer → main con respuesta (ipcRenderer.invoke). */
 export interface IpcInvokeMap {
   'viewport:navigate': (url: string) => EngineState
@@ -90,15 +167,27 @@ export interface IpcInvokeMap {
   'recorder:pause': () => EngineState
   'recorder:resume': () => EngineState
   'recorder:stop': () => EngineState
+  /**
+   * Re-captura un paso de formulario agrupado marcando todos sus campos.
+   * Devuelve la ruta del PNG nuevo, o `null` si ya no se pudo marcar ninguno.
+   */
+  'recorder:capture-group': (args: { refs: number[] }) => string | null
   'dialog:pick-output-dir': () => string | null
   'session:save': (payload: SavePayload) => SaveResult
   'shell:open-path': (path: string) => void
+  /** abre una URL en el navegador del sistema (solo http/https) */
+  'shell:open-external': (url: string) => void
   /** inspecciona el repositorio que contenga la carpeta de salida, si lo hay */
   'git:inspect': (outputDir: string) => GitRepoInfo | null
   /** ramas locales del repositorio, para el explorador (solo lectura) */
   'git:branches': (repoRoot: string) => GitBranchInfo[]
   /** historial de una rama, del commit más reciente hacia atrás (solo lectura) */
   'git:commits': (args: { repoRoot: string; branch: string }) => GitCommitInfo[]
+  /**
+   * Funcionalidades ya documentadas en una rama, de la más reciente a la más
+   * antigua. Con ellas se retoma una rama sin reescribir módulo, rol ni URL base.
+   */
+  'git:branch-docs': (args: { repoRoot: string; branch: string }) => BranchDocInfo[]
   /** documentación registrada en un commit, para previsualizar (solo lectura) */
   'git:commit-docs': (args: { repoRoot: string; commit: string }) => CommitDocs[]
   /** una captura commiteada como data URI, para la vista previa (solo lectura) */
@@ -118,6 +207,19 @@ export interface IpcInvokeMap {
   'draft:load': () => DraftPayload | null
   /** descarta el borrador (al finalizar o al desecharlo) */
   'draft:clear': () => void
+  /**
+   * Regenera las capturas de una funcionalidad re-ejecutando su flujo en el visor
+   * autenticado. Sin `featureDir`, pide la carpeta con un selector; con él, la usa
+   * directamente. El progreso llega por el evento `runner:progress`.
+   */
+  'runner:regenerate': (featureDir?: string) => RegenReport
+  /** configuración de IA y si cada proveedor tiene clave (nunca la clave en sí) */
+  'ai:status': () => AiStatus
+  /** guarda o borra (cadena vacía) la clave de un proveedor */
+  'ai:set-key': (args: { provider: AiProvider; key: string }) => AiStatus
+  'ai:set-settings': (patch: Partial<AiSettings>) => AiStatus
+  /** redacta título y descripción de los pasos pedidos; progreso por `ai:progress` */
+  'ai:draft': (request: AiDraftRequest) => AiDraftResult
 }
 
 /** Canales main → renderer (webContents.send). */
@@ -127,6 +229,10 @@ export interface IpcEventMap {
   /** el atajo global Ctrl+Shift+R pide alternar pausa */
   'recorder:toggle-shortcut': void
   'engine:log': { level: 'info' | 'warn' | 'error'; message: string }
+  /** progreso de la regeneración, un paso a la vez */
+  'runner:progress': RegenStepResult
+  /** progreso de la redacción con IA, tras cada lote */
+  'ai:progress': { done: number; total: number }
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -144,12 +250,15 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'recorder:pause',
   'recorder:resume',
   'recorder:stop',
+  'recorder:capture-group',
   'dialog:pick-output-dir',
   'session:save',
   'shell:open-path',
+  'shell:open-external',
   'git:inspect',
   'git:branches',
   'git:commits',
+  'git:branch-docs',
   'git:commit-docs',
   'git:doc-image',
   'projects:list',
@@ -157,14 +266,21 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'docusaurus:suggest-docs',
   'draft:save',
   'draft:load',
-  'draft:clear'
+  'draft:clear',
+  'runner:regenerate',
+  'ai:status',
+  'ai:set-key',
+  'ai:set-settings',
+  'ai:draft'
 ]
 
 export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'engine:state',
   'recorder:step',
   'recorder:toggle-shortcut',
-  'engine:log'
+  'engine:log',
+  'runner:progress',
+  'ai:progress'
 ]
 
 /** Protocolo custom que sirve las capturas temporales al renderer. */

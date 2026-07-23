@@ -6,6 +6,15 @@
  * envía. Duplicar la lógica dejaría que divergieran.
  */
 
+/** `crear-matricula` o `Crear matricula` → `Crear Matricula`. Etiqueta legible. */
+export function titleCase(text: string): string {
+  return text
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
 /** kebab-case sin acentos ni caracteres de ruta. */
 export function slug(value: string): string {
   const normalized = value
@@ -27,6 +36,22 @@ export function slug(value: string): string {
  */
 export function suggestBranchName(module: string): string {
   return `docs/${slug(module) || 'sesion'}`
+}
+
+/**
+ * Git rechaza estos patrones en `check-ref-format`; se avisa antes de intentarlo.
+ *
+ * Vive aquí, y no en el módulo Git del main, porque el selector de rama de la
+ * GUI valida lo que se escribe mientras se escribe: repetir la regla en el
+ * renderer dejaría que las dos versiones divergieran.
+ */
+export function validateBranchName(name: string): string | null {
+  if (!name.trim()) return 'El nombre de la rama no puede estar vacío.'
+  if (/\s/.test(name)) return 'El nombre de la rama no puede contener espacios.'
+  if (/\.\.|@\{|^-|\/$|\.$|\.lock$/.test(name) || /[~^:?*[\\]/.test(name)) {
+    return 'El nombre de la rama contiene caracteres que Git no admite.'
+  }
+  return null
 }
 
 /** Mensaje de commit sugerido, en el mismo estilo semántico del repositorio. */

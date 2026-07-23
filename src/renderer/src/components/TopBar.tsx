@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ipc } from '../ipc'
 import { useSession } from '../store'
+import { slug } from '../../../shared/naming'
 import type { RecorderStatus } from '../../../shared/types'
 
 const STATUS_LABEL: Record<RecorderStatus, string> = {
@@ -29,11 +30,43 @@ export function TopBar(): React.JSX.Element {
     applyEngineState,
     setProjectsOpen,
     setHelpOpen,
+    setAiOpen,
+    aiStatus,
     theme,
     toggleTheme,
-    setViewportActive
+    setViewportActive,
+    runnerPhase,
+    runnerProgress,
+    runnerStart,
+    runnerFinish,
+    branchDocs
   } = useSession()
   const [opening, setOpening] = useState(false)
+
+  // Autocompletado: lo ya documentado en la rama, para no fragmentar categorías
+  // por variantes de slug (institucion / instituciones). Los módulos, todos; las
+  // subcategorías, solo las del módulo que se está escribiendo.
+  const knownModules = [...new Set(branchDocs.map((d) => d.module).filter(Boolean))].sort()
+  const currentModuleSlug = slug(meta.module)
+  const knownSubcategories = [
+    ...new Set(
+      branchDocs
+        .filter((d) => d.subcategory && (!currentModuleSlug || d.module === currentModuleSlug))
+        .map((d) => d.subcategory)
+    )
+  ].sort()
+
+  // Regenera las capturas de una funcionalidad: pide la carpeta y re-ejecuta el
+  // flujo en el visor autenticado. El progreso llega por evento (lo escucha App).
+  const regenerate = async (): Promise<void> => {
+    runnerStart()
+    const report = await ipc.invoke('runner:regenerate')
+    if (report.canceled) {
+      useSession.getState().runnerClose()
+      return
+    }
+    runnerFinish(report)
+  }
 
   const open = async (): Promise<void> => {
     const url = normalizeUrl(meta.baseUrl)
@@ -68,8 +101,31 @@ export function TopBar(): React.JSX.Element {
           <input
             value={meta.module}
             placeholder="matriculas"
+            list="known-modules"
             onChange={(e) => setMeta({ module: e.target.value })}
           />
+          <datalist id="known-modules">
+            {knownModules.map((m) => (
+              <option key={m} value={m} />
+            ))}
+          </datalist>
+        </label>
+        <label className="field">
+          <span>
+            Subcategoría <span className="field-optional">(opcional)</span>
+          </span>
+          <input
+            value={meta.subcategory}
+            placeholder="institucion"
+            list="known-subcategories"
+            title="Nivel intermedio del sidebar de Docusaurus; déjalo vacío para no usarlo. Elígelo del árbol al seleccionar la rama."
+            onChange={(e) => setMeta({ subcategory: e.target.value })}
+          />
+          <datalist id="known-subcategories">
+            {knownSubcategories.map((sc) => (
+              <option key={sc} value={sc} />
+            ))}
+          </datalist>
         </label>
         <label className="field">
           <span>Funcionalidad</span>
@@ -147,6 +203,25 @@ export function TopBar(): React.JSX.Element {
           title="Repositorios ya usados, sus ramas y su historial"
         >
           Proyectos…
+        </button>
+        <button
+          className="btn"
+          disabled={runnerPhase === 'running'}
+          onClick={() => void regenerate()}
+          title="Re-ejecuta el flujo de una funcionalidad y actualiza sus capturas (reutiliza tu sesión iniciada)"
+        >
+          {runnerPhase === 'running' ? `Regenerando ${runnerProgress.length}…` : 'Regenerar…'}
+        </button>
+        <button
+          className="btn btn-ai-settings"
+          onClick={() => setAiOpen(true)}
+          title={
+            aiStatus?.ready
+              ? 'Ajustes de la redacción con IA (clave configurada)'
+              : 'Configura la clave para redactar los pasos con IA'
+          }
+        >
+          IA{aiStatus?.ready ? ' ✓' : '…'}
         </button>
         <button
           className="btn btn-icon"

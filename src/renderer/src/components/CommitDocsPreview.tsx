@@ -55,6 +55,7 @@ export function CommitDocsPreview({
               <h3>{d.session.title || d.session.feature}</h3>
               <p className="muted">
                 Módulo: {d.session.module}
+                {d.session.subcategory ? ` · Subcategoría: ${d.session.subcategory}` : ''}
                 {d.session.role ? ` · Rol: ${d.session.role}` : ''} · {d.session.steps.length}{' '}
                 paso(s)
               </p>

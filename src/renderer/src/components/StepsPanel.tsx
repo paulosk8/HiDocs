@@ -18,11 +18,13 @@ import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
 import { useSession } from '../store'
+import { invalidateBranches } from '../useBranches'
 import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitSection } from './GitSection'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
+import { useAiDraft } from '../useAiDraft'
 
 export function StepsPanel(): React.JSX.Element {
   const steps = useSession((s) => s.steps)
@@ -34,10 +36,20 @@ export function StepsPanel(): React.JSX.Element {
   const collapsed = useSession((s) => s.panelCollapsed)
   const togglePanel = useSession((s) => s.togglePanel)
   const projectsOpen = useSession((s) => s.projectsOpen)
+  const branchPickerOpen = useSession((s) => s.branchPickerOpen)
   const helpOpen = useSession((s) => s.helpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
+  // El informe del runner se muestra al terminar; durante el replay el visor
+  // debe quedar VISIBLE (se ve la reproducción y las capturas salen con tamaño).
+  const runnerReportOpen = useSession((s) => s.runnerPhase === 'done')
   const groupFormFields = useSession((s) => s.groupFormFields)
   const setGroupFormFields = useSession((s) => s.setGroupFormFields)
+  const aiOpen = useSession((s) => s.aiOpen)
+  const aiBusyIds = useSession((s) => s.aiBusyIds)
+  const aiProgress = useSession((s) => s.aiProgress)
+  const aiError = useSession((s) => s.aiError)
+  const setAiError = useSession((s) => s.setAiError)
+  const { draft } = useAiDraft()
 
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
@@ -92,6 +104,12 @@ export function StepsPanel(): React.JSX.Element {
           : undefined
       })
       setResult(saved)
+      // Guardar es lo único que mueve el repositorio desde dentro de la app: el
+      // commit cambia de rama, puede crear una y deja el árbol limpio. Sin releer
+      // aquí, la franja de estado y el selector seguirían describiendo el
+      // repositorio de antes del commit hasta el próximo cambio de carpeta.
+      void ipc.invoke('git:inspect', s.outputDir).then(useSession.getState().setGitRepo)
+      invalidateBranches()
       // Guardado con éxito: se descarta el borrador y se estrena sesión para la
       // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
       // un autoguardado pendiente no vuelva a crear el borrador.
@@ -124,24 +142,42 @@ export function StepsPanel(): React.JSX.Element {
   }, [write, applyEngineState])
 
   /**
-   * Detener y guardar (§8). Valida y, si se va a registrar en Git, avisa ANTES
-   * de detener: el commit cuesta deshacerlo y a veces la documentación aún no
-   * está completa. Así, cancelar deja la grabación intacta, sin tener que
-   * reanudar.
+   * Detener y guardar (§8).
+   *
+   * Si falta algún dato, la grabación se detiene IGUALMENTE y el aviso dice qué
+   * falta: pulsar ■ significa «he terminado». Antes se validaba primero y, al
+   * faltar un dato, el botón solo mostraba el aviso y la captura seguía viva,
+   * con lo que parecía no responder. Los pasos se conservan (y el borrador se
+   * autoguarda), así que basta completar arriba y volver a pulsar ■.
+   *
+   * En cambio, si se va a registrar en Git se avisa ANTES de detener: eso no es
+   * un error sino una decisión, el commit cuesta deshacerlo y a veces la
+   * documentación aún no está completa. Así, cancelar deja la grabación intacta
+   * y se puede seguir sin tener que reanudar.
    */
   const stopAndSave = async (): Promise<void> => {
     const s = useSession.getState()
-    if (!s.steps.length) {
-      setProblem('No hay pasos que guardar.')
-      return
-    }
+
     const missing: string[] = []
     if (!s.meta.module.trim()) missing.push('módulo')
     if (!s.meta.feature.trim()) missing.push('funcionalidad')
     if (!s.outputDir) missing.push('carpeta de salida')
-    if (missing.length) {
-      setProblem(`Falta indicar: ${missing.join(', ')}.`)
-      return
+
+    if (missing.length || !s.steps.length) {
+      applyEngineState(await ipc.invoke('recorder:stop'))
+      if (missing.length) {
+        setProblem(
+          `La grabación se ha detenido, pero todavía no se puede guardar: falta indicar ${missing.join(', ')}.\n\n` +
+            'Complétalo en la barra superior y vuelve a pulsar ■. Tus pasos siguen aquí.'
+        )
+        return
+      }
+      // Detener vacía la cola del motor y puede emitir un último paso, así que
+      // se relee antes de dar la grabación por vacía.
+      if (!useSession.getState().steps.length) {
+        setProblem('No hay pasos que guardar. La grabación se ha detenido.')
+        return
+      }
     }
 
     if (s.gitEnabled) {
@@ -180,8 +216,14 @@ export function StepsPanel(): React.JSX.Element {
     result !== null ||
     problem !== null ||
     projectsOpen ||
+    // El selector de rama es pequeño y cuelga de la franja, pero cae justo sobre
+    // el rectángulo de la vista nativa: sin esto quedaría tapado por la página.
+    branchPickerOpen ||
     helpOpen ||
-    docusaurusIntroOpen
+    docusaurusIntroOpen ||
+    runnerReportOpen ||
+    aiOpen ||
+    aiError !== null
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])
@@ -261,6 +303,15 @@ export function StepsPanel(): React.JSX.Element {
           confirmLabel="Guardar de todos modos"
           onConfirm={() => void write()}
           onCancel={() => setPendingSave(null)}
+        />
+      )}
+
+      {aiError && (
+        <ConfirmDialog
+          title="No se pudo redactar con IA"
+          body={aiError}
+          confirmLabel="Entendido"
+          onConfirm={() => setAiError(null)}
         />
       )}
 
@@ -348,6 +399,20 @@ export function StepsPanel(): React.JSX.Element {
           />
           agrupar campos
         </label>
+        {/* Solo se redactan los pasos que van al manual: pagar tokens por un paso
+            excluido de la documentación no tendría sentido. */}
+        <button
+          className="btn btn-ai"
+          disabled={aiBusyIds.length > 0 || !steps.some((s) => s.includeInDocs)}
+          title="Propone título y descripción para todos los pasos incluidos en la documentación"
+          onClick={() =>
+            void draft(steps.filter((s) => s.includeInDocs).map((s) => s.id))
+          }
+        >
+          {aiBusyIds.length > 0
+            ? `Redactando ${aiProgress ? `${aiProgress.done}/${aiProgress.total}` : ''}…`
+            : '✨ Redactar todos'}
+        </button>
         <div className="controls">{controls}</div>
       </div>
 

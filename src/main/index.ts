@@ -6,25 +6,46 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  Menu,
   protocol,
   screen,
-  shell
+  session,
+  shell,
+  type MenuItemConstructorOptions,
+  type WebContents
 } from 'electron'
 import { TargetViewport } from './viewport'
 import { RecorderEngine } from './engine/recorder'
 import {
   SHOT_PROTOCOL,
+  type AiDraftRequest,
   type DraftPayload,
   type RecordedStep,
   type SavePayload,
   type ViewportBounds
 } from '../shared/ipc-contract'
-import { DEFAULT_VIEWPORT, type EngineState } from '../shared/types'
+import {
+  DEFAULT_VIEWPORT,
+  type AiProvider,
+  type AiSettings,
+  type DocSession,
+  type EngineState,
+  type RegenReport
+} from '../shared/types'
 import { saveSession } from './storage'
-import { inspectRepo, listBranches, listCommits, readCommitDocs, readDocImage } from './git'
+import {
+  inspectRepo,
+  listBranches,
+  listCommits,
+  readBranchDocs,
+  readCommitDocs,
+  readDocImage
+} from './git'
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
 import { saveDraft, loadDraft, clearDraft } from './draft'
+import { aiStatus, setAiKey, setAiSettings } from './settings'
+import { draftSteps } from './ai'
 
 /**
  * El puerto de depuración remota debe quedar fijado ANTES de `app.whenReady`:
@@ -88,6 +109,68 @@ function registerShotProtocol(): void {
   })
 }
 
+/**
+ * Menú contextual de la GUI: correcciones ortográficas y edición.
+ *
+ * Electron no trae menú contextual propio, así que sin esto el clic derecho no
+ * hace nada y las palabras que el corrector subraya no se pueden corregir. Se
+ * aplica solo a la ventana de la aplicación, no al visor: ahí el menú es el del
+ * sistema documentado y abrirlo encima estorbaría a la grabación.
+ */
+function attachContextMenu(wc: WebContents): void {
+  wc.on('context-menu', (_event, params) => {
+    // Fuera de un campo editable y sin selección no hay nada que ofrecer.
+    if (!params.isEditable && !params.selectionText) return
+
+    const items: MenuItemConstructorOptions[] = []
+
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions) {
+        items.push({ label: suggestion, click: () => wc.replaceMisspelling(suggestion) })
+      }
+      if (!params.dictionarySuggestions.length) {
+        items.push({ label: 'Sin sugerencias', enabled: false })
+      }
+      items.push(
+        { type: 'separator' },
+        {
+          label: `Añadir «${params.misspelledWord}» al diccionario`,
+          click: () => wc.session.addWordToSpellCheckerDictionary(params.misspelledWord)
+        },
+        { type: 'separator' }
+      )
+    }
+
+    items.push(
+      { label: 'Cortar', role: 'cut', enabled: params.editFlags.canCut },
+      { label: 'Copiar', role: 'copy', enabled: params.editFlags.canCopy },
+      { label: 'Pegar', role: 'paste', enabled: params.editFlags.canPaste },
+      { type: 'separator' },
+      { label: 'Seleccionar todo', role: 'selectAll', enabled: params.editFlags.canSelectAll }
+    )
+
+    Menu.buildFromTemplate(items).popup({
+      window: BrowserWindow.fromWebContents(wc) ?? undefined
+    })
+  })
+}
+
+/**
+ * Idiomas del corrector. En macOS lo provee el sistema operativo con su propia
+ * lista, y fijarla desde aquí lanza; en el resto se pide español, que es el
+ * idioma en el que se escribe la documentación.
+ */
+function configureSpellChecker(): void {
+  if (process.platform === 'darwin') return
+  try {
+    const available = session.defaultSession.availableSpellCheckerLanguages
+    const wanted = ['es-ES', 'es'].filter((lang) => available.includes(lang)).slice(0, 1)
+    if (wanted.length) session.defaultSession.setSpellCheckerLanguages(wanted)
+  } catch (err) {
+    console.warn('[spellcheck] no se pudo fijar el idioma:', err)
+  }
+}
+
 function createWindow(): void {
   // La ventana se dimensiona para que el viewport quepa a tamaño nominal
   // (1440x900) junto al panel; si la pantalla no da, se reduce y la sesión
@@ -108,9 +191,14 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // Los títulos y descripciones de los pasos son prosa que acaba publicada
+      // en el manual: merece corrector.
+      spellcheck: true
     }
   })
+
+  attachContextMenu(mainWindow.webContents)
 
   mainWindow.on('ready-to-show', () => mainWindow?.show())
 
@@ -198,6 +286,13 @@ function registerIpc(): void {
     return engine.state
   })
 
+  ipcMain.handle(
+    'recorder:capture-group',
+    async (_e, args: { refs: number[] }) => {
+      return engine.captureGroup(args.refs)
+    }
+  )
+
   ipcMain.handle('session:save', async (_e, payload: SavePayload) => {
     const result = await saveSession(payload, viewport.currentSize)
     engine.log('info', `Sesión guardada en ${result.path}`)
@@ -224,21 +319,32 @@ function registerIpc(): void {
     await shell.openPath(path)
   })
 
+  // Solo http/https: el canal existe para abrir la consola del proveedor de IA,
+  // no para que el renderer pueda lanzar `file://` ni esquemas del sistema.
+  ipcMain.handle('shell:open-external', async (_e, url: string) => {
+    if (!/^https?:\/\//i.test(url)) return
+    await shell.openExternal(url)
+  })
+
   ipcMain.handle('git:inspect', async (_e, outputDir: string) => {
     // Devuelve null tanto si no hay repositorio como si `git` no está
     // instalado: en ambos casos la GUI simplemente no ofrece la integración.
     return inspectRepo(outputDir).catch(() => null)
   })
 
-  // El explorador es de solo lectura: estos tres canales no escriben nada en el
-  // repositorio, así que ante cualquier fallo devuelven vacío en vez de
-  // propagar el error. La vista queda sin datos, que es un estado inocuo.
+  // La lectura del repositorio es de solo lectura: estos canales no escriben
+  // nada, así que ante cualquier fallo devuelven vacío en vez de propagar el
+  // error. La vista queda sin datos, que es un estado inocuo.
   ipcMain.handle('git:branches', async (_e, repoRoot: string) => {
     return listBranches(repoRoot).catch(() => [])
   })
 
   ipcMain.handle('git:commits', async (_e, args: { repoRoot: string; branch: string }) => {
     return listCommits(args.repoRoot, args.branch).catch(() => [])
+  })
+
+  ipcMain.handle('git:branch-docs', async (_e, args: { repoRoot: string; branch: string }) => {
+    return readBranchDocs(args.repoRoot, args.branch).catch(() => [])
   })
 
   ipcMain.handle('git:commit-docs', async (_e, args: { repoRoot: string; commit: string }) => {
@@ -272,6 +378,63 @@ function registerIpc(): void {
   ipcMain.handle('draft:clear', async () => {
     await clearDraft().catch(() => undefined)
   })
+
+  // La clave de IA no sale nunca del proceso principal: el renderer solo puede
+  // guardarla y preguntar si existe.
+  ipcMain.handle('ai:status', async () => aiStatus())
+
+  ipcMain.handle('ai:set-key', async (_e, args: { provider: AiProvider; key: string }) => {
+    return setAiKey(args.provider, args.key)
+  })
+
+  ipcMain.handle('ai:set-settings', async (_e, patch: Partial<AiSettings>) => {
+    return setAiSettings(patch)
+  })
+
+  ipcMain.handle('ai:draft', async (_e, request: AiDraftRequest) => {
+    return draftSteps(request, (progress) => mainWindow?.webContents.send('ai:progress', progress))
+  })
+
+  ipcMain.handle('runner:regenerate', async (_e, given?: string): Promise<RegenReport> => {
+    if (!mainWindow) return { results: [] }
+    let featureDir: string
+    if (given) {
+      featureDir = given
+    } else {
+      // Se pide la carpeta; la vista nativa se oculta mientras el selector nativo
+      // está abierto (como en la carpeta de salida).
+      viewport.setVisible(false)
+      try {
+        const picked = await dialog.showOpenDialog(mainWindow, {
+          title: 'Carpeta de la funcionalidad a regenerar (con su session.json)',
+          properties: ['openDirectory']
+        })
+        if (picked.canceled || !picked.filePaths[0]) return { canceled: true, results: [] }
+        featureDir = picked.filePaths[0]
+      } finally {
+        viewport.setVisible(true)
+      }
+    }
+
+    try {
+      const json = await readFile(join(featureDir, 'session.json'), 'utf8')
+      const session = JSON.parse(json) as DocSession
+      const results = await engine.regenerate(session, featureDir, (r) =>
+        mainWindow?.webContents.send('runner:progress', r)
+      )
+      return { featureDir, results }
+    } catch (err) {
+      return {
+        error:
+          err instanceof Error && /ENOENT/.test(err.message)
+            ? 'La carpeta elegida no contiene un session.json.'
+            : err instanceof Error
+              ? err.message
+              : String(err),
+        results: []
+      }
+    }
+  })
 }
 
 // Dos instancias competirían por el mismo puerto de depuración: la segunda se
@@ -290,6 +453,7 @@ if (!app.requestSingleInstanceLock()) {
 
 app.whenReady().then(() => {
   registerShotProtocol()
+  configureSpellChecker()
   registerIpc()
   createWindow()
 

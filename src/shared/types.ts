@@ -38,6 +38,19 @@ export interface DocStep {
    * `value` deja de usarse.
    */
   fields?: Array<{ label: string; value: string }>
+  /**
+   * Acciones individuales que se fundieron en este paso (formulario agrupado).
+   * El runner de regeneración las re-ejecuta todas y luego captura UNA imagen del
+   * paso; `flow.json` también las expande. Ausente en pasos no agrupados: su
+   * acción es `action` + `selectorCandidates` + `value`.
+   */
+  mergedActions?: FlowAction[]
+  /**
+   * Nota destacada del paso, publicada como «admonition» de Docusaurus
+   * (`:::note`, `:::tip`, …). Sirve para recalcar algo importante de este paso
+   * o del grupo. El cuerpo se redacta en Markdown/MDX; ausente si no hay nota.
+   */
+  note?: StepNote
   /** metadato: URL en el momento de la interacción */
   url: string
   /** ruta relativa dentro del paquete exportado: img/paso-03.png */
@@ -48,6 +61,21 @@ export interface DocStep {
   timestamp: string
 }
 
+/** Los cinco tipos de «admonition» que Docusaurus renderiza de serie. */
+export type AdmonitionType = 'note' | 'tip' | 'info' | 'warning' | 'danger'
+
+/**
+ * Nota destacada de un paso. Se publica como un bloque `:::<type>[<title>]` en
+ * el MDX; el cuerpo admite el diseño de Docusaurus (negrita, `<mark>`, emojis…).
+ */
+export interface StepNote {
+  type: AdmonitionType
+  /** título opcional del recuadro; si falta, Docusaurus usa el del tipo */
+  title?: string
+  /** cuerpo en Markdown/MDX */
+  body: string
+}
+
 export interface Viewport {
   width: number
   height: number
@@ -56,6 +84,8 @@ export interface Viewport {
 export interface DocSession {
   id: string
   module: string
+  /** subcategoría opcional entre módulo y funcionalidad; ausente = 2 niveles */
+  subcategory?: string
   feature: string
   title: string
   /** rol del usuario que ejecuta el flujo */
@@ -68,6 +98,8 @@ export interface DocSession {
 
 export interface SessionMeta {
   module: string
+  /** subcategoría opcional (nivel intermedio del sidebar de Docusaurus) */
+  subcategory: string
   feature: string
   title: string
   role: string
@@ -104,6 +136,7 @@ export interface FlowAction {
 export interface Flow {
   sessionId: string
   module: string
+  subcategory?: string
   feature: string
   baseUrl: string
   viewport: Viewport
@@ -157,6 +190,28 @@ export interface GitBranchInfo {
   aheadOfDefault: number
 }
 
+/**
+ * Una funcionalidad ya documentada en una rama, leída de su `session.json`
+ * commiteado.
+ *
+ * Es lo que permite retomar una rama sin volver a escribir los metadatos: la
+ * fuente de verdad es el repositorio, no un registro local, así que también
+ * funciona con lo que documentó otra persona (u otra máquina).
+ */
+export interface BranchDocInfo {
+  /** ruta del session.json dentro del repo, p. ej. `administracion/pie/session.json` */
+  path: string
+  module: string
+  /** subcategoría con la que se documentó, o '' si no tiene */
+  subcategory: string
+  feature: string
+  title: string
+  role: string
+  baseUrl: string
+  /** ISO de creación de la sesión, para situarla en el tiempo */
+  createdAt: string
+}
+
 /** Un commit del historial de una rama (solo lectura). */
 export interface GitCommitInfo {
   hash: string
@@ -170,6 +225,96 @@ export interface CommitDocs {
   /** ruta del session.json en el repo, p. ej. `matriculas/crear/session.json` */
   path: string
   session: DocSession
+}
+
+/* ---------- asistencia de IA para redactar los pasos (§11) ---------- */
+
+/** Proveedores admitidos para redactar títulos y descripciones. */
+export type AiProvider = 'anthropic' | 'gemini'
+
+export interface AiSettings {
+  /** proveedor que se usa al redactar */
+  provider: AiProvider
+  /** modelo elegido para cada proveedor; se recuerda uno por proveedor */
+  models: Record<AiProvider, string>
+  /**
+   * Enviar también la captura del paso. Con ella el modelo ve la pantalla real y
+   * sitúa el paso («en la pestaña Datos personales»); sin ella solo recibe la
+   * acción, el elemento y el valor, que es bastante más barato.
+   */
+  useScreenshot: boolean
+}
+
+/**
+ * Lo que la GUI puede saber de la configuración de IA. Las claves nunca salen
+ * del proceso principal: aquí solo viaja si hay o no hay clave.
+ */
+export interface AiStatus {
+  settings: AiSettings
+  /** proveedores con clave guardada */
+  configured: Record<AiProvider, boolean>
+  /** el proveedor activo tiene clave: se puede redactar */
+  ready: boolean
+  /** las claves se guardan cifradas por el sistema operativo */
+  encrypted: boolean
+}
+
+/** Redacción propuesta para un paso. */
+export interface AiStepDraft {
+  id: string
+  title: string
+  description: string
+}
+
+export interface AiDraftResult {
+  drafts: AiStepDraft[]
+  /**
+   * Motivo por el que no se pudo completar. Puede venir junto a `drafts`: si
+   * falla a mitad, lo ya redactado se aprovecha en vez de perderse.
+   */
+  error?: string
+}
+
+/**
+ * Modelos ofrecidos por proveedor. Todos aceptan imágenes y salida estructurada,
+ * que es lo que necesita la redacción; el primero de cada lista es el de partida.
+ */
+export const AI_MODELS: Record<AiProvider, string[]> = {
+  anthropic: ['claude-opus-4-8', 'claude-sonnet-5'],
+  gemini: ['gemini-3.5-flash', 'gemini-2.5-flash']
+}
+
+export const AI_PROVIDER_LABEL: Record<AiProvider, string> = {
+  anthropic: 'Claude (Anthropic)',
+  gemini: 'Gemini (Google)'
+}
+
+export const AI_PROVIDERS: AiProvider[] = ['anthropic', 'gemini']
+
+export const DEFAULT_AI_SETTINGS: AiSettings = {
+  provider: 'anthropic',
+  models: { anthropic: AI_MODELS.anthropic[0], gemini: AI_MODELS.gemini[0] },
+  useScreenshot: true
+}
+
+/** Resultado de regenerar la captura de un paso (runner). */
+export interface RegenStepResult {
+  order: number
+  title: string
+  status: 'ok' | 'failed'
+  /** motivo del fallo, si lo hubo */
+  detail: string
+}
+
+/** Resultado global de una regeneración. */
+export interface RegenReport {
+  /** el usuario canceló el selector de carpeta */
+  canceled?: boolean
+  /** no se pudo ni empezar (p. ej. sin session.json, o sin sesión iniciada) */
+  error?: string
+  /** carpeta de la funcionalidad regenerada */
+  featureDir?: string
+  results: RegenStepResult[]
 }
 
 export interface GitCommitOptions {

@@ -4,6 +4,7 @@ import { relative, isAbsolute, join } from 'node:path'
 import { realpath } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type {
+  BranchDocInfo,
   CommitDocs,
   DocSession,
   GitBranchInfo,
@@ -12,7 +13,8 @@ import type {
   GitCommitResult,
   GitRepoInfo
 } from '../shared/types'
-export { suggestBranchName, suggestCommitMessage } from '../shared/naming'
+import { validateBranchName } from '../shared/naming'
+export { suggestBranchName, suggestCommitMessage, validateBranchName } from '../shared/naming'
 
 const run = promisify(execFile)
 
@@ -264,6 +266,71 @@ export async function listCommits(
 }
 
 /**
+ * Funcionalidades ya documentadas en una rama, de la más reciente a la más
+ * antigua. Es lo que permite **retomar una rama**: de aquí salen el módulo, el
+ * rol y la URL base con los que se venía trabajando, sin volver a escribirlos.
+ *
+ * Se recorre el **historial** (`log --name-only`) en vez del árbol (`ls-tree`)
+ * porque el historial ya viene ordenado por recencia: con el árbol habría que
+ * preguntar la fecha de cada archivo por separado, un proceso `git` por
+ * funcionalidad. `limit` acota cuántos `session.json` se llegan a leer, que es
+ * lo único que cuesta un proceso por elemento.
+ *
+ * Solo lectura: no hay checkout ni escritura, igual que el resto del explorador.
+ */
+export async function readBranchDocs(
+  root: string,
+  branch: string,
+  limit = 12
+): Promise<BranchDocInfo[]> {
+  if (validateBranchName(branch)) return []
+  const raw = await git(root, [
+    'log',
+    '--max-count=100',
+    '--name-only',
+    '--format=',
+    branch,
+    '--',
+    // Pathspec con comodín: coincide con `session.json` a cualquier profundidad.
+    '*session.json'
+  ]).catch(() => '')
+  if (!raw) return []
+
+  const seen = new Set<string>()
+  const paths: string[] = []
+  for (const line of raw.split('\n')) {
+    const path = line.trim()
+    if (!path.endsWith('session.json') || seen.has(path)) continue
+    seen.add(path)
+    paths.push(path)
+  }
+
+  const docs: BranchDocInfo[] = []
+  for (const path of paths.slice(0, limit)) {
+    // Un `session.json` que el historial menciona puede haberse borrado después:
+    // `git show` falla y esa entrada simplemente no se ofrece.
+    const json = await git(root, ['show', `${branch}:${path}`]).catch(() => '')
+    if (!json) continue
+    try {
+      const session = JSON.parse(json) as DocSession
+      docs.push({
+        path,
+        module: session.module ?? '',
+        subcategory: session.subcategory ?? '',
+        feature: session.feature ?? '',
+        title: session.title ?? '',
+        role: session.role ?? '',
+        baseUrl: session.baseUrl ?? '',
+        createdAt: session.createdAt ?? ''
+      })
+    } catch {
+      // session.json ilegible: se omite esa funcionalidad
+    }
+  }
+  return docs
+}
+
+/**
  * Documentación registrada en un commit, para previsualizarla en el explorador
  * sin arrancar Docusaurus ni hacer checkout. Lee los `session.json` que el commit
  * añadió o modificó y devuelve sus pasos.
@@ -319,16 +386,6 @@ export async function readDocImage(
 /** Ruta en el repo de la captura de un paso, a partir del path de su session.json. */
 export function docImagePath(sessionPath: string, screenshot: string): string {
   return `${dirname(sessionPath)}/${screenshot}`.replace(/\\/g, '/')
-}
-
-/** Git rechaza estos patrones en `check-ref-format`; se avisa antes de intentarlo. */
-export function validateBranchName(name: string): string | null {
-  if (!name.trim()) return 'El nombre de la rama no puede estar vacío.'
-  if (/\s/.test(name)) return 'El nombre de la rama no puede contener espacios.'
-  if (/\.\.|@\{|^-|\/$|\.$|\.lock$/.test(name) || /[~^:?*[\\]/.test(name)) {
-    return 'El nombre de la rama contiene caracteres que Git no admite.'
-  }
-  return null
 }
 
 /**

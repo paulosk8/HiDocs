@@ -11,8 +11,9 @@ import type { DocSession, DocStep, Flow, FlowAction, SaveResult, Viewport } from
  * Escritura del paquete en disco (§7). Además del paquete reproducible en JSON,
  * se genera la página del manual en MDX para que Docusaurus la renderice (§10):
  *
- *   <carpeta>/<module>/
- *     ├── _category_.json          (etiqueta de la barra lateral; solo si falta)
+ *   <carpeta>/<module>/[<subcategory>/]
+ *     ├── _category_.json          (etiqueta de la barra lateral; solo si falta;
+ *     │                             uno por cada nivel con carpeta propia)
  *     └── <feature>/
  *         ├── index.mdx            (la página del manual, para Docusaurus)
  *         ├── session.json         (sesión completa, reproducible)
@@ -42,7 +43,12 @@ export async function saveSession(
 ): Promise<SaveResult> {
   const moduleDir = kebab(payload.meta.module)
   const featureDir = kebab(payload.meta.feature)
-  const targetDir = join(payload.outputDir, moduleDir, featureDir)
+  // La subcategoría es opcional: si el usuario no la escribe, la estructura
+  // sigue siendo de dos niveles (módulo/funcionalidad), igual que antes.
+  const subDir = payload.meta.subcategory?.trim() ? kebab(payload.meta.subcategory) : ''
+  const targetDir = subDir
+    ? join(payload.outputDir, moduleDir, subDir, featureDir)
+    : join(payload.outputDir, moduleDir, featureDir)
   const imgDir = join(targetDir, 'img')
 
   await mkdir(imgDir, { recursive: true })
@@ -87,21 +93,38 @@ export async function saveSession(
     }
     if (step.value !== undefined) persisted.value = step.value
     if (step.fields?.length) persisted.fields = step.fields
+    // La nota destacada se conserva solo si tiene cuerpo: un recuadro vacío no
+    // aporta nada al manual y ensuciaría el MDX.
+    if (step.note?.body.trim()) persisted.note = step.note
+    // El runner necesita las acciones individuales del paso agrupado para
+    // reproducirlo (una captura tras re-ejecutarlas todas).
+    if (step.mergedActions?.length) persisted.mergedActions = step.mergedActions
     steps.push(persisted)
 
-    const action: FlowAction = {
-      order,
-      action: step.action,
-      selectorCandidates: step.selectorCandidates,
-      url: step.url
+    // flow.json es la receta reproducible para el runner: un paso de formulario
+    // agrupado se expande en sus acciones individuales (una por campo), aunque en
+    // el manual sea un solo paso. Los demás pasos aportan una acción.
+    const stepActions =
+      step.mergedActions && step.mergedActions.length > 0
+        ? step.mergedActions
+        : [
+            {
+              order,
+              action: step.action,
+              selectorCandidates: step.selectorCandidates,
+              url: step.url,
+              ...(step.value !== undefined ? { value: step.value } : {})
+            }
+          ]
+    for (const a of stepActions) {
+      actions.push({ ...a, order: actions.length + 1 })
     }
-    if (step.value !== undefined) action.value = step.value
-    actions.push(action)
   }
 
   const session: DocSession = {
     id: payload.sessionId,
     module: moduleDir,
+    ...(subDir ? { subcategory: subDir } : {}),
     feature: featureDir,
     title: payload.meta.title,
     role: payload.meta.role,
@@ -116,6 +139,7 @@ export async function saveSession(
   const flow: Flow = {
     sessionId: session.id,
     module: session.module,
+    ...(subDir ? { subcategory: subDir } : {}),
     feature: session.feature,
     baseUrl: session.baseUrl,
     viewport: session.viewport,
@@ -127,23 +151,33 @@ export async function saveSession(
   await writeFile(sessionFile, JSON.stringify(session, null, 2), 'utf8')
   await writeFile(flowFile, JSON.stringify(flow, null, 2), 'utf8')
 
-  // Página del manual para Docusaurus. La etiqueta del módulo se toma del texto
-  // original del usuario (no del slug de carpeta), para que se lea bien.
+  // Página del manual para Docusaurus. Las etiquetas de módulo y subcategoría se
+  // toman del texto original del usuario (no del slug de carpeta), para que se
+  // lean bien.
   const moduleLabel = titleCase(payload.meta.module) || moduleDir
+  const subLabel = subDir ? titleCase(payload.meta.subcategory) || subDir : ''
   const mdxFile = join(targetDir, 'index.mdx')
   await writeFile(
     mdxFile,
-    renderFeatureMdx(session, moduleLabel, (rel) => writtenRelatives.has(rel)),
+    renderFeatureMdx(session, moduleLabel, (rel) => writtenRelatives.has(rel), subLabel),
     'utf8'
   )
   const committedFiles = [mdxFile, sessionFile, flowFile, ...writtenImages]
 
-  // La categoría agrupa las funcionalidades del módulo en la barra lateral. Solo
-  // se crea si falta: si el mantenedor ya la personalizó, no se pisa.
+  // Las categorías agrupan las funcionalidades en la barra lateral. Cada nivel
+  // con carpeta propia lleva su `_category_.json`, creado solo si falta: si el
+  // mantenedor ya lo personalizó, no se pisa. Con subcategoría son dos.
   const categoryFile = join(payload.outputDir, moduleDir, '_category_.json')
   if (!(await exists(categoryFile))) {
     await writeFile(categoryFile, categoryJson(moduleLabel), 'utf8')
     committedFiles.push(categoryFile)
+  }
+  if (subDir) {
+    const subCategoryFile = join(payload.outputDir, moduleDir, subDir, '_category_.json')
+    if (!(await exists(subCategoryFile))) {
+      await writeFile(subCategoryFile, categoryJson(subLabel), 'utf8')
+      committedFiles.push(subCategoryFile)
+    }
   }
 
   const result: SaveResult = { path: targetDir, stepsWritten: steps.length, imagesWritten }
