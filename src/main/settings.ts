@@ -5,6 +5,7 @@ import {
   AI_MODELS,
   AI_PROVIDERS,
   DEFAULT_AI_SETTINGS,
+  apiKeyProblem,
   type AiProvider,
   type AiSettings,
   type AiStatus
@@ -100,10 +101,16 @@ export async function aiStatus(): Promise<AiStatus> {
   return toStatus(await read())
 }
 
-/** Guarda la clave de un proveedor; una cadena vacía la borra. */
+/**
+ * Guarda la clave de un proveedor; una cadena vacía la borra. Una clave que no
+ * puede serlo no se guarda: es preferible decirlo al pegarla que fallar después,
+ * a mitad de una redacción, con el error que devuelva la API.
+ */
 export async function setAiKey(provider: AiProvider, key: string): Promise<AiStatus> {
   const settings = await read()
   const trimmed = key.trim()
+  const problem = apiKeyProblem(trimmed)
+  if (problem) throw new Error(problem)
   if (!trimmed) {
     delete settings.ai.keys[provider]
   } else if (safeStorage.isEncryptionAvailable()) {

@@ -65,17 +65,24 @@ export async function saveSession(
 
   for (const [index, step] of payload.steps.entries()) {
     const order = index + 1
-    const relative = `img/${imageName(order)}`
+    // Ni un bloque de contenido ni un separador de sección tienen imagen que
+    // copiar ni hueco que reservar en `img/`: son prosa y estructura. Los demás
+    // pasos —los grabados y las capturas externas— sí, y conservan la numeración
+    // del paso para poder rastrearlos.
+    const hasShot = step.kind !== 'content' && step.kind !== 'section'
+    const relative = hasShot ? `img/${imageName(order)}` : ''
 
-    try {
-      const destination = join(targetDir, relative)
-      await copyFile(step.tempFile, destination)
-      writtenImages.push(destination)
-      writtenRelatives.add(relative)
-      imagesWritten++
-    } catch {
-      // Un paso sin captura sigue siendo válido como acción del flujo; se anota
-      // la ruta esperada para que el hueco sea visible al revisar.
+    if (hasShot) {
+      try {
+        const destination = join(targetDir, relative)
+        await copyFile(step.tempFile, destination)
+        writtenImages.push(destination)
+        writtenRelatives.add(relative)
+        imagesWritten++
+      } catch {
+        // Un paso sin captura sigue siendo válido como acción del flujo; se anota
+        // la ruta esperada para que el hueco sea visible al revisar.
+      }
     }
 
     const persisted: DocStep = {
@@ -91,6 +98,10 @@ export async function saveSession(
       includeInDocs: step.includeInDocs,
       timestamp: step.timestamp
     }
+    // Solo se anota lo que NO es una interacción grabada: así las sesiones ya
+    // commiteadas siguen leyéndose igual y el JSON no engorda sin motivo.
+    if (step.kind && step.kind !== 'interaction') persisted.kind = step.kind
+    if (step.content?.trim()) persisted.content = step.content
     if (step.value !== undefined) persisted.value = step.value
     if (step.fields?.length) persisted.fields = step.fields
     // La nota destacada se conserva solo si tiene cuerpo: un recuadro vacío no
@@ -101,21 +112,24 @@ export async function saveSession(
     if (step.mergedActions?.length) persisted.mergedActions = step.mergedActions
     steps.push(persisted)
 
-    // flow.json es la receta reproducible para el runner: un paso de formulario
-    // agrupado se expande en sus acciones individuales (una por campo), aunque en
-    // el manual sea un solo paso. Los demás pasos aportan una acción.
+    // flow.json es la receta reproducible para el runner: un paso agrupado se
+    // expande en sus acciones individuales, aunque en el manual sea un solo
+    // paso. Una captura externa o un bloque de contenido no aportan ninguna:
+    // no ocurrieron dentro de la página y nadie puede reproducirlas.
     const stepActions =
-      step.mergedActions && step.mergedActions.length > 0
-        ? step.mergedActions
-        : [
-            {
-              order,
-              action: step.action,
-              selectorCandidates: step.selectorCandidates,
-              url: step.url,
-              ...(step.value !== undefined ? { value: step.value } : {})
-            }
-          ]
+      step.kind && step.kind !== 'interaction'
+        ? []
+        : step.mergedActions && step.mergedActions.length > 0
+          ? step.mergedActions
+          : [
+              {
+                order,
+                action: step.action,
+                selectorCandidates: step.selectorCandidates,
+                url: step.url,
+                ...(step.value !== undefined ? { value: step.value } : {})
+              }
+            ]
     for (const a of stepActions) {
       actions.push({ ...a, order: actions.length + 1 })
     }

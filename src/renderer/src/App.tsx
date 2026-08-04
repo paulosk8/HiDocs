@@ -9,6 +9,8 @@ import { DocusaurusIntroModal } from './components/DocusaurusIntroModal'
 import { RestoreDraftModal } from './components/RestoreDraftModal'
 import { RunnerReportModal } from './components/RunnerReportModal'
 import { AiSettingsModal } from './components/AiSettingsModal'
+import { AiContextModal } from './components/AiContextModal'
+import { PendingDocsModal } from './components/PendingDocsModal'
 import { ipc } from './ipc'
 import { useSession } from './store'
 import { useRepoInspection } from './useRepoInspection'
@@ -32,6 +34,10 @@ export function App(): React.JSX.Element {
   const theme = useSession((s) => s.theme)
   const aiOpen = useSession((s) => s.aiOpen)
   const setAiOpen = useSession((s) => s.setAiOpen)
+  const aiContextOpen = useSession((s) => s.aiContextOpen)
+  const setAiContextOpen = useSession((s) => s.setAiContextOpen)
+  const pendingDocsOpen = useSession((s) => s.pendingDocsOpen)
+  const setPendingDocsOpen = useSession((s) => s.setPendingDocsOpen)
   const setAiStatus = useSession((s) => s.setAiStatus)
   const setAiProgress = useSession((s) => s.setAiProgress)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
@@ -95,6 +101,8 @@ export function App(): React.JSX.Element {
       {projectsOpen && <ProjectsModal onClose={() => setProjectsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
       {aiOpen && <AiSettingsModal onClose={() => setAiOpen(false)} />}
+      {aiContextOpen && <AiContextModal onClose={() => setAiContextOpen(false)} />}
+      {pendingDocsOpen && <PendingDocsModal onClose={() => setPendingDocsOpen(false)} />}
       {/* El aviso inicial de Docusaurus espera a resolver antes un borrador. */}
       {docusaurusIntroOpen && !draft && <DocusaurusIntroModal />}
       {draft && (

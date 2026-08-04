@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import type { RecordedStep } from '../../shared/ipc-contract'
 import { ipc } from './ipc'
-import { groupRefsOf, useSession } from './store'
+import { groupTargetsOf, useSession } from './store'
 
 /**
  * Rehace la captura de un paso de formulario agrupado marcando TODOS sus campos.
@@ -20,10 +20,12 @@ export function useGroupCapture(): (step: RecordedStep | null) => void {
   return useCallback(
     (step) => {
       if (!step) return
-      const refs = groupRefsOf(step)
-      if (!refs.length) return
+      const targets = groupTargetsOf(step)
+      if (!targets.length) return
       void ipc
-        .invoke('recorder:capture-group', { refs })
+        // La URL del paso: si la pantalla ya es otra, el motor conserva la
+        // captura que el paso trae en vez de sustituirla por la de después.
+        .invoke('recorder:capture-group', { targets, url: step.url })
         .then((file) => {
           if (file) applyGroupShot(step.id, file)
         })

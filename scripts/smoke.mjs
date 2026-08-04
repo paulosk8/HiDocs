@@ -36,6 +36,35 @@ const root = process.cwd()
  * por el protocolo `docshot://`, que es otro origen y contamina el canvas;
  * abrirle CORS solo para una prueba sería peor.
  */
+/**
+ * Cuántos recuadros de resaltado (#FF5722) hay en la captura.
+ *
+ * Se cuentan por bandas: cada recuadro ocupa un tramo de filas seguidas —sus
+ * bordes laterales pintan de naranja todas las filas intermedias— y los elementos
+ * de un formulario están apilados con hueco entre ellos. Es lo único que
+ * demuestra, sobre los píxeles, que el paso agrupado señala a TODOS sus
+ * elementos y no solo al último.
+ */
+function countHighlightBoxes(png) {
+  const rows = []
+  for (let y = 0; y < png.height; y++) {
+    let orange = false
+    for (let x = 0; x < png.width && !orange; x++) {
+      const i = (y * png.width + x) * png.channels
+      orange =
+        Math.abs(png.data[i] - 255) < 30 &&
+        Math.abs(png.data[i + 1] - 87) < 30 &&
+        Math.abs(png.data[i + 2] - 34) < 30
+    }
+    rows.push(orange)
+  }
+  let bands = 0
+  for (let y = 0; y < rows.length; y++) {
+    if (rows[y] && !rows[y - 1]) bands++
+  }
+  return bands
+}
+
 function decodePng(buf) {
   let pos = 8
   let width = 0
@@ -136,7 +165,18 @@ const child = spawn(electronPath, ['.'], {
   // `DOCRECORDER_AI_FAKE` sustituye la llamada al proveedor de IA por una
   // respuesta determinista: la prueba recorre el circuito completo (ajustes →
   // IPC → aplicar en el panel) sin depender de la red ni de una clave real.
-  env: { ...process.env, DOCRECORDER_USER_DATA: userData, DOCRECORDER_AI_FAKE: '1' }
+  // `DOCRECORDER_CAPTURE_FAKE` hace lo propio con la captura de pantalla: sin
+  // ella dependería de qué ventanas haya abiertas y del permiso del sistema.
+  env: {
+    ...process.env,
+    DOCRECORDER_USER_DATA: userData,
+    DOCRECORDER_AI_FAKE: '1',
+    DOCRECORDER_CAPTURE_FAKE: '1',
+    // Descartar documentación manda los archivos a la papelera del sistema, que
+    // es lo correcto para una persona y una guarrada para una prueba: iría
+    // dejando carpetas temporales en la papelera de quien la ejecuta.
+    DOCRECORDER_NO_TRASH: '1'
+  }
 })
 child.stdout.on('data', (d) => process.stdout.write(`[main] ${d}`))
 child.stderr.on('data', (d) => {
@@ -235,6 +275,17 @@ try {
     }
     throw new Error(`Se esperaban ${n} pasos (${label}), hay ${await stepCount()}`)
   }
+
+  /**
+   * Espera a que el panel se asiente en lo que se va a comprobar (una fusión
+   * tarda lo que tarde la captura del grupo). No lanza si no llega: la
+   * comprobación que viene detrás dirá qué había, que es más útil que un
+   * timeout sin contexto. Sustituye a los tiempos fijos, que fallaban a ratos.
+   */
+  const settle = async (predicate, ms = 12000) => {
+    await gui.waitForFunction(predicate, null, { timeout: ms }).catch(() => {})
+  }
+
 
   // Clic sobre el botón con data-testid; el modal aparece 250 ms después, así
   // que también comprueba la espera de estabilidad del DOM.
@@ -335,6 +386,11 @@ try {
     [...document.querySelectorAll('.step-title')].map((i) => i.value)
   )
   const firstTitleBefore = titlesBefore[0]
+  // La lista puede estar desplazada (cada paso nuevo se trae a la vista), y
+  // entonces el asa de la primera tarjeta queda medio fuera del área visible: el
+  // clic caería en el borde del panel y el arrastre no arrancaría. Se sube a la
+  // tarjeta primero, que es lo que haría cualquiera antes de arrastrarla.
+  await gui.locator('.step-card').first().scrollIntoViewIfNeeded()
   const handle = await gui.locator('.step-card').first().locator('.drag-handle').boundingBox()
   const secondCard = await gui.locator('.step-card').nth(1).boundingBox()
   await gui.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
@@ -346,6 +402,12 @@ try {
     )
     await new Promise((r) => setTimeout(r, 25))
   }
+  // Diagnóstico: si el arrastre no llega a mover la tarjeta, el detalle del
+  // fallo debe decir si es que nunca arrancó (sin `transform`) o si arrancó y no
+  // hubo intercambio. Sin esto, un fallo aquí no dice nada.
+  const midDrag = await gui.evaluate(
+    () => document.querySelector('.step-card')?.style.transform || '(sin transform)'
+  )
   await gui.mouse.up()
   await new Promise((r) => setTimeout(r, 600))
   const titlesAfter = await gui.evaluate(() =>
@@ -354,7 +416,7 @@ try {
   check(
     titlesAfter[1] === firstTitleBefore,
     'Etapa 5: reordenar con arrastrar/teclado',
-    `antes=[${titlesBefore.join(' | ')}] despues=[${titlesAfter.join(' | ')}]`
+    `antes=[${titlesBefore.join(' | ')}] despues=[${titlesAfter.join(' | ')}] arrastre=${midDrag}`
   )
 
   // --- Etapa 6: guardar a disco ---
@@ -729,6 +791,111 @@ try {
     otherBranchDocs.map((d) => d.feature).join(', ')
   )
 
+  // --- Documentación escrita en el repositorio y sin registrar en Git ---
+  // El caso real de un guardado que no llegó a comitearse (falló el commit, se
+  // guardó con la integración desactivada o se cerró la app): el paquete está
+  // entero en el disco pero fuera del historial, así que el árbol de la rama no
+  // lo ve. La app tiene que poder leerlo y registrarlo después.
+  const orphan = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('session:save', {
+        meta: {
+          module: 'inventario',
+          subcategory: '',
+          feature: 'dar-de-baja',
+          title: 'Dar de baja un bien',
+          role: 'bodega',
+          baseUrl: 'http://x'
+        },
+        viewport: { width: 800, height: 600 },
+        sessionId: 'test-huerfano',
+        createdAt: new Date().toISOString(),
+        outputDir: dir,
+        steps: [1, 2].map((n) => ({
+          id: `h${n}`,
+          order: n,
+          action: 'click',
+          title: `Paso ${n}`,
+          description: '',
+          selectorCandidates: [],
+          url: 'http://x',
+          boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+          includeInDocs: true,
+          timestamp: new Date().toISOString()
+        }))
+        // Sin `git`: se escribe en disco y nadie comitea.
+      }),
+    outDir
+  )
+  // Una captura dentro de su `img/`: al leer lo pendiente hay que subir desde el
+  // archivo hasta el paquete que lo contiene, no quedarse en su carpeta.
+  writeFileSync(join(orphan.path, 'img', 'paso-01.png'), 'png-de-prueba')
+
+  const readPending = () =>
+    gui.evaluate((root) => window.docrecorder.invoke('git:pending-docs', root), outDir)
+  const orphanInfo = (await readPending()).find((d) => d.feature === 'dar-de-baja')
+  check(
+    orphanInfo?.untracked === true &&
+      orphanInfo.steps === 2 &&
+      orphanInfo.dir === 'inventario/dar-de-baja',
+    'Sin registrar: se lee un paquete escrito que Git no tiene en ningún commit',
+    JSON.stringify({ dir: orphanInfo?.dir, pasos: orphanInfo?.steps })
+  )
+  check(
+    orphanInfo?.pendingFiles.includes('inventario/dar-de-baja/img/paso-01.png'),
+    'Sin registrar: las capturas de img/ cuentan como parte de su paquete',
+    orphanInfo?.pendingFiles.join(' ')
+  )
+
+  const pendingCommit = await gui.evaluate(
+    ([root, dir]) =>
+      window.docrecorder.invoke('git:commit-pending', {
+        repoRoot: root,
+        dir,
+        branch: 'docs/inventario',
+        message: 'docs(inventario): Dar de baja un bien',
+        push: false
+      }),
+    [outDir, 'inventario/dar-de-baja']
+  )
+  check(
+    pendingCommit.commit !== null && pendingCommit.createdBranch,
+    'Sin registrar: registrarlo crea su rama y hace el commit',
+    pendingCommit.message
+  )
+  const pendingFilesCommitted = g('show --name-only --pretty=format: docs/inventario')
+    .split('\n')
+    .filter(Boolean)
+  check(
+    [
+      'inventario/_category_.json',
+      'inventario/dar-de-baja/index.mdx',
+      'inventario/dar-de-baja/session.json',
+      'inventario/dar-de-baja/flow.json',
+      'inventario/dar-de-baja/img/paso-01.png'
+    ].every((f) => pendingFilesCommitted.includes(f)),
+    'Sin registrar: viaja el paquete entero, con su img/ y su _category_.json',
+    pendingFilesCommitted.join(' ')
+  )
+  const afterRegister = await readPending()
+  check(
+    !afterRegister.some((d) => d.feature === 'dar-de-baja'),
+    'Sin registrar: lo registrado deja de figurar como pendiente',
+    afterRegister.map((d) => d.dir).join(' ') || '(nada pendiente)'
+  )
+
+  // El otro caso pendiente: ya commiteado, pero cambiado después en el disco.
+  writeFileSync(join(outDir, 'inventario', 'dar-de-baja', 'index.mdx'), '# tocado a mano\n')
+  const changedPending = (await readPending()).find((d) => d.feature === 'dar-de-baja')
+  check(
+    changedPending !== undefined && changedPending.untracked === false,
+    'Sin registrar: también se ve un paquete commiteado y cambiado después',
+    JSON.stringify(changedPending?.pendingFiles ?? [])
+  )
+  // Se deshace: un archivo seguido y sucio bloquearía el cambio de rama de los
+  // guardados siguientes, que es justo la salvaguarda que la app aplica.
+  g('checkout -- inventario/dar-de-baja/index.mdx')
+
   // --- Subcategoría (3 niveles) + nota destacada por paso ---
   const subSave = await gui.evaluate(
     (dir) =>
@@ -775,7 +942,9 @@ try {
   )
   check(
     !subSave.gitError &&
-      existsSync(join(outDir, 'administracion', 'institucion', 'registrar-institucion', 'index.mdx')),
+      existsSync(
+        join(outDir, 'administracion', 'institucion', 'registrar-institucion', 'index.mdx')
+      ),
     'Subcategoría: la estructura es de tres niveles módulo/subcategoría/funcionalidad',
     subSave.gitError ?? subSave.path
   )
@@ -788,7 +957,9 @@ try {
     'Subcategoría: se crea un _category_.json por cada nivel (módulo y subcategoría)',
     subCommitted.filter((f) => f.endsWith('_category_.json')).join(' ')
   )
-  const subMdx = g('show docs/administracion:administracion/institucion/registrar-institucion/index.mdx')
+  const subMdx = g(
+    'show docs/administracion:administracion/institucion/registrar-institucion/index.mdx'
+  )
   check(
     /:::tip\[Importante\]/.test(subMdx) &&
       subMdx.includes('<mark>guardar</mark>') &&
@@ -892,7 +1063,9 @@ try {
     gitBranch: document.querySelector('.git-fields .field input')?.value
   }))
   check(
-    adopted.module === 'matriculas' && adopted.role === 'secretaria' && adopted.baseUrl === 'http://x',
+    adopted.module === 'matriculas' &&
+      adopted.role === 'secretaria' &&
+      adopted.baseUrl === 'http://x',
     'Rama de trabajo: elegir una rama recupera módulo, rol y URL base de lo ya documentado',
     JSON.stringify(adopted)
   )
@@ -1221,7 +1394,8 @@ try {
   await gui.fill('.topbar input[placeholder="Sin seleccionar"]', repo2)
   await gui
     .waitForFunction(
-      () => document.querySelector('.topbar input[placeholder="matriculas"]')?.value === 'tesoreria',
+      () =>
+        document.querySelector('.topbar input[placeholder="matriculas"]')?.value === 'tesoreria',
       null,
       { timeout: 15000 }
     )
@@ -1352,7 +1526,14 @@ try {
       meta: { module: 'm', feature: 'f', title: 't', role: 'r', baseUrl: 'http://x' },
       outline: [{ order: 1, title: 'Clic en «Guardar»' }],
       steps: [
-        { id: 's1', order: 1, action: 'click', title: 'Clic en «Guardar»', description: '', url: 'http://x' }
+        {
+          id: 's1',
+          order: 1,
+          action: 'click',
+          title: 'Clic en «Guardar»',
+          description: '',
+          url: 'http://x'
+        }
       ]
     })
   )
@@ -1372,6 +1553,25 @@ try {
       aiWithKey.configured.anthropic &&
       !JSON.stringify(aiWithKey).includes(FAKE_KEY),
     'IA: la clave se guarda y nunca vuelve al renderer'
+  )
+
+  // Un pegado equivocado en un campo enmascarado (un texto con emoji, no una
+  // clave) se rechaza al guardarlo: si se guardara, la petición reventaría al
+  // meterlo en la cabecera HTTP, con un error que no menciona la clave.
+  const aiBadKey = await gui.evaluate(() =>
+    window.docrecorder
+      .invoke('ai:set-key', { provider: 'anthropic', key: 'no es una clave 🫠' })
+      .then(() => null, (err) => String(err?.message ?? err))
+  )
+  check(
+    typeof aiBadKey === 'string' && /clave/i.test(aiBadKey),
+    'IA: una clave con caracteres imposibles se rechaza al guardarla',
+    aiBadKey
+  )
+  const aiStillOk = await gui.evaluate(() => window.docrecorder.invoke('ai:status'))
+  check(
+    aiStillOk.configured.anthropic === true,
+    'IA: el rechazo no pisa la clave que ya estaba guardada'
   )
 
   const settingsRaw = readFileSync(join(userData, 'settings.json'), 'utf8')
@@ -1430,7 +1630,11 @@ try {
   const aiTitles = () =>
     gui.locator('.step-card .step-title').evaluateAll((els) => els.map((e) => e.value))
   const titlesBeforeOne = await aiTitles()
-  await gui.locator('.step-card').first().getByRole('button', { name: /Redactar el paso 1/ }).click()
+  await gui
+    .locator('.step-card')
+    .first()
+    .getByRole('button', { name: /Redactar el paso 1/ })
+    .click()
   await gui.waitForFunction(
     () => document.querySelector('.step-card .step-title')?.value?.startsWith('Redactado: '),
     null,
@@ -1449,14 +1653,78 @@ try {
     titlesAfterOne[1]
   )
 
+  // --- Contexto pegado para la IA ---
+  // La captura no dice cómo se llaman de verdad los campos ni qué valida cada
+  // uno: eso se pega aquí y viaja con cada redacción. El proveedor simulado
+  // arma el prompt de verdad, así que ver la marca en la descripción prueba que
+  // el material llegó hasta él.
+  await gui.getByRole('button', { name: /Contexto/ }).click()
+  await gui.waitForSelector('.context-modal', { timeout: 5000 })
+  const REFERENCE = 'Curso → Nombre (obligatorio), Paralelo (A|B), Cupo (número).'
+  // Lo que se pega aquí son líneas largas (una fila de tabla, una consulta, una
+  // URL sin espacios): el texto tiene que AJUSTARSE al ancho del campo, no
+  // salirse de él. Se comprueba sobre el layout real, que es donde se veía.
+  await gui
+    .locator('.context-text')
+    .fill(
+      `SELECT id, nombre, paralelo, cupo FROM cursos WHERE periodo_id = 42 AND estado = 'ACTIVO' ORDER BY nombre ASC;\nhttps://sistema.ejemplo.com/administracion/cursos/listado?periodo=2026-1&estado=activo&orden=nombre`
+    )
+  const contextFit = await gui.evaluate(() => {
+    const el = document.querySelector('.context-text')
+    return {
+      wrap: getComputedStyle(el).whiteSpace,
+      overflow: el.scrollWidth - el.clientWidth
+    }
+  })
+  check(
+    contextFit.wrap === 'pre-wrap' && contextFit.overflow <= 1,
+    'Contexto IA: el texto pegado se ajusta al ancho del campo y no se sale del borde',
+    `${contextFit.wrap} · desborde ${contextFit.overflow}px`
+  )
+  await gui.locator('.context-text').fill(REFERENCE)
+  await gui.getByRole('button', { name: /Guardar contexto/ }).click()
+  await gui.waitForSelector('.context-modal', { state: 'detached', timeout: 3000 })
+  check(
+    (await gui.locator('.btn-context.set').count()) === 1,
+    'Contexto IA: el panel marca que hay material de referencia puesto'
+  )
+
+  await gui
+    .locator('.step-card')
+    .first()
+    .getByRole('button', { name: /Redactar el paso 1/ })
+    .click()
+  await gui.waitForFunction(
+    () =>
+      document
+        .querySelector('.step-card .step-desc')
+        ?.value?.includes('Con material de referencia'),
+    null,
+    { timeout: 15000 }
+  )
+  const descWithContext = await gui.locator('.step-card .step-desc').first().inputValue()
+  check(
+    descWithContext.includes('Con material de referencia.'),
+    'Contexto IA: el material pegado llega al prompt de la redacción',
+    descWithContext
+  )
+
+  // Sobrevive a cerrar la app: viaja en el borrador, como el resto de la sesión.
+  await gui.waitForTimeout(1200)
+  const draftWithContext = await gui.evaluate(() => window.docrecorder.invoke('draft:load'))
+  check(
+    draftWithContext?.meta?.aiContext === REFERENCE,
+    'Contexto IA: se autoguarda con el borrador',
+    draftWithContext?.meta?.aiContext ?? '(sin contexto)'
+  )
+
   // «Redactar todos» solo debe tocar los pasos que van al manual: pagar tokens
   // por un paso excluido de la documentación no tendría sentido.
   await gui.locator('.step-card').nth(1).locator('.include-toggle input').uncheck()
   const titlesBeforeAll = await aiTitles()
   await gui.getByRole('button', { name: /Redactar todos/ }).click()
   await gui.waitForFunction(
-    (before) =>
-      document.querySelectorAll('.step-card .step-title')[0]?.value !== before[0],
+    (before) => document.querySelectorAll('.step-card .step-title')[0]?.value !== before[0],
     titlesBeforeAll,
     { timeout: 15000 }
   )
@@ -1525,7 +1793,11 @@ try {
       for (let x = 0; x < shot.width; x++) {
         const i = (y * shot.width + x) * shot.channels
         const d = shot.data
-        if (Math.abs(d[i] - 255) < 30 && Math.abs(d[i + 1] - 87) < 30 && Math.abs(d[i + 2] - 34) < 30) {
+        if (
+          Math.abs(d[i] - 255) < 30 &&
+          Math.abs(d[i + 1] - 87) < 30 &&
+          Math.abs(d[i + 2] - 34) < 30
+        ) {
           if (x < minX) minX = x
           if (x > maxX) maxX = x
           if (y < minY) minY = y
@@ -1567,7 +1839,6 @@ try {
       ? `brillo ${Math.round(dimCheck.before)} antes del modal → ${Math.round(dimCheck.after)} en la captura`
       : 'no se encontró el recuadro'
   )
-
 
   await target.fill('#alumno', 'Ana Pérez')
   await target.fill('#clave', 'secreto123')
@@ -1624,7 +1895,10 @@ try {
   const groupShotOk = await gui.evaluate(() => {
     const cards = [...document.querySelectorAll('.step-card')]
     const img = cards[cards.length - 1]?.querySelector('.thumb img')
-    return { src: decodeURIComponent(img?.src ?? ''), loaded: !!img?.complete && img.naturalWidth > 0 }
+    return {
+      src: decodeURIComponent(img?.src ?? ''),
+      loaded: !!img?.complete && img.naturalWidth > 0
+    }
   })
   check(
     /group-.*\.png/.test(groupShotOk.src) && groupShotOk.loaded,
@@ -1656,7 +1930,10 @@ try {
   // Quitar un campo del grupo debe llevarse también su acción del `flow.json`:
   // si no, el runner reproduciría un campo que el manual ya no documenta.
   const groupedCard = gui.locator('.step-card').last()
-  const removedLabel = await groupedCard.locator('.field-list li .field-label').first().textContent()
+  const removedLabel = await groupedCard
+    .locator('.field-list li .field-label')
+    .first()
+    .textContent()
   await groupedCard.locator('.field-list li .field-remove').first().click({ force: true })
   await gui.waitForFunction(
     (expected) => {
@@ -1675,10 +1952,12 @@ try {
     `quitado ${removedLabel} · quedan ${remaining.join(' ')}`
   )
 
-  // --- Tabla: los controles de filas distintas no se funden en un paso ---
-  // Marcar la casilla de dos registros son dos acciones, no un formulario que se
-  // rellena. Antes se fundían en un solo paso «Rellenar el formulario» que
-  // mezclaba filas y no describía ninguna.
+  // --- Tabla: qué se funde y qué no dentro de una rejilla ---
+  //
+  // Los tres ámbitos que sí significan algo en un manual: la misma COLUMNA en
+  // varias filas (la misma acción repetida sobre varios registros), la misma
+  // FILA (un registro que se edita en línea) y nada más: dos controles distintos
+  // de filas distintas no tienen que ver entre sí.
   await target.goto(fixture.url)
   await target.waitForLoadState('domcontentloaded')
   if (!(await gui.locator('.group-toggle input').isChecked())) {
@@ -1689,20 +1968,309 @@ try {
   await gui.waitForFunction(() =>
     document.querySelector('.status')?.textContent?.includes('Grabando')
   )
+  // Misma columna, dos filas: marcar la casilla de dos registros es UN paso.
   await target.click('#sel-andy')
   await waitSteps(beforeTable + 1, 'tabla: primera fila')
   await target.click('#sel-paulo')
-  await waitSteps(beforeTable + 2, 'tabla: segunda fila')
-  const tableSteps = await gui.evaluate(() =>
-    [...document.querySelectorAll('.step-card')].slice(-2).map((card) => ({
-      title: card.querySelector('.step-title')?.value,
-      fields: card.querySelectorAll('.field-list li').length
-    }))
+  await settle(() =>
+    /filas/.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+  )
+  const column = await gui.evaluate(() => {
+    const card = [...document.querySelectorAll('.step-card')].pop()
+    return {
+      total: document.querySelectorAll('.step-card').length,
+      title: card.querySelector('.step-title')?.value ?? '',
+      items: [...card.querySelectorAll('.field-label')].map((l) => l.textContent.replace(/:$/, ''))
+    }
+  })
+  check(
+    column.total === beforeTable + 1 &&
+      /2 filas/.test(column.title) &&
+      column.items.length === 2,
+    'Tabla: la misma columna en dos filas se funde en un paso',
+    `${column.title} · ${column.items.join(' · ')}`
+  )
+
+  // Otra columna de otra fila NO entra en ese grupo: no es la misma acción ni el
+  // mismo registro.
+  await target.selectOption('#estado-andy', 'Retirado')
+  await waitSteps(beforeTable + 2, 'tabla: otra columna')
+  check(
+    (await stepCount()) === beforeTable + 2,
+    'Tabla: un control de otra columna y otra fila no entra en el grupo de columna'
+  )
+  // Pero la MISMA columna sí, y el encabezado da el título.
+  await target.selectOption('#estado-paulo', 'Retirado')
+  await settle(() =>
+    /«Estado»/.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+  )
+  const stateColumn = await gui.evaluate(() => ({
+    total: document.querySelectorAll('.step-card').length,
+    title: [...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? ''
+  }))
+  check(
+    stateColumn.total === beforeTable + 2 && /«Estado»/.test(stateColumn.title),
+    'Tabla: la columna se funde y el paso se titula con su encabezado',
+    stateColumn.title
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // La misma FILA sí se funde entera, aunque sean controles distintos: es un
+  // registro que se está editando en línea.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeRow = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#sel-andy')
+  await waitSteps(beforeRow + 1, 'fila: casilla')
+  await target.selectOption('#estado-andy', 'Retirado')
+  await settle(() =>
+    /fila/i.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+  )
+  const rowGroup = await gui.evaluate(() => {
+    const card = [...document.querySelectorAll('.step-card')].pop()
+    return {
+      total: document.querySelectorAll('.step-card').length,
+      title: card.querySelector('.step-title')?.value ?? '',
+      items: [...card.querySelectorAll('.field-label')].map((l) => l.textContent.replace(/:$/, ''))
+    }
+  })
+  check(
+    rowGroup.total === beforeRow + 1 && /fila/i.test(rowGroup.title) && rowGroup.items.length === 2,
+    'Tabla: los controles de una misma fila se funden en un paso',
+    `${rowGroup.title} · ${rowGroup.items.join(' · ')}`
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // --- Pestañas y botones: cada familia se funde consigo misma ---
+  //
+  // Recorrer dos pestañas es un paso del manual, no dos. Y lo mismo dos botones
+  // seguidos. Lo que NO debe pasar es que se mezclen entre sí ni con los campos:
+  // ahí está el corte natural del flujo.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeTabs = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#tab-pagos')
+  await waitSteps(beforeTabs + 1, 'pestañas: primera')
+  await target.click('#tab-datos')
+  await settle(() =>
+    /pestañas/.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+  )
+  const tabs = await gui.evaluate(() => {
+    const card = [...document.querySelectorAll('.step-card')].pop()
+    return {
+      total: document.querySelectorAll('.step-card').length,
+      title: card.querySelector('.step-title')?.value ?? '',
+      items: [...card.querySelectorAll('.field-label')].map((l) => l.textContent.replace(/:$/, '')),
+      canUngroup: !!card.querySelector('.icon-btn[title^="Deshacer"]')
+    }
+  })
+  check(
+    tabs.total === beforeTabs + 1 && /pestañas «Pagos» y «Datos»/.test(tabs.title),
+    'Pestañas: dos pestañas seguidas se funden en un paso con sus nombres',
+    `${tabs.title} · ${tabs.total} tarjeta(s)`
   )
   check(
-    (await stepCount()) === beforeTable + 2 && tableSteps.every((s) => s.fields === 0),
-    'Tabla: marcar dos filas produce dos pasos, no un formulario agrupado',
-    JSON.stringify(tableSteps)
+    tabs.canUngroup && tabs.items.length === 2,
+    'Agrupar seguidos: una fusión automática también se puede deshacer',
+    tabs.items.join(' · ')
+  )
+
+  // Un botón detrás de las pestañas NO entra: es otra familia.
+  await target.click('[data-testid="nueva-matricula"]')
+  await waitSteps(beforeTabs + 2, 'pestañas: botón detrás')
+  check(
+    (await stepCount()) === beforeTabs + 2,
+    'Agrupar seguidos: al cambiar de tipo de control empieza un paso nuevo'
+  )
+  // Y dos botones seguidos sí, aunque uno sea el que cierra el modal.
+  await target.click('[data-testid="cancelar"]')
+  await settle(() =>
+    /«Cancelar»/.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+  )
+  const buttons = await gui.evaluate(() => ({
+    total: document.querySelectorAll('.step-card').length,
+    title: [...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? ''
+  }))
+  check(
+    buttons.total === beforeTabs + 2 && /Pulsar «Nueva matrícula» y «Cancelar»/.test(buttons.title),
+    'Botones: dos botones seguidos se funden y el paso los enumera',
+    buttons.title
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // --- Agrupar a mano lo que el motor deja aparte ---
+  // Tres fallos que aparecieron documentando el sistema real, los tres sobre la
+  // MISMA captura del grupo:
+  //  1. El botón que cierra un formulario es un paso aparte (un botón no es un
+  //     campo), y al agruparlo a mano su recuadro no aparecía.
+  //  2. Los campos re-renderizados dejaban de marcarse: el nodo que el observador
+  //     recordaba ya no existía, aunque el campo siguiera en pantalla.
+  //  3. Con un desplegable abierto encima, los campos tapados salían lavados: se
+  //     les «devolvía el brillo» sobre un panel opaco y todo lo claro se iba a
+  //     blanco puro.
+  // `fromEnd` = 1 es la última tarjeta, 2 la anterior: la del grupo no siempre es
+  // la última (tras pulsar el botón, su propia tarjeta va detrás).
+  const groupShotOf = async (fromEnd) => {
+    const src = await gui.evaluate((n) => {
+      const cards = [...document.querySelectorAll('.step-card')]
+      return cards[cards.length - n]?.querySelector('.thumb img')?.src ?? ''
+    }, fromEnd)
+    const file = decodeURIComponent(new URL(src).pathname.replace(/^\//, ''))
+    return { file, png: decodePng(readFileSync(file)) }
+  }
+  const waitGroupShot = async (fromEnd, previousName) => {
+    await gui.waitForFunction(
+      ([n, before]) => {
+        const cards = [...document.querySelectorAll('.step-card')]
+        const img = cards[cards.length - n]?.querySelector('.thumb img')
+        if (!img) return false
+        const src = decodeURIComponent(img.src)
+        return (
+          src.includes('group-') && !src.includes(before) && img.complete && img.naturalWidth > 0
+        )
+      },
+      [fromEnd, previousName],
+      { timeout: 25000 }
+    )
+    return groupShotOf(fromEnd)
+  }
+
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeMixed = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('[data-testid="nueva-matricula"]')
+  await waitSteps(beforeMixed + 1, 'mixto: abrir el modal')
+  await target.fill('#alumno', 'Ana Pérez')
+  await target.fill('#clave', 'secreto123')
+  // El clic en «Aplicar cambios» cierra el campo anterior (focusout), da su propio
+  // paso y, por el camino, reemplaza los nodos de los campos.
+  await target.click('[data-testid="aplicar"]')
+  await waitSteps(beforeMixed + 3, 'mixto: campos y botón')
+
+  const fieldsOnly = await waitGroupShot(2, 'ninguna')
+  const boxesFieldsOnly = countHighlightBoxes(fieldsOnly.png)
+  check(
+    boxesFieldsOnly === 2,
+    'Grupo: la captura del formulario marca sus dos campos',
+    `${boxesFieldsOnly} recuadro(s) en ${fieldsOnly.file.split('/').pop()}`
+  )
+
+  // --- Lo que tapa al elemento: velo, panel opaco o adorno sin fondo ---
+  // Se llama al observador directamente para leer su clasificación: es la decisión
+  // que dejaba «borrosos» los campos del grupo.
+  const cover = await target.evaluate(() => {
+    const api = window.__docrec
+    const field = document.querySelector('#alumno')
+    const measure = (background) => {
+      let layer = null
+      if (background) {
+        layer = document.createElement('div')
+        layer.style.cssText = `position:fixed;inset:0;z-index:99999;background:${background}`
+        document.body.appendChild(layer)
+      }
+      const result = api.highlightGroup({ targets: [{ refs: [], fallback: field }] })
+      api.clearHighlight()
+      layer?.remove()
+      return result
+    }
+    return {
+      libre: measure(null),
+      adorno: measure('transparent'),
+      velo: measure('rgba(0,0,0,0.45)'),
+      panel: measure('#ffffff')
+    }
+  })
+  check(
+    cover.libre.marked === 1 && cover.libre.dimmed === 0 && cover.libre.blocked === 0,
+    'Resaltado: un elemento despejado se marca sin compensar nada',
+    JSON.stringify(cover.libre)
+  )
+  check(
+    cover.adorno.dimmed === 0 && cover.adorno.blocked === 0,
+    'Resaltado: una capa SIN fondo (el borde decorativo de un campo) no cuenta como tapar',
+    JSON.stringify(cover.adorno)
+  )
+  check(
+    cover.velo.dimmed === 1 && cover.velo.blocked === 0,
+    'Resaltado: bajo un velo translúcido sí se le devuelve el brillo',
+    JSON.stringify(cover.velo)
+  )
+  check(
+    cover.panel.dimmed === 0 && cover.panel.blocked === 1,
+    'Resaltado: bajo un panel opaco (un desplegable abierto) no se aclara nada y se avisa',
+    JSON.stringify(cover.panel)
+  )
+
+  // --- El botón se agrupa a mano con el formulario ---
+  const mixedCards = gui.locator('.step-card')
+  const mixedTotal = await mixedCards.count()
+  await mixedCards.nth(mixedTotal - 2).locator('.step-select').check()
+  await mixedCards.nth(mixedTotal - 1).locator('.step-select').check()
+  await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    mixedTotal,
+    { timeout: 5000 }
+  )
+  const mixedTitle = await gui.evaluate(
+    () => [...document.querySelectorAll('.step-title')].pop()?.value
+  )
+  check(
+    mixedTitle === 'Rellenar el formulario y pulsar «Aplicar cambios»',
+    'Grupo mixto: el formulario y el botón que lo cierra se leen como un solo paso',
+    mixedTitle
+  )
+  const withButton = await waitGroupShot(1, fieldsOnly.file.split('/').pop())
+  const boxesWithButton = countHighlightBoxes(withButton.png)
+  check(
+    boxesWithButton === boxesFieldsOnly + 1,
+    'Grupo mixto: marca el botón Y los campos ya re-renderizados (localizados por selector)',
+    `${boxesFieldsOnly} → ${boxesWithButton} recuadro(s)`
+  )
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // --- Una fila de la tabla con un botón de fuera ---
+  // El otro caso real: la fila dice qué registro y el botón de la barra qué se
+  // hace con él. Son dos pasos que documentan una sola cosa.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeRowBtn = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#sel-andy')
+  await waitSteps(beforeRowBtn + 1, 'fila+botón: fila')
+  await target.click('[aria-label="Exportar listado"]')
+  await waitSteps(beforeRowBtn + 2, 'fila+botón: botón de la barra')
+  const rowCards = gui.locator('.step-card')
+  const rowTotal = await rowCards.count()
+  await rowCards.nth(rowTotal - 2).locator('.step-select').check()
+  await rowCards.nth(rowTotal - 1).locator('.step-select').check()
+  await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    rowTotal,
+    { timeout: 5000 }
+  )
+  const rowBtnShot = await waitGroupShot(1, 'ninguna')
+  const boxesRowBtn = countHighlightBoxes(rowBtnShot.png)
+  check(
+    boxesRowBtn === 2,
+    'Grupo mixto: una fila de la tabla y un botón de fuera se marcan los dos',
+    `${boxesRowBtn} recuadro(s)`
   )
   await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
 
@@ -1731,8 +2299,21 @@ try {
     menuOpenTitle
   )
 
+  // Abrir el menú y elegir su opción son DOS botones seguidos: el mismo tipo de
+  // control, así que se funden en un paso, que es como lo cuenta un manual.
   await target.click('#ver-editar')
-  await waitSteps(beforeMenu + 2, 'menú: elegir opción')
+  await settle(() =>
+    /«Ver».*«Editar»/.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+  )
+  const menuGroup = await gui.evaluate(() => ({
+    total: document.querySelectorAll('.step-card').length,
+    title: [...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? ''
+  }))
+  check(
+    menuGroup.total === beforeMenu + 1 && /«Ver».*«Editar»/.test(menuGroup.title),
+    'Menú: abrir el menú y elegir su opción se funden en un paso',
+    `${menuGroup.title} · ${menuGroup.total} tarjeta(s)`
+  )
   await gui.waitForFunction(
     () => {
       const cards = [...document.querySelectorAll('.step-card')]
@@ -1811,10 +2392,898 @@ try {
   )
   await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
 
+  // --- Agrupar a mano, bloque de contenido y captura externa ---
+  // Las tres formas de documentar lo que el motor no puede grabar por sí solo:
+  // unir pasos que son UNO para quien lee, escribir contenido de Docusaurus y
+  // meter una pantalla ajena al navegador.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  const beforeExtras = await stepCount()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  // Dos controles de filas Y columnas distintas: el motor los deja como dos
+  // pasos (no son la misma acción ni el mismo registro) y es justo lo que hay
+  // que poder unir a mano cuando para el manual sí son un paso.
+  await target.click('#sel-andy')
+  await waitSteps(beforeExtras + 1, 'extras: fila 1')
+  await target.selectOption('#estado-paulo', 'Retirado')
+  await waitSteps(beforeExtras + 2, 'extras: fila 2')
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // Selección no contigua: el botón se apaga y explica por qué.
+  await gui.locator('.step-card').first().locator('.step-select').check()
+  await gui.locator('.step-card').last().locator('.step-select').check()
+  await gui.waitForSelector('.panel-toolbar.selection', { timeout: 5000 })
+  const farApart = await gui.evaluate(() => ({
+    disabled: document.querySelector('.panel-toolbar.selection .btn.primary')?.disabled,
+    hint: document.querySelector('.selection-hint')?.textContent ?? ''
+  }))
+  check(
+    farApart.disabled === true && /seguidos/i.test(farApart.hint),
+    'Agrupar a mano: dos pasos separados no se agrupan y se explica el motivo',
+    farApart.hint
+  )
+  await gui.locator('.panel-toolbar.selection .btn:has-text("Cancelar")').click()
+
+  // Las dos últimas tarjetas SÍ son contiguas: se agrupan en una.
+  const cardsBeforeGroup = await gui.locator('.step-card').count()
+  await gui
+    .locator('.step-card')
+    .nth(cardsBeforeGroup - 2)
+    .locator('.step-select')
+    .check()
+  await gui
+    .locator('.step-card')
+    .nth(cardsBeforeGroup - 1)
+    .locator('.step-select')
+    .check()
+  await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    cardsBeforeGroup,
+    { timeout: 5000 }
+  )
+  const manualGroup = await gui.evaluate(() => {
+    const card = [...document.querySelectorAll('.step-card')].pop()
+    return [...card.querySelectorAll('.field-label')].map((l) => l.textContent.replace(/:$/, ''))
+  })
+  check(
+    manualGroup.length === 2 &&
+      manualGroup.some((i) => /Seleccionar Andy/.test(i)) &&
+      manualGroup.some((i) => /Estado de Paulo/.test(i)),
+    'Agrupar a mano: dos controles que el motor deja aparte se funden en un paso',
+    manualGroup.join(' · ')
+  )
+
+  // Y se puede deshacer, recuperando los dos pasos con su captura.
+  await gui.locator('.step-card').last().locator('.icon-btn[title^="Deshacer"]').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n,
+    cardsBeforeGroup,
+    { timeout: 5000 }
+  )
+  const restored = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card')].slice(-2).map((c) => ({
+      title: c.querySelector('.step-title')?.value ?? '',
+      shot: !!c.querySelector('.thumb img')?.getAttribute('src')
+    }))
+  )
+  check(
+    restored.length === 2 && restored.every((c) => c.shot && /(Seleccionar|Estado)/.test(c.title)),
+    'Agrupar a mano: deshacer devuelve cada paso con su propia captura',
+    restored.map((c) => c.title).join(' · ')
+  )
+  // Se vuelven a agrupar: así el paquete guardado más abajo lleva el grupo.
+  await gui
+    .locator('.step-card')
+    .nth(cardsBeforeGroup - 2)
+    .locator('.step-select')
+    .check()
+  await gui
+    .locator('.step-card')
+    .nth(cardsBeforeGroup - 1)
+    .locator('.step-select')
+    .check()
+  await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    cardsBeforeGroup,
+    { timeout: 5000 }
+  )
+
+  // Bloque de contenido: se escribe sintaxis de Docusaurus y se previsualiza.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  await gui.waitForSelector('.step-card.kind-content', { timeout: 5000 })
+  const contentCard = gui.locator('.step-card.kind-content').last()
+  await contentCard.locator('.step-title').fill('Estados de una matrícula')
+  await contentCard
+    .locator('.content-body')
+    .fill(
+      [
+        '| Estado | Significado | Editable |',
+        '| --- | --- | :---: |',
+        '| Activa | La matrícula está vigente | Sí |',
+        '| Anulada | Se dio de baja | No |',
+        '',
+        'Si el saldo es < 0 la matrícula no se activa.',
+        '',
+        '```sql title="consulta.sql"',
+        'SELECT * FROM matriculas WHERE estado = 1;',
+        '```',
+        '',
+        '<Tabs>',
+        '  <TabItem value="admin" label="Administrador">',
+        '  Puede anular la matrícula.',
+        '  </TabItem>',
+        '</Tabs>'
+      ].join('\n')
+    )
+  await gui.waitForFunction(
+    () => !!document.querySelector('.step-card.kind-content .content-preview table'),
+    null,
+    { timeout: 5000 }
+  )
+  const preview = await gui.evaluate(() => {
+    const box = document.querySelector('.step-card.kind-content .content-preview')
+    return {
+      headers: [...box.querySelectorAll('th')].map((th) => th.textContent),
+      rows: box.querySelectorAll('tbody tr').length,
+      code: box.querySelector('.code-block code')?.textContent ?? '',
+      codeTitle: box.querySelector('.code-title')?.textContent ?? '',
+      tabs: box.querySelector('.mdx-tab-label')?.textContent ?? '',
+      // El `<` suelto debe verse como texto, no interpretarse como etiqueta.
+      escaped: box.textContent.includes('saldo es < 0')
+    }
+  })
+  check(
+    preview.headers.join('|') === 'Estado|Significado|Editable' && preview.rows === 2,
+    'Contenido: una tabla Markdown se previsualiza como tabla',
+    `${preview.headers.join(' · ')} (${preview.rows} filas)`
+  )
+  check(
+    /SELECT \* FROM matriculas/.test(preview.code) && preview.codeTitle === 'consulta.sql',
+    'Contenido: el bloque de código se previsualiza con su título',
+    preview.codeTitle
+  )
+  check(
+    preview.tabs === 'Administrador',
+    'Contenido: las pestañas de Docusaurus se previsualizan con su etiqueta',
+    preview.tabs
+  )
+  check(preview.escaped, 'Contenido: un «<» suelto se muestra como texto, no como etiqueta')
+
+  // Captura externa: fuente simulada → recorte → paso.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Captura de pantalla")').click()
+  await gui.waitForSelector('.capture-dialog', { timeout: 5000 })
+  await gui.waitForSelector('.capture-source', { timeout: 10000 })
+  const sourceName = await gui.locator('.capture-source .capture-name').first().textContent()
+  check(
+    sourceName === 'Pantalla de prueba',
+    'Captura externa: el selector lista las pantallas disponibles',
+    sourceName
+  )
+  await gui.locator('.capture-source').first().click()
+  await gui.waitForSelector('.capture-canvas', { timeout: 10000 })
+  // El lienzo existe desde el primer render, pero no tiene tamaño real hasta que
+  // la imagen se ha cargado: arrastrar antes no seleccionaría nada.
+  await gui.waitForFunction(
+    () => (document.querySelector('.capture-canvas')?.width ?? 0) > 300,
+    null,
+    { timeout: 10000 }
+  )
+  const canvasBox = await gui.locator('.capture-canvas').boundingBox()
+  await gui.mouse.move(canvasBox.x + canvasBox.width * 0.2, canvasBox.y + canvasBox.height * 0.2)
+  await gui.mouse.down()
+  await gui.mouse.move(canvasBox.x + canvasBox.width * 0.8, canvasBox.y + canvasBox.height * 0.8, {
+    steps: 10
+  })
+  await gui.mouse.up()
+  const sizeBefore = await gui.evaluate(() => {
+    const c = document.querySelector('.capture-canvas')
+    return { w: c.width, h: c.height }
+  })
+  await gui.locator('.capture-dialog .btn:has-text("Aplicar")').click()
+  await gui.waitForFunction(
+    (before) => document.querySelector('.capture-canvas')?.width < before,
+    sizeBefore.w,
+    { timeout: 5000 }
+  )
+  const sizeAfter = await gui.evaluate(() => {
+    const c = document.querySelector('.capture-canvas')
+    return { w: c.width, h: c.height }
+  })
+  check(
+    sizeAfter.w < sizeBefore.w && sizeAfter.h < sizeBefore.h,
+    'Captura externa: el recorte reduce la imagen antes de aceptarla',
+    `${sizeBefore.w}×${sizeBefore.h} → ${sizeAfter.w}×${sizeAfter.h}`
+  )
+  await gui.locator('.capture-dialog .btn:has-text("Añadir como paso")').click()
+  await gui.waitForSelector('.capture-dialog', { state: 'detached', timeout: 10000 })
+  await gui.waitForSelector('.step-card.kind-capture', { timeout: 5000 })
+  const captureCard = await gui.evaluate(() => {
+    const card = document.querySelector('.step-card.kind-capture')
+    return {
+      title: card.querySelector('.step-title')?.value ?? '',
+      chip: card.querySelector('.selector-chip')?.textContent ?? ''
+    }
+  })
+  check(
+    /Pantalla de prueba/.test(captureCard.title) && /ajena al visor/.test(captureCard.chip),
+    'Captura externa: se añade como paso, sin selector y marcada como externa',
+    captureCard.title
+  )
+
+  // --- Pegar del portapapeles (§15) ---
+  //
+  // El pegado se prueba por su camino real, el evento del teclado: se construye
+  // un `ClipboardEvent` con lo que llevaría el portapapeles (una imagen, o una
+  // tabla en HTML) y se lanza sobre el documento. Así la prueba no depende de lo
+  // que tuviera copiado quien la ejecuta.
+  const cardsBeforePaste = await gui.locator('.step-card').count()
+  // Se hace activa la PRIMERA tarjeta: lo pegado debe caer justo detrás de ella,
+  // no al final de la lista.
+  await gui.locator('.step-card').first().locator('.step-badge').click()
+  await gui.evaluate(async () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 160
+    canvas.height = 90
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#0a5522'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+    const data = new DataTransfer()
+    data.items.add(new File([blob], 'pegada.png', { type: 'image/png' }))
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }))
+  })
+  await gui.waitForSelector('.step-card.kind-image', { timeout: 5000 })
+  const pastedImage = await gui.evaluate(() => {
+    const cards = [...document.querySelectorAll('.step-card')]
+    const index = cards.findIndex((c) => c.classList.contains('kind-image'))
+    const card = cards[index]
+    return {
+      index,
+      total: cards.length,
+      title: card.querySelector('.step-title')?.value ?? '',
+      chip: card.querySelector('.selector-chip')?.textContent ?? '',
+      shot: card.querySelector('.thumb img')?.getAttribute('src') ?? '',
+      canAdjust: !!card.querySelector('.icon-btn[title^="Recortar"]')
+    }
+  })
+  check(
+    pastedImage.total === cardsBeforePaste + 1 &&
+      /Imagen pegada/.test(pastedImage.title) &&
+      /imagen pegada/.test(pastedImage.chip) &&
+      pastedImage.shot.startsWith('docshot://'),
+    'Pegar: una imagen del portapapeles se convierte en una tarjeta con su imagen',
+    pastedImage.title
+  )
+  check(
+    pastedImage.index === 1,
+    'Pegar: la tarjeta se inserta detrás de la que estaba activa, no al final',
+    `posición ${pastedImage.index + 1} de ${pastedImage.total}`
+  )
+
+  // La imagen pegada admite lo mismo que cualquier paso: aquí, una nota
+  // destacada, que es la razón de que sea un paso y no un adjunto.
+  const imageCard = gui.locator('.step-card.kind-image')
+  await imageCard.locator('.step-title').fill('Plantilla de carga masiva')
+  await imageCard.locator('.note-btn').click()
+  await imageCard.locator('.note-editor .note-type-warning').click()
+  await imageCard.locator('.note-title').fill('Ojo con el formato')
+  await imageCard.locator('.note-body').fill('La plantilla **no** admite columnas añadidas.')
+  await gui.waitForFunction(
+    () =>
+      /no/.test(
+        document.querySelector('.step-card.kind-image .note-preview .admonition-content')
+          ?.textContent ?? ''
+      ),
+    null,
+    { timeout: 5000 }
+  )
+  check(
+    await imageCard.locator('.note-preview.admonition-warning').count(),
+    'Pegar: la tarjeta de imagen admite nota destacada con estilo de Docusaurus'
+  )
+
+  // Ajustar después: el ✂ de la tarjeta reabre el editor con SU imagen (sin pasar
+  // por el selector de fuentes) y solo cambia la imagen, no lo ya redactado.
+  await imageCard.locator('.icon-btn[title^="Recortar"]').click()
+  await gui.waitForSelector('.capture-canvas', { timeout: 10000 })
+  check(
+    !(await gui.locator('.capture-source').count()),
+    'Pegar: ajustar la imagen de una tarjeta entra directo al editor, sin selector de fuentes'
+  )
+  const adjustBox = await gui.locator('.capture-canvas').boundingBox()
+  await gui.mouse.move(adjustBox.x + adjustBox.width * 0.25, adjustBox.y + adjustBox.height * 0.25)
+  await gui.mouse.down()
+  await gui.mouse.move(
+    adjustBox.x + adjustBox.width * 0.75,
+    adjustBox.y + adjustBox.height * 0.75,
+    {
+      steps: 10
+    }
+  )
+  await gui.mouse.up()
+  await gui.locator('.capture-dialog .btn:has-text("Aplicar")').click()
+  await gui.locator('.capture-dialog .btn:has-text("Guardar la imagen")').click()
+  await gui.waitForSelector('.capture-dialog', { state: 'detached', timeout: 10000 })
+  const adjusted = await gui.evaluate((before) => {
+    const card = document.querySelector('.step-card.kind-image')
+    return {
+      changed: (card.querySelector('.thumb img')?.getAttribute('src') ?? '') !== before,
+      title: card.querySelector('.step-title')?.value ?? '',
+      note: card.querySelector('.note-body')?.value ?? ''
+    }
+  }, pastedImage.shot)
+  check(
+    adjusted.changed &&
+      adjusted.title === 'Plantilla de carga masiva' &&
+      /columnas/.test(adjusted.note),
+    'Pegar: recortar una tarjeta cambia su imagen y conserva título y nota',
+    adjusted.title
+  )
+
+  // Pegar texto no es lo mismo que pegar una imagen: una tabla copiada del sistema
+  // documentado se convierte en un bloque de contenido, ya en Markdown.
+  const contentBefore = await gui.locator('.step-card.kind-content').count()
+  await gui.evaluate(() => {
+    const data = new DataTransfer()
+    data.setData(
+      'text/html',
+      '<table><tr><th>Campo</th><th>Obligatorio</th></tr><tr><td>Cédula</td><td>Sí</td></tr></table>'
+    )
+    data.setData('text/plain', 'Campo Obligatorio Cédula Sí')
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }))
+  })
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card.kind-content').length === n + 1,
+    contentBefore,
+    { timeout: 5000 }
+  )
+  const pastedTable = await gui.evaluate(() => {
+    // El bloque pegado no es el último de la lista: se insertó junto a la tarjeta
+    // activa, así que se busca por su contenido.
+    const card = [...document.querySelectorAll('.step-card.kind-content')].find((c) =>
+      (c.querySelector('.content-body')?.value ?? '').includes('| Campo |')
+    )
+    if (!card) return { body: '', headers: [] }
+    return {
+      body: card.querySelector('.content-body')?.value ?? '',
+      headers: [...card.querySelectorAll('.content-preview th')].map((th) => th.textContent)
+    }
+  })
+  check(
+    /\| Campo \| Obligatorio \|/.test(pastedTable.body) &&
+      pastedTable.headers.join('|') === 'Campo|Obligatorio',
+    'Pegar: una tabla copiada se convierte en un bloque de contenido en Markdown',
+    pastedTable.headers.join(' · ')
+  )
+
+  // Dentro de un campo de texto, pegar sigue siendo pegar texto: la tarjeta solo
+  // se crea cuando el pegado no tiene otro destino.
+  const cardsBeforeGuard = await gui.locator('.step-card').count()
+  await gui.evaluate(async () => {
+    const input = document.querySelector('.step-card .step-title')
+    input.focus()
+    const canvas = document.createElement('canvas')
+    canvas.width = 20
+    canvas.height = 20
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+    const data = new DataTransfer()
+    data.items.add(new File([blob], 'no.png', { type: 'image/png' }))
+    input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }))
+  })
+  await gui.waitForTimeout(500)
+  check(
+    (await gui.locator('.step-card').count()) === cardsBeforeGuard,
+    'Pegar: dentro de un campo de texto no se crea ninguna tarjeta',
+    `${cardsBeforeGuard} tarjetas antes y después`
+  )
+
+  // Y el mismo pegado por el botón, que no tiene evento y lee el portapapeles del
+  // sistema desde el proceso principal (simulado con DOCRECORDER_CAPTURE_FAKE).
+  const imagesBefore = await gui.locator('.step-card.kind-image').count()
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Imagen del portapapeles")').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card.kind-image').length === n + 1,
+    imagesBefore,
+    { timeout: 5000 }
+  )
+  check(true, 'Pegar: «+ Añadir → Imagen del portapapeles» lee el portapapeles del sistema')
+
+  // Guardado: el MDX debe llevar tabla, código, pestañas (con sus imports), la
+  // captura externa y las imágenes pegadas, y NO numerar el bloque de contenido
+  // como un paso más.
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
+  await gui.fill('.topbar input[placeholder="institucion"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', 'extras-de-matricula')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', 'Extras de matrícula')
+  const gitBox = gui.locator('.git-section input[type="checkbox"]').first()
+  if (await gitBox.isChecked()) await gitBox.uncheck()
+  const includedBefore = await gui.evaluate(
+    () =>
+      [...document.querySelectorAll('.step-card')].filter(
+        (c) => c.querySelector('.include-toggle input')?.checked
+      ).length
+  )
+  const contentSteps = await gui.locator('.step-card.kind-content').count()
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 10000 })
+  if (await gui.getByRole('button', { name: 'Guardar de todos modos' }).count()) {
+    await gui.getByRole('button', { name: 'Guardar de todos modos' }).click()
+  }
+  await gui.waitForFunction(
+    () => /Documentación guardada/.test(document.querySelector('.dialog h3')?.textContent ?? ''),
+    null,
+    { timeout: 15000 }
+  )
+  await gui.getByRole('button', { name: 'Cerrar' }).click()
+
+  const extrasDir = join(outDir, 'matriculas', 'extras-de-matricula')
+  const extrasMdx = readFileSync(join(extrasDir, 'index.mdx'), 'utf8')
+  const extrasSession = JSON.parse(readFileSync(join(extrasDir, 'session.json'), 'utf8'))
+  const extrasFlow = JSON.parse(readFileSync(join(extrasDir, 'flow.json'), 'utf8'))
+
+  check(
+    /\| Estado \| Significado \| Editable \|/.test(extrasMdx) &&
+      /\| Activa \| La matrícula está vigente \| Sí \|/.test(extrasMdx),
+    'Contenido: la tabla se publica tal cual en el MDX'
+  )
+  check(
+    /```sql title="consulta.sql"/.test(extrasMdx) &&
+      /SELECT \* FROM matriculas WHERE estado = 1;/.test(extrasMdx),
+    'Contenido: el bloque de código llega intacto al MDX (no se escapa por dentro)'
+  )
+  check(
+    extrasMdx.includes("import Tabs from '@theme/Tabs';") &&
+      extrasMdx.includes("import TabItem from '@theme/TabItem';") &&
+      /<Tabs>/.test(extrasMdx),
+    'Contenido: usar pestañas añade solo sus imports a la página'
+  )
+  check(
+    /saldo es &lt; 0/.test(extrasMdx) && !/saldo es < 0/.test(extrasMdx),
+    'Contenido: un «<» suelto se escapa en el MDX y no rompe el build'
+  )
+  const headings = (extrasMdx.match(/^## \d+\./gm) ?? []).length
+  check(
+    headings === includedBefore - contentSteps && /^### Estados de una matrícula$/m.test(extrasMdx),
+    'Contenido: el bloque no consume número de paso y lleva un encabezado menor',
+    `${headings} pasos numerados, ${contentSteps} bloque(s) de contenido`
+  )
+
+  // Un grupo cuyo título ya enumera sus elementos («Pulsar «Ver» y «Editar»») no
+  // los repite debajo en una lista: sería decir dos veces lo mismo.
+  const enumerated = extrasMdx.match(/^#{2,3} \d+\. (?:Pulsar|Ir a las pestañas) «([^»]+)» y «([^»]+)»/m)
+  check(
+    !!enumerated && !extrasMdx.includes(`- **${enumerated[1]}**`),
+    'Agrupar seguidos: el manual no repite en una lista lo que el título ya enumera',
+    enumerated?.[0] ?? '(sin grupo enumerado en el MDX)'
+  )
+
+  const captureStep = extrasSession.steps.find((s) => s.kind === 'capture')
+  const contentStep = extrasSession.steps.find((s) => s.kind === 'content')
+  check(
+    !!captureStep && existsSync(join(extrasDir, captureStep.screenshot)),
+    'Captura externa: su imagen se copia al paquete como una más',
+    captureStep?.screenshot
+  )
+  check(
+    !!contentStep && contentStep.screenshot === '' && !!contentStep.content,
+    'Contenido: el paso se guarda con su cuerpo y sin imagen'
+  )
+  const imageSteps = extrasSession.steps.filter((s) => s.kind === 'image')
+  check(
+    imageSteps.length === 2 && imageSteps.every((s) => existsSync(join(extrasDir, s.screenshot))),
+    'Pegar: las imágenes pegadas se guardan con su tipo propio y su archivo en el paquete',
+    imageSteps.map((s) => s.screenshot).join(' · ')
+  )
+  check(
+    /## \d+\. Plantilla de carga masiva/.test(extrasMdx) &&
+      /:::warning\[Ojo con el formato\]/.test(extrasMdx),
+    'Pegar: la imagen pegada se numera como paso y publica su nota en el MDX'
+  )
+  check(
+    !extrasFlow.actions.some(
+      (a) => a.action === 'capture' || a.action === 'content' || a.action === 'image'
+    ),
+    'Flujo: nada de lo añadido a mano (captura, imagen o contenido) entra en flow.json'
+  )
+  check(
+    extrasSession.steps.some((s) => s.fields?.length === 2 && s.mergedActions?.length === 2),
+    'Agrupar a mano: el paso agrupado se guarda con sus dos acciones para el runner'
+  )
+
+  // El runner salta lo que no sale del navegador en vez de darlo por fallido.
+  const extrasRegen = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('runner:regenerate', dir),
+    extrasDir
+  )
+  const skipped = extrasRegen.results.filter((r) => r.status === 'skipped')
+  check(
+    skipped.length === 5 && skipped.filter((r) => /Imagen pegada/.test(r.detail)).length === 2,
+    'Runner: lo añadido a mano se salta (captura, imágenes pegadas y contenido), no cuenta como fallo',
+    skipped.map((r) => r.detail).join(' | ')
+  )
+  if (await gui.locator('.runner-report').count()) {
+    await gui.getByRole('button', { name: 'Entendido' }).click()
+  }
+
+  // --- Secciones: apartados dentro de una grabación (§8/§10) ---
+  //
+  // Una grabación real tiene treinta pasos y varias fases («preparación»,
+  // «registro», «cierre»). Aquí se comprueba el circuito entero: crear el
+  // apartado donde toca, plegarlo, moverlo CON sus pasos y publicarlo como
+  // encabezado del manual.
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  // Aquí interesan cuatro pasos sueltos con los que probar los apartados, no la
+  // fusión: cuatro clics seguidos del mismo tipo se fundirían en uno.
+  if (await gui.locator('.group-toggle input').isChecked()) {
+    await gui.locator('.group-toggle input').uncheck()
+  }
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#nav-alumnos')
+  await waitSteps(1, 'secciones: paso A')
+  await target.click('#nav-matriculas')
+  await waitSteps(2, 'secciones: paso B')
+  await target.click('#sel-andy')
+  await waitSteps(3, 'secciones: paso C')
+  await target.click('#sel-paulo')
+  await waitSteps(4, 'secciones: paso D')
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+
+  // Un paso GRABADO también entra detrás de la tarjeta activa: es lo que permite
+  // volver a un punto del flujo y completar lo que faltaba, sin que aparezca al
+  // final de la lista y haya que arrastrarlo hasta su sitio.
+  await gui.locator('.step-card').first().locator('.step-badge').click()
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#sel-todos')
+  await waitSteps(5, 'secciones: paso intercalado')
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+  const inserted = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card .step-title')].map((i) => i.value)
+  )
+  check(
+    /todo/i.test(inserted[1] ?? ''),
+    'Secciones: un paso grabado entra detrás de la tarjeta activa, no al final',
+    inserted.join(' | ')
+  )
+  await gui.locator('.group-toggle input').check()
+  // Se quita para dejar los cuatro pasos de partida.
+  await gui.locator('.step-card').nth(1).locator('.icon-btn[title="Eliminar paso"]').click()
+  await gui.waitForFunction(() => document.querySelectorAll('.step-card').length === 4, null, {
+    timeout: 5000
+  })
+
+  // La sección encabeza lo que viene detrás: se marca el paso anterior y se crea.
+  await gui.locator('.step-card').nth(1).locator('.step-badge').click()
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Sección")').click()
+  await gui.waitForSelector('.section-card', { timeout: 5000 })
+  await gui.locator('.section-card .section-title').fill('Registro del alumno')
+  const sectionPlaced = await gui.evaluate(() => ({
+    index: [...document.querySelectorAll('.step-card, .section-card')].findIndex((n) =>
+      n.classList.contains('section-card')
+    ),
+    count: document.querySelector('.section-count')?.textContent ?? '',
+    // El recuento del encabezado cuenta pasos, no secciones.
+    header: document.querySelector('.panel-header .count')?.textContent ?? ''
+  }))
+  check(
+    sectionPlaced.index === 2 && sectionPlaced.count === '2' && sectionPlaced.header === '4',
+    'Secciones: se inserta tras la tarjeta activa y toma los pasos que siguen',
+    `posición ${sectionPlaced.index}, ${sectionPlaced.count} paso(s), encabezado ${sectionPlaced.header}`
+  )
+
+  // Plegar oculta sus pasos (y solo los suyos), que es lo que hace manejable una
+  // grabación larga.
+  await gui.locator('.section-card .section-toggle').click()
+  await gui.waitForFunction(() => document.querySelectorAll('.step-card').length === 2, null, {
+    timeout: 5000
+  })
+  check(true, 'Secciones: plegar oculta los pasos de esa sección y deja los demás')
+  await gui.locator('.section-card .section-toggle').click()
+  await gui.waitForFunction(() => document.querySelectorAll('.step-card').length === 4, null, {
+    timeout: 5000
+  })
+
+  // Arrastrar la sección la mueve CON sus pasos: subirla una posición debe
+  // llevarse los dos que cuelgan de ella y dejar detrás al que la precedía.
+  const titlesBeforeMove = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card, .section-card')].map((n) =>
+      n.classList.contains('section-card')
+        ? `§${n.querySelector('.section-title').value}`
+        : n.querySelector('.step-title').value
+    )
+  )
+  await gui.locator('.section-card').scrollIntoViewIfNeeded()
+  const secHandle = await gui.locator('.section-card .drag-handle').boundingBox()
+  const aboveCard = await gui.locator('.step-card').nth(1).boundingBox()
+  await gui.mouse.move(secHandle.x + secHandle.width / 2, secHandle.y + secHandle.height / 2)
+  await gui.mouse.down()
+  for (let i = 1; i <= 12; i++) {
+    await gui.mouse.move(
+      secHandle.x + secHandle.width / 2,
+      secHandle.y + secHandle.height / 2 - (aboveCard.height * i) / 12
+    )
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  await gui.mouse.up()
+  await new Promise((r) => setTimeout(r, 600))
+  const titlesAfterMove = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card, .section-card')].map((n) =>
+      n.classList.contains('section-card')
+        ? `§${n.querySelector('.section-title').value}`
+        : n.querySelector('.step-title').value
+    )
+  )
+  check(
+    titlesAfterMove[1]?.startsWith('§') &&
+      titlesAfterMove[2] === titlesBeforeMove[3] &&
+      titlesAfterMove[3] === titlesBeforeMove[4] &&
+      titlesAfterMove[4] === titlesBeforeMove[1],
+    'Secciones: arrastrar la sección se lleva sus pasos con ella',
+    `antes=[${titlesBeforeMove.join(' | ')}] después=[${titlesAfterMove.join(' | ')}]`
+  )
+
+  // Guardado: la sección encabeza el apartado y los pasos bajan un nivel, con la
+  // numeración corrida entre apartados.
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
+  await gui.fill('.topbar input[placeholder="institucion"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', 'con-secciones')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', 'Matrícula por apartados')
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 10000 })
+  if (await gui.getByRole('button', { name: 'Guardar de todos modos' }).count()) {
+    await gui.getByRole('button', { name: 'Guardar de todos modos' }).click()
+  }
+  await gui.waitForFunction(
+    () => /Documentación guardada/.test(document.querySelector('.dialog h3')?.textContent ?? ''),
+    null,
+    { timeout: 15000 }
+  )
+  await gui.getByRole('button', { name: 'Cerrar' }).click()
+
+  const sectionsDir = join(outDir, 'matriculas', 'con-secciones')
+  const sectionsMdx = readFileSync(join(sectionsDir, 'index.mdx'), 'utf8')
+  const sectionsSession = JSON.parse(readFileSync(join(sectionsDir, 'session.json'), 'utf8'))
+  const sectionsFlow = JSON.parse(readFileSync(join(sectionsDir, 'flow.json'), 'utf8'))
+  check(
+    /^## Registro del alumno$/m.test(sectionsMdx) &&
+      (sectionsMdx.match(/^### \d+\./gm) ?? []).length === 4 &&
+      !/^## \d+\./m.test(sectionsMdx),
+    'Secciones: el apartado sale como ## y los pasos bajan a ###',
+    (sectionsMdx.match(/^#{2,3} .*/gm) ?? []).join(' / ')
+  )
+  check(
+    sectionsMdx.indexOf('### 1.') < sectionsMdx.indexOf('## Registro del alumno') &&
+      sectionsMdx.indexOf('## Registro del alumno') < sectionsMdx.indexOf('### 2.'),
+    'Secciones: la numeración de los pasos sigue corrida entre apartados'
+  )
+  const sectionStep = sectionsSession.steps.find((s) => s.kind === 'section')
+  check(
+    !!sectionStep && sectionStep.screenshot === '',
+    'Secciones: el separador se guarda como paso sin captura',
+    sectionStep?.title
+  )
+  check(
+    !sectionsFlow.actions.some((a) => a.action === 'section'),
+    'Secciones: el separador no entra en flow.json (no hay nada que reproducir)'
+  )
+
+  // --- Descartar documentación que Git no tiene registrada ---
+  //
+  // La otra salida de «⚠ N sin registrar»: no todo lo que quedó fuera del
+  // historial merece entrar en él. El paquete recién guardado (sin Git) es justo
+  // ese caso.
+  await gui.locator('.status-link.warn').click()
+  await gui.waitForSelector('.pending-modal', { timeout: 5000 })
+  const pendingRow = gui.locator('.pending-list > li', {
+    has: gui.locator('code.pending-path', { hasText: 'matriculas/con-secciones' })
+  })
+  // La lista se lee del repositorio al abrir: hay que esperarla, no contarla.
+  await pendingRow.waitFor({ timeout: 10000 })
+  check(
+    (await pendingRow.count()) === 1,
+    'Descartar: el paquete guardado sin commitear aparece en la lista de sin registrar'
+  )
+  await pendingRow.locator('.btn.danger').click()
+  await gui.waitForSelector('.dialog', { timeout: 5000 })
+  const discardBody = await gui.locator('.dialog p').innerText()
+  check(
+    /papelera/i.test(discardBody) && /con-secciones/.test(discardBody),
+    'Descartar: se avisa exactamente de qué va a pasar antes de tocar nada',
+    discardBody.split('\n')[2] ?? discardBody
+  )
+  await gui.locator('.dialog .btn.danger').click()
+  await gui.waitForFunction(
+    () => !!document.querySelector('.pending-modal .ai-saved'),
+    null,
+    { timeout: 10000 }
+  )
+  check(
+    !existsSync(sectionsDir),
+    'Descartar: la carpeta del paquete sale del disco (a la papelera del sistema)'
+  )
+  await gui.locator('.pending-modal footer .btn').click()
+  await gui.waitForSelector('.pending-modal', { state: 'detached', timeout: 5000 })
+
+  // Y el otro caso: un paquete que SÍ está commiteado y se ha tocado después.
+  // Ahí no hay nada que tirar, se devuelve a su versión del último commit.
+  const headSession = g('ls-tree -r --name-only HEAD')
+    .split('\n')
+    .find((p) => p.endsWith('session.json'))
+  const headDir = headSession.replace(/\/session\.json$/, '')
+  const headMdx = join(outDir, headDir, 'index.mdx')
+  const originalMdx = readFileSync(headMdx, 'utf8')
+  writeFileSync(headMdx, `${originalMdx}\n<!-- retoque a mano que no se quiso -->\n`)
+  const dirtyPending = await gui.evaluate(
+    (root) => window.docrecorder.invoke('git:pending-docs', root),
+    outDir
+  )
+  check(
+    dirtyPending.some((d) => d.dir === headDir && d.untracked === false),
+    'Descartar: un paquete ya commiteado y modificado se lista como «cambiado»',
+    headDir
+  )
+  const restoreResult = await gui.evaluate(
+    ([root, dir]) => window.docrecorder.invoke('git:discard-pending', { repoRoot: root, dir }),
+    [outDir, headDir]
+  )
+  check(
+    restoreResult.restored > 0 && readFileSync(headMdx, 'utf8') === originalMdx,
+    'Descartar: lo ya commiteado vuelve a su versión del commit, sin borrarse',
+    restoreResult.message
+  )
+
+  // --- Volver a editar una funcionalidad ya commiteada ---
+  //
+  // Revisar un commit suele acabar en «esto hay que corregirlo». Se recorre el
+  // camino real: explorador → rama → commit → vista previa → editar, y los pasos
+  // deben aparecer en el panel con sus capturas, listos para volver a guardarse
+  // en la misma carpeta y la misma rama.
+  await gui.getByRole('button', { name: 'Proyectos…', exact: true }).click()
+  await gui.waitForSelector('.projects-modal', { timeout: 5000 })
+  await gui.locator('.projects-col:nth-child(2) .row[data-branch="docs/matriculas"]').click()
+  await gui.waitForSelector('.projects-col:nth-child(3) .commits li', { timeout: 5000 })
+  // El historial muestra el hash abreviado; se busca el que es prefijo del
+  // commit que documentó «crear-matricula» (y se dice cuál hay, si no aparece).
+  const uiHashes = await gui.locator('.projects-col:nth-child(3) .commits code').allInnerTexts()
+  const wanted = uiHashes.findIndex((h) => firstCommit.startsWith(h.trim()))
+  const historyOf = await gui.locator('.projects-col:nth-child(3) h3').innerText()
+  check(
+    wanted >= 0,
+    'Editar un commit: el commit que documentó la funcionalidad está en el historial',
+    `busco ${firstCommit.slice(0, 8)} en «${historyOf}» entre [${uiHashes.join(' ')}]`
+  )
+  await gui
+    .locator('.projects-col:nth-child(3) .commits li .row')
+    .nth(Math.max(wanted, 0))
+    .click()
+  await gui.waitForSelector('.preview-modal', { timeout: 5000 })
+  await gui.waitForSelector('.preview-feature-head .btn', { timeout: 5000 })
+  await gui.locator('.preview-feature-head .btn').first().click()
+  // La sesión está vacía (se acaba de guardar), así que no debería preguntar; si
+  // preguntara, se confirma.
+  if (await gui.locator('.dialog .btn.danger').count()) {
+    await gui.locator('.dialog .btn.danger').click()
+  }
+  await gui.waitForSelector('.projects-modal', { state: 'detached', timeout: 10000 })
+  await gui.waitForFunction(() => document.querySelectorAll('.step-card').length > 0, null, {
+    timeout: 10000
+  })
+  const reopened = await gui.evaluate(() => ({
+    steps: document.querySelectorAll('.step-card').length,
+    withShot: [...document.querySelectorAll('.step-card')].filter((c) =>
+      c.querySelector('.thumb img')?.getAttribute('src')?.startsWith('docshot://')
+    ).length,
+    feature: document.querySelector('.topbar input[placeholder="crear-matricula"]')?.value ?? '',
+    branch: document.querySelector('.branch-chip code')?.textContent ?? ''
+  }))
+  check(
+    reopened.steps > 0 && reopened.withShot === reopened.steps,
+    'Editar un commit: los pasos vuelven al panel con su captura ya cargada',
+    `${reopened.withShot}/${reopened.steps} con captura`
+  )
+  check(
+    reopened.feature === 'crear-matricula' && reopened.branch === 'docs/matriculas',
+    'Editar un commit: se recuperan sus metadatos y su rama de trabajo',
+    `${reopened.feature} · ${reopened.branch}`
+  )
+  // La franja dice qué se está editando y ofrece la salida: cancelar sin
+  // registrar nada. Es lo que faltaba: con el panel lleno de pasos que nadie ha
+  // grabado aquí, la única salida visible era ■, que guarda y comitea.
+  const strip = await gui.evaluate(() => {
+    const el = document.querySelector('.editing-strip')
+    return el ? { text: el.innerText, hasExit: !!el.querySelector('.btn') } : null
+  })
+  check(
+    !!strip && strip.hasExit && /crear-matricula|Crear una matr/i.test(strip.text),
+    'Editar un commit: el panel dice qué se está editando y ofrece descartarlo',
+    strip?.text.replace(/\n/g, ' · ') ?? '(sin franja)'
+  )
+  // Descartar vacía el panel sin tocar el repositorio.
+  const commitsBeforeDiscard = Number(g('rev-list --count docs/matriculas'))
+  // El árbol ya trae paquetes sin registrar de las etapas anteriores: lo que hay
+  // que comprobar es que descartar no CAMBIA nada, no que esté limpio.
+  const treeBeforeDiscard = g('status --porcelain')
+  await gui.locator('.editing-strip .btn').click()
+  await gui.waitForSelector('.dialog', { timeout: 5000 })
+  await gui.locator('.dialog .btn.danger').click()
+  await gui.waitForFunction(() => document.querySelectorAll('.step-card').length === 0, null, {
+    timeout: 5000
+  })
+  check(
+    !(await gui.locator('.editing-strip').count()) &&
+      Number(g('rev-list --count docs/matriculas')) === commitsBeforeDiscard &&
+      g('status --porcelain') === treeBeforeDiscard,
+    'Editar un commit: descartar vacía el panel y no registra ni escribe nada',
+    `${commitsBeforeDiscard} commit(s), árbol ${
+      g('status --porcelain') === treeBeforeDiscard ? 'igual que antes' : 'cambiado'
+    }`
+  )
+
+  // Se vuelve a cargar para comprobar lo otro: que guardar sí reescribe SU
+  // carpeta (no crea una nueva) y apila un commit encima.
+  await gui.getByRole('button', { name: 'Proyectos…', exact: true }).click()
+  await gui.waitForSelector('.projects-modal', { timeout: 5000 })
+  await gui.locator('.projects-col:nth-child(2) .row[data-branch="docs/matriculas"]').click()
+  await gui.waitForSelector('.projects-col:nth-child(3) .commits li', { timeout: 5000 })
+  await gui
+    .locator('.projects-col:nth-child(3) .commits li .row')
+    .nth(Math.max(wanted, 0))
+    .click()
+  await gui.waitForSelector('.preview-feature-head .btn', { timeout: 5000 })
+  await gui.locator('.preview-feature-head .btn').first().click()
+  if (await gui.locator('.dialog .btn.danger').count()) {
+    await gui.locator('.dialog .btn.danger').click()
+  }
+  await gui.waitForSelector('.projects-modal', { state: 'detached', timeout: 10000 })
+  await gui.waitForFunction(() => document.querySelectorAll('.step-card').length > 0, null, {
+    timeout: 10000
+  })
+
+  const reeditCard = gui.locator('.step-card').first()
+  await reeditCard.locator('.step-title').fill('Paso corregido tras revisar el commit')
+  const commitsBefore = Number(g('rev-list --count docs/matriculas'))
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 10000 })
+  if (await gui.getByRole('button', { name: 'Registrar en Git' }).count()) {
+    await gui.getByRole('button', { name: 'Registrar en Git' }).click()
+  }
+  if (await gui.getByRole('button', { name: 'Guardar de todos modos' }).count()) {
+    await gui.getByRole('button', { name: 'Guardar de todos modos' }).click()
+  }
+  await gui.waitForFunction(
+    () => /Documentación guardada/.test(document.querySelector('.dialog h3')?.textContent ?? ''),
+    null,
+    { timeout: 20000 }
+  )
+  const reeditReport = await gui.locator('.dialog p').innerText()
+  await gui.getByRole('button', { name: 'Cerrar' }).click()
+  const reeditedMdx = g('show docs/matriculas:matriculas/crear-matricula/index.mdx')
+  check(
+    Number(g('rev-list --count docs/matriculas')) === commitsBefore + 1 &&
+      /Paso corregido tras revisar el commit/.test(reeditedMdx),
+    'Editar un commit: la corrección se registra encima, en la misma carpeta y rama',
+    `${commitsBefore} → ${g('rev-list --count docs/matriculas')} commits · ${reeditReport.replace(/\n/g, ' ')}`
+  )
+
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
 
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
-  await gui.evaluate(() => localStorage.removeItem('docrecorder.groupFormFields')).catch(() => {})
+  await gui.evaluate(() => localStorage.removeItem('docrecorder.groupConsecutive')).catch(() => {})
 
   const failed = checks.filter((c) => !c.ok)
   console.log(`\n${checks.length - failed.length}/${checks.length} comprobaciones OK`)

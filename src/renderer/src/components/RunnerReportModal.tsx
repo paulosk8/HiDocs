@@ -12,7 +12,10 @@ export function RunnerReportModal({
   onClose: () => void
 }): React.JSX.Element {
   const failed = report.results.filter((r) => r.status === 'failed')
-  const ok = report.results.length - failed.length
+  // Los pasos saltados (capturas externas y bloques de contenido) no se cuentan
+  // como actualizados: no había nada que regenerar en ellos.
+  const skipped = report.results.filter((r) => r.status === 'skipped')
+  const ok = report.results.length - failed.length - skipped.length
 
   return (
     <div className="overlay" onClick={onClose}>
@@ -34,7 +37,7 @@ export function RunnerReportModal({
               ) : (
                 ' · sin fallos'
               )}
-              .
+              {skipped.length > 0 && ` · ${skipped.length} paso(s) sin captura que regenerar`}.
             </p>
             {report.featureDir && (
               <p className="muted" style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>
@@ -44,7 +47,9 @@ export function RunnerReportModal({
             <ul className="runner-results">
               {report.results.map((r) => (
                 <li key={r.order} className={r.status}>
-                  <span className="runner-badge">{r.status === 'ok' ? '✔' : '✕'}</span>
+                  <span className="runner-badge">
+                    {r.status === 'ok' ? '✔' : r.status === 'skipped' ? '–' : '✕'}
+                  </span>
                   <span>
                     <b>{r.order}.</b> {r.title || 'Sin título'}
                     {r.detail && <span className="muted"> — {r.detail}</span>}

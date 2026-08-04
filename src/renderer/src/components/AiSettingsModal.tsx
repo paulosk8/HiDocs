@@ -3,6 +3,7 @@ import {
   AI_MODELS,
   AI_PROVIDERS,
   AI_PROVIDER_LABEL,
+  apiKeyProblem,
   type AiProvider,
   type AiStatus
 } from '../../../shared/types'
@@ -39,6 +40,7 @@ export function AiSettingsModal({ onClose }: Props): React.JSX.Element {
   const [key, setKey] = useState('')
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState<string | null>(null)
+  const [problem, setProblem] = useState<string | null>(null)
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -63,11 +65,22 @@ export function AiSettingsModal({ onClose }: Props): React.JSX.Element {
   }
 
   const saveKey = async (): Promise<void> => {
+    // El campo está enmascarado: si lo que se pegó no era la clave, aquí es donde
+    // hay que decirlo, no al redactar media grabación después.
+    const bad = apiKeyProblem(key.trim())
+    if (bad) {
+      setProblem(bad)
+      setSaved(null)
+      return
+    }
     setSaving(true)
     try {
       setAiStatus(await ipc.invoke('ai:set-key', { provider, key }))
       setSaved(key.trim() ? 'Clave guardada.' : 'Clave borrada.')
+      setProblem(null)
       setKey('')
+    } catch (err) {
+      setProblem(err instanceof Error ? err.message : String(err))
     } finally {
       setSaving(false)
     }
@@ -143,12 +156,14 @@ export function AiSettingsModal({ onClose }: Props): React.JSX.Element {
               onChange={(e) => {
                 setKey(e.target.value)
                 setSaved(null)
+                setProblem(null)
               }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void saveKey()
               }}
             />
           </label>
+          {problem && <p className="ai-hint ai-problem">{problem}</p>}
           <p className="ai-hint">
             Se obtiene en {KEY_HELP[provider].hint}.{' '}
             <button

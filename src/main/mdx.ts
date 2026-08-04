@@ -1,5 +1,6 @@
-import type { DocSession } from '../shared/types'
+import type { DocSession, DocStep } from '../shared/types'
 import { titleCase } from '../shared/naming'
+import { contentImports, sanitizeContent } from '../shared/mdx-content'
 export { titleCase }
 
 /**
@@ -43,29 +44,22 @@ const ACTION_LABEL: Record<string, string> = {
   select: 'Seleccionar una opción',
   submit: 'Enviar el formulario',
   press: 'Pulsar una tecla',
-  navigate: 'Navegar'
+  navigate: 'Navegar',
+  capture: 'Captura',
+  image: 'Imagen',
+  content: 'Contenido',
+  section: 'Sección'
 }
 
 /**
- * Cuerpo de una nota destacada. La nota es texto enriquecido —su gracia es
- * publicar el diseño de Docusaurus (negrita, `<mark>`, emojis…)—, así que el
- * Markdown se deja pasar para que Docusaurus lo renderice. Pero el build no puede
- * romperse por descuido: un `<` suelto (p. ej. «saldo < 0») MDX lo tomaría por
- * una etiqueta JSX y abortaría el build entero del mantenedor (§10).
- *
- * Por eso se escapa TODO `<`/`>` (y las llaves `{`/`}`) y luego se restauran solo
- * los pares BALANCEADOS de `<mark>…</mark>` que inserta la barra de herramientas.
- * Un `<mark>` sin cerrar, o cualquier otra etiqueta, quedan escapados y visibles,
- * nunca activos. Es exactamente lo que hace la vista previa del editor, para que
- * lo que se ve al redactar y lo que se publica coincidan.
+ * Bloque de contenido del paso (tabla, código, pestañas…). El cuerpo lo escribe
+ * el usuario en Markdown/MDX y se publica tal cual, pasado por el mismo
+ * saneado que muestra la vista previa del editor: el Markdown funciona, el
+ * código se respeta y lo que rompería el build queda escapado y visible (§10).
  */
-function mdxNoteBody(text: string): string {
-  const escaped = text
-    .replace(/\{/g, '&#123;')
-    .replace(/\}/g, '&#125;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return escaped.replace(/&lt;mark&gt;([\s\S]*?)&lt;\/mark&gt;/g, '<mark>$1</mark>')
+export function renderContent(content: string | undefined): string[] {
+  if (!content || !content.trim()) return []
+  return [sanitizeContent(content.trim()), '']
 }
 
 const ADMONITION_TYPES = new Set(['note', 'tip', 'info', 'warning', 'danger'])
@@ -75,11 +69,14 @@ const ADMONITION_TYPES = new Set(['note', 'tip', 'info', 'warning', 'danger'])
  * (con sus separaciones en blanco, que MDX exige alrededor del bloque) o `[]` si
  * la nota no tiene cuerpo.
  */
-export function renderNote(note: DocSession['steps'][number]['note']): string[] {
+export function renderNote(note: DocStep['note']): string[] {
   if (!note || !note.body.trim()) return []
   const type = ADMONITION_TYPES.has(note.type) ? note.type : 'note'
   const title = note.title?.trim() ? `[${mdxSafe(note.title.trim())}]` : ''
-  return [`:::${type}${title}`, '', mdxNoteBody(note.body.trim()), '', ':::', '']
+  // El cuerpo pasa por el mismo saneado que un bloque de contenido: dentro de un
+  // admonition cabe todo el Markdown de Docusaurus (listas, tablas, código), y
+  // la regla de qué se publica activo debe ser una sola en toda la app.
+  return [`:::${type}${title}`, '', sanitizeContent(note.body.trim()), '', ':::', '']
 }
 
 /** Etiqueta de la categoría de módulo en la barra lateral de Docusaurus. */
@@ -117,6 +114,15 @@ export function renderFeatureMdx(
   )
   out.push('---')
   out.push('')
+
+  // Los componentes de Docusaurus que use algún bloque de contenido (`<Tabs>`)
+  // necesitan su `import` en la cabecera: se recogen de todos los pasos y se
+  // declaran una sola vez, para que el usuario no tenga que saberlo.
+  const imports = [...new Set(included.flatMap((s) => contentImports(s.content ?? '')))]
+  if (imports.length) {
+    out.push(...imports, '')
+  }
+
   out.push(`# ${mdxSafe(title)}`)
   out.push('')
 
@@ -135,19 +141,61 @@ export function renderFeatureMdx(
     return out.join('\n')
   }
 
+  // Con secciones, la página gana un nivel: los apartados son `##` y los pasos
+  // pasan a `###`, para que el índice lateral de Docusaurus muestre el manual
+  // por apartados y no como una lista plana de treinta pasos. Sin secciones no
+  // se cambia nada: las páginas ya publicadas siguen saliendo igual.
+  const hasSections = included.some((s) => s.kind === 'section')
+  const stepLevel = hasSections ? '###' : '##'
+  const contentLevel = hasSections ? '####' : '###'
+
   let n = 0
   for (const step of included) {
-    n++
-    const heading = step.title.trim() || ACTION_LABEL[step.action] || 'Paso'
-    out.push(`## ${n}. ${mdxSafe(heading)}`)
-    out.push('')
+    // Un separador de sección no es un paso: no se numera ni lleva captura. Su
+    // título encabeza el apartado y su descripción, si la tiene, lo presenta.
+    if (step.kind === 'section') {
+      const label = step.title.trim()
+      if (label) {
+        out.push(`## ${mdxSafe(label)}`)
+        out.push('')
+      }
+      if (step.description.trim()) {
+        out.push(mdxSafe(step.description.trim()))
+        out.push('')
+      }
+      continue
+    }
+    // Un bloque de contenido no es un paso que nadie ejecute: es material de
+    // apoyo (una tabla de valores admitidos, un fragmento de código…). Por eso
+    // no consume número —el manual seguiría numerando «4» algo que no se hace— y
+    // se titula con un encabezado menor, subordinado al paso anterior.
+    const isContent = step.kind === 'content'
+    const heading = step.title.trim() || (isContent ? '' : ACTION_LABEL[step.action] || 'Paso')
+    if (isContent) {
+      if (heading) {
+        out.push(`${contentLevel} ${mdxSafe(heading)}`)
+        out.push('')
+      }
+    } else {
+      n++
+      out.push(`${stepLevel} ${n}. ${mdxSafe(heading)}`)
+      out.push('')
+    }
     if (step.description.trim()) {
       out.push(mdxSafe(step.description.trim()))
       out.push('')
     }
-    // Campos de un formulario agrupado: una lista de etiqueta → valor. Si el
-    // campo solo se enfocó (sin valor), se lista sin «: valor».
-    if (step.fields?.length) {
+    // Lo agrupado en el paso: los campos de un formulario o las acciones que el
+    // usuario unió a mano, como lista de etiqueta → valor. Sin valor (un clic,
+    // un campo solo enfocado) se lista sin «: valor».
+    //
+    // Salvo que el título ya los enumere: un grupo de botones o de pestañas se
+    // titula «Pulsar «Guardar» y «Cerrar»», y repetirlos debajo en una lista no
+    // añade nada. Con valores sí se listan siempre: el valor es la información.
+    const listedInTitle =
+      !!step.fields?.length &&
+      step.fields.every((f) => !f.value && step.title.includes(`«${f.label}»`))
+    if (step.fields?.length && !listedInTitle) {
       for (const f of step.fields) {
         out.push(
           f.value ? `- **${mdxSafe(f.label)}:** ${mdxSafe(f.value)}` : `- **${mdxSafe(f.label)}**`
@@ -155,11 +203,12 @@ export function renderFeatureMdx(
       }
       out.push('')
     }
-    // Nota destacada del paso: se publica tal cual como admonition de Docusaurus,
-    // entre la descripción y la captura.
+    // Bloque de contenido y nota destacada, entre la descripción y la captura.
+    out.push(...renderContent(step.content))
     out.push(...renderNote(step.note))
     if (step.screenshot && hasImage(step.screenshot)) {
-      out.push(`![Paso ${n}: ${mdxSafe(heading)}](./${step.screenshot})`)
+      const alt = isContent ? mdxSafe(heading || title) : `Paso ${n}: ${mdxSafe(heading)}`
+      out.push(`![${alt}](./${step.screenshot})`)
       out.push('')
     }
   }

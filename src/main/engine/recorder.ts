@@ -1,12 +1,13 @@
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { CDPSession, Page } from 'playwright-core'
+import type { CDPSession, ElementHandle, Page } from 'playwright-core'
 import { attachToViewport, type CdpAttachment } from './cdp'
 import {
   EMIT_BINDING,
   OBSERVER_NAMESPACE,
   observerScript,
+  type GroupHighlightResult,
   type HighlightResult,
   type RawEvent,
   type ObserverConfig
@@ -14,8 +15,8 @@ import {
 import { buildSelectorCandidates } from './selectors'
 import { waitForStability } from './stability'
 import { regenerateSession, type RegenStepResult } from './runner'
-import type { RecordedStep } from '../../shared/ipc-contract'
-import type { DocSession } from '../../shared/types'
+import type { GroupTarget, RecordedStep, StepFamily } from '../../shared/ipc-contract'
+import type { DocSession, SelectorCandidate } from '../../shared/types'
 import type { EngineState, RecorderStatus, StepAction } from '../../shared/types'
 
 export interface EngineHooks {
@@ -26,6 +27,40 @@ export interface EngineHooks {
 
 /** Acciones tras las que la página puede irse y llevarse el elemento señalado. */
 const NAVIGATING_ACTIONS: StepAction[] = ['click', 'press', 'submit', 'navigate']
+
+/** Espera máxima al localizar por selector un elemento cuyo nodo fue reemplazado. */
+const LOCATE_MS = 400
+
+/**
+ * ¿Las dos URL son la misma pantalla? Solo se tolera la barra final: un
+ * parámetro distinto ya es otra vista en la mayoría de las aplicaciones, y
+ * capturar allí un grupo documentaría algo que no ocurrió ahí.
+ */
+function sameScreen(a: string, b: string): boolean {
+  return a.replace(/\/$/, '') === b.replace(/\/$/, '')
+}
+
+/**
+ * Localiza un elemento probando sus selectores en orden, como hace el runner.
+ * Se usa cuando la referencia del observador murió porque el framework reemplazó
+ * el nodo: el campo sigue en la pantalla, pero es otro.
+ */
+async function locateElement(
+  page: Page,
+  candidates: SelectorCandidate[]
+): Promise<ElementHandle<Element> | null> {
+  for (const candidate of candidates) {
+    try {
+      const loc = page.locator(candidate.value).first()
+      await loc.waitFor({ state: 'attached', timeout: LOCATE_MS })
+      const handle = await loc.elementHandle({ timeout: LOCATE_MS })
+      if (handle) return handle
+    } catch {
+      // siguiente candidato
+    }
+  }
+  return null
+}
 
 const OBSERVER_CONFIG: ObserverConfig = {
   bindingName: EMIT_BINDING,
@@ -70,6 +105,38 @@ function isFormField(signals: RawEvent['signals']): boolean {
   return signals.fieldControl === true
 }
 
+/** Roles ARIA que son una acción y no un campo: se agrupan entre ellos. */
+const ACTION_ROLES = ['button', 'link', 'menuitem', 'menuitemcheckbox', 'menuitemradio']
+
+/**
+ * Familia del control: qué clase de cosa se hizo. Es lo que decide qué se funde
+ * solo en un paso, porque **solo se funde lo del mismo tipo**.
+ *
+ * La regla anterior era binaria (campo / no campo) y dejaba fuera dos casos que
+ * aparecen en cualquier sistema real: varias **pestañas** seguidas y varios
+ * **botones** seguidos (abrir un menú y elegir su opción, guardar y cerrar) son
+ * un solo paso para quien lee, y quedaban como tarjetas sueltas.
+ *
+ * Que las familias no se mezclen es lo que conserva el corte natural del flujo:
+ * el «Guardar» de un formulario sigue teniendo tarjeta propia —es otra familia—
+ * y se une al formulario a mano si se quiere, que fue la decisión de julio.
+ *
+ * `null` = no se funde con nada (un envío, una tecla, una navegación).
+ */
+function familyOf(action: StepAction, signals: RawEvent['signals']): StepFamily | null {
+  if (action === 'fill' || action === 'select') return 'field'
+  if (action !== 'click') return null
+  const role = (signals.role ?? '').toLowerCase()
+  // El campo manda sobre el rol: un `<option>` de un desplegable, o el
+  // envoltorio de un interruptor, son parte de dar un valor.
+  if (isFormField(signals) || role === 'option') return 'field'
+  if (role === 'tab') return 'tab'
+  if (ACTION_ROLES.includes(role) || ['button', 'a', 'summary'].includes(signals.tag)) {
+    return 'action'
+  }
+  return null
+}
+
 /** Título por defecto de cada paso, editable después por el usuario. */
 function defaultTitle(action: StepAction, event: RawEvent): string {
   const name = event.signals.accessibleName ?? event.signals.text ?? event.signals.placeholder
@@ -87,6 +154,10 @@ function defaultTitle(action: StepAction, event: RawEvent): string {
       return `Pulsar Enter en ${label}`
     case 'navigate':
       return `Ir a ${event.url}`
+    default:
+      // `capture` y `content` solo existen en los pasos que añade el usuario a
+      // mano: el motor nunca los emite.
+      return label
   }
 }
 
@@ -214,13 +285,25 @@ export class RecorderEngine {
 
   // --- control de la grabación ---
 
-  async start(): Promise<void> {
-    if (!this.attachment) throw new Error('El motor no está adjunto al viewport')
-    if (this.status === 'recording') return
+  /**
+   * Carpeta temporal de las capturas de esta sesión, creándola si aún no existe.
+   *
+   * La usan también las capturas externas (pantalla, ventana o archivo): así
+   * TODAS las imágenes del panel viven en el mismo sitio, se sirven por el mismo
+   * protocolo y se limpian juntas al cerrar, aunque no las haya tomado el motor.
+   */
+  ensureShotDir(): string {
     if (!this.shotDir) {
       this.shotDir = join(this.tempRoot, `docrecorder-${randomUUID()}`)
       mkdirSync(this.shotDir, { recursive: true })
     }
+    return this.shotDir
+  }
+
+  async start(): Promise<void> {
+    if (!this.attachment) throw new Error('El motor no está adjunto al viewport')
+    if (this.status === 'recording') return
+    this.ensureShotDir()
     this.status = 'recording'
     await this.setObserverEnabled(true)
     this.log('info', 'Grabación iniciada')
@@ -293,57 +376,166 @@ export class RecorderEngine {
   }
 
   /**
-   * Vuelve a capturar marcando VARIOS elementos a la vez, para un paso de
-   * formulario agrupado. La GUI la llama tras fundir un campo nuevo en un paso
-   * ya existente: la captura resultante muestra el formulario con todos sus
-   * campos señalados, no solo el último.
+   * Vuelve a capturar marcando VARIOS elementos a la vez, para un paso agrupado.
+   * La GUI la llama tras fundir un campo nuevo, tras quitar uno y tras agrupar a
+   * mano: la captura resultante muestra la pantalla con todos los elementos del
+   * paso señalados, no solo el último.
    *
-   * Devuelve la ruta del PNG nuevo, o `null` si no quedaba ningún elemento que
-   * marcar (la página cambió) — en ese caso la GUI conserva la captura previa.
+   * Devuelve la ruta del PNG nuevo, o `null` cuando la captura no mejoraría la
+   * que ya tiene el paso —la página se fue, o no queda nada que marcar—; en ese
+   * caso la GUI conserva la anterior, que sí ilustra lo que ocurrió.
    *
    * Se encola con los pasos normales: dos capturas simultáneas se pisarían el
    * resaltado.
    */
-  captureGroup(refs: number[]): Promise<string | null> {
+  captureGroup(targets: GroupTarget[], expectUrl?: string): Promise<string | null> {
     return new Promise((resolve) => {
       this.queue = this.queue
-        .then(() => this.doCaptureGroup(refs))
+        .then(() => this.doCaptureGroup(targets, expectUrl))
         .then(resolve, () => resolve(null))
     })
   }
 
-  private async doCaptureGroup(refs: number[]): Promise<string | null> {
-    const page = this.attachment?.page
-    if (!page || !this.shotDir || !refs.length) return null
+  /**
+   * Cuántas veces se reintenta cuando algo del grupo está tapado o
+   * desvaneciéndose, y cuánto se espera entre intentos. Un desplegable o un menú
+   * que se cierra tarda unos cientos de milisegundos en irse, y es justo cuando
+   * la GUI pide esta captura.
+   */
+  private static readonly GROUP_RETRIES = 2
+  private static readonly GROUP_RETRY_MS = 350
 
-    const painted = await page
+  private async doCaptureGroup(
+    targets: GroupTarget[],
+    expectUrl?: string
+  ): Promise<string | null> {
+    const page = this.attachment?.page
+    if (!page || !this.shotDir || !targets.length) return null
+
+    // La captura del grupo solo tiene sentido en la pantalla donde ocurrió. Si el
+    // último paso navegó —guardar, cerrar sesión, un enlace—, capturar ahora
+    // documentaría la pantalla siguiente y, además, pisaría la captura buena que
+    // el motor ya tomó antes de que la página se fuera.
+    if (expectUrl && !sameScreen(page.url(), expectUrl)) {
+      this.log(
+        'info',
+        'Grupo: la página ya no es la del paso, se conserva su captura anterior.'
+      )
+      return null
+    }
+
+    // Las referencias mueren cuando el framework reemplaza el nodo (guardar un
+    // formulario, redibujar una tabla). Para esos elementos se localiza el actual
+    // con los selectores del paso, los mismos que usa el runner.
+    const alive = await page
       .evaluate(
-        ([ns, targets]) => {
+        ([ns, groups]) => {
           const api = (
-            window as unknown as Record<string, { highlight(r: number[]): HighlightResult | null }>
+            window as unknown as Record<string, { groupRefsAlive(g: number[][]): boolean[] }>
           )[ns as string]
-          return api ? api.highlight(targets as number[]) : null
+          return api ? api.groupRefsAlive(groups as number[][]) : null
         },
-        [OBSERVER_NAMESPACE, refs] as const
+        [OBSERVER_NAMESPACE, targets.map((t) => t.refs ?? [])] as const
       )
       .catch(() => null)
 
-    if (!painted) return null
-
-    const file = join(this.shotDir, `group-${randomUUID()}.png`)
-    try {
-      await page.screenshot({ path: file, type: 'png' })
-    } catch {
-      return null
-    } finally {
-      await page
-        .evaluate((ns) => {
-          const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
-          api?.clearHighlight()
-        }, OBSERVER_NAMESPACE)
-        .catch(() => undefined)
+    const handles: (ElementHandle<Element> | null)[] = []
+    for (const [index, target] of targets.entries()) {
+      if (alive?.[index]) {
+        handles.push(null)
+        continue
+      }
+      handles.push(await locateElement(page, target.selectorCandidates ?? []))
     }
-    return file
+
+    let result: GroupHighlightResult | null = null
+    try {
+      for (let attempt = 0; attempt < RecorderEngine.GROUP_RETRIES; attempt++) {
+        result = await page
+          .evaluate(
+            ({ ns, groups, fallbacks }) => {
+              const api = (
+                window as unknown as Record<
+                  string,
+                  {
+                    highlightGroup(p: {
+                      targets: { refs: number[]; fallback: Element | null }[]
+                    }): GroupHighlightResult
+                  }
+                >
+              )[ns]
+              return api
+                ? api.highlightGroup({
+                    targets: groups.map((refs, i) => ({ refs, fallback: fallbacks[i] ?? null }))
+                  })
+                : null
+            },
+            {
+              ns: OBSERVER_NAMESPACE,
+              groups: targets.map((t) => t.refs ?? []),
+              fallbacks: handles
+            }
+          )
+          .catch(() => null)
+
+        if (!result || !result.marked) return null
+        // Nada tapado ni desvaneciéndose: la captura ya muestra lo que documenta.
+        if (!result.blocked || attempt === RecorderEngine.GROUP_RETRIES - 1) break
+        await this.clearHighlight(page)
+        await new Promise((resolve) => setTimeout(resolve, RecorderEngine.GROUP_RETRY_MS))
+      }
+
+      if (!result?.marked) return null
+      if (result.blocked) {
+        this.log(
+          'info',
+          `Grupo: ${result.blocked} elemento(s) siguen tapados al capturar; el recuadro los marca sin aclarar el fondo.`
+        )
+      }
+      // Si algo del grupo ya no está en la pantalla, la captura nueva NO mejora
+      // la que el paso trae: se conserva la del último clic, que es la única que
+      // muestra ese elemento. Es el caso de un menú —abrir «Ver» y elegir
+      // «Editar» son un paso, pero al elegir el menú se cierra— y el de
+      // cualquier control que desaparece al accionarlo. Capturar igualmente
+      // dejaría el paso ilustrado con una pantalla donde no se ve lo que dice
+      // que hay que pulsar.
+      // Un elemento que se está yendo (el menú que se cierra al elegir su opción)
+      // tampoco mejora reintentando: la captura buena es la del clic.
+      if (result.fading) {
+        this.log(
+          'info',
+          `Grupo: ${result.fading} elemento(s) se están desvaneciendo; se conserva la captura del último paso.`
+        )
+        return null
+      }
+      if (result.missing) {
+        this.log(
+          'info',
+          `Grupo: ${result.missing} elemento(s) ya no están en la pantalla; se conserva la captura del último paso.`
+        )
+        return null
+      }
+
+      const file = join(this.shotDir, `group-${randomUUID()}.png`)
+      try {
+        await page.screenshot({ path: file, type: 'png' })
+      } catch {
+        return null
+      }
+      return file
+    } finally {
+      await this.clearHighlight(page)
+      for (const handle of handles) await handle?.dispose().catch(() => undefined)
+    }
+  }
+
+  private async clearHighlight(page: Page): Promise<void> {
+    await page
+      .evaluate((ns) => {
+        const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
+        api?.clearHighlight()
+      }, OBSERVER_NAMESPACE)
+      .catch(() => undefined)
   }
 
   /**
@@ -465,8 +657,14 @@ export class RecorderEngine {
         timestamp: event.timestamp,
         tempFile,
         isFormField: isFormField(event.signals),
+        family: familyOf(event.action, event.signals),
         ref: event.ref,
-        rowRef: event.rowRef
+        loadRef: event.loadRef,
+        rowRef: event.rowRef,
+        tableRef: event.tableRef,
+        cellRef: event.cellRef,
+        colIndex: event.colIndex,
+        colHeader: event.colHeader
       }
       if (event.value !== undefined) {
         step.value = event.isPassword ? '***' : event.value

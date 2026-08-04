@@ -8,10 +8,10 @@ import { CommitDocsPreview } from './CommitDocsPreview'
  * Explorador de los repositorios de documentación ya usados.
  *
  * Es de SOLO LECTURA sobre el repositorio: navega repositorios → ramas →
- * historial, y lo único que escribe es la elección de rama de trabajo de la
- * sesión. No hace checkout, no crea ramas y no toca el historial; el repositorio
- * Docusaurus lo mantiene otra persona y esta ventana no debe poder estropearle el
- * trabajo.
+ * historial, y lo único que escribe es en la SESIÓN (la rama de trabajo, o la
+ * documentación de un commit que se trae para corregirla). No hace checkout, no
+ * crea ramas y no toca el historial; el repositorio Docusaurus lo mantiene otra
+ * persona y esta ventana no debe poder estropearle el trabajo.
  *
  * «Quitar de la lista» solo olvida la entrada del registro: el repositorio sigue
  * en el disco intacto.
@@ -142,6 +142,10 @@ export function ProjectsModal({ onClose }: { onClose: () => void }): React.JSX.E
                 <li key={b.name}>
                   <button
                     className={b.name === branch ? 'row selected' : 'row'}
+                    // Como en el selector de la franja: identifica la fila por su
+                    // rama exacta, sin depender del texto (hay nombres que son
+                    // prefijo de otros).
+                    data-branch={b.name}
                     onClick={() => setBranch(b.name)}
                   >
                     <b>
@@ -165,7 +169,9 @@ export function ProjectsModal({ onClose }: { onClose: () => void }): React.JSX.E
             {branch && commits === null && <p className="muted">Leyendo historial…</p>}
             {commits?.length === 0 && <p className="muted">Sin commits.</p>}
             {commits && commits.length > 0 && (
-              <p className="muted">Pulsa un commit para ver su documentación.</p>
+              <p className="muted">
+                Pulsa un commit para ver su documentación —y, si hace falta, editarla.
+              </p>
             )}
             <ol className="commits">
               {commits?.map((c) => (
@@ -187,12 +193,17 @@ export function ProjectsModal({ onClose }: { onClose: () => void }): React.JSX.E
           </section>
         </div>
 
-        {preview && repoRoot && (
+        {preview && repoRoot && branch && (
           <CommitDocsPreview
             repoRoot={repoRoot}
             commit={preview.commit}
             subject={preview.subject}
+            branch={branch}
             onClose={() => setPreview(null)}
+            // Editar deja la sesión cargada con esa documentación: el explorador
+            // ya no pinta nada delante, y dejarlo abierto taparía el panel donde
+            // acaban de aparecer los pasos.
+            onEdited={onClose}
           />
         )}
 

@@ -1,8 +1,8 @@
 import { readFile } from 'node:fs/promises'
 import type { AiDraftRequest, AiStepInput } from '../../shared/ipc-contract'
-import type { AiDraftResult, AiStepDraft } from '../../shared/types'
+import { apiKeyProblem, type AiDraftResult, type AiStepDraft } from '../../shared/types'
 import { aiSettings, getAiKey } from '../settings'
-import { contextText, parseDrafts, stepText, type PromptPart } from './prompt'
+import { REFERENCE_MARK, contextText, parseDrafts, stepText, type PromptPart } from './prompt'
 import { draftWithClaude } from './anthropic'
 import { draftWithGemini } from './gemini'
 
@@ -39,6 +39,11 @@ function explain(err: unknown): string {
   }
   if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|network/i.test(message)) {
     return 'No se pudo conectar con el proveedor. Comprueba la conexión a internet.'
+  }
+  // La clave viaja en una cabecera HTTP, que solo admite ASCII: si lleva un
+  // acento o un emoji, la petición ni sale y el error que da es ilegible.
+  if (/ByteString/i.test(message)) {
+    return 'La clave guardada tiene caracteres que una clave no lleva. Vuelve a introducirla en «IA…» de la barra superior.'
   }
   return message
 }
@@ -80,12 +85,19 @@ async function buildParts(
  * completo (ajustes → IPC → aplicar en el panel) sin depender de la red ni de
  * una clave real. Solo se activa con la variable de entorno, y después de
  * comprobar que hay clave, para que el caso «sin clave» también se pruebe.
+ *
+ * Recibe el prompt ya armado, no solo los pasos: así la prueba ejercita el
+ * constructor del prompt de verdad —incluido el material de referencia que se le
+ * añade— y no únicamente la llamada. Lo que no se hace es enviarlo.
  */
-function fakeDrafts(chunk: AiStepInput[]): AiStepDraft[] {
+function fakeDrafts(chunk: AiStepInput[], prompt: string): AiStepDraft[] {
+  const withReference = prompt.includes(REFERENCE_MARK)
   return chunk.map((step) => ({
     id: step.id,
     title: `Redactado: ${step.title || step.action}`,
-    description: `Descripción generada para el paso ${step.order} (${step.action}).`
+    description:
+      `Descripción generada para el paso ${step.order} (${step.action}).` +
+      (withReference ? ' Con material de referencia.' : '')
   }))
 }
 
@@ -103,6 +115,16 @@ export async function draftSteps(
       error: 'Falta la clave de la API. Configúrala en «IA…» de la barra superior.'
     }
   }
+  // Una clave guardada por una versión que no la comprobaba: se detiene aquí,
+  // porque el error del proveedor (o el de la propia cabecera HTTP) no diría que
+  // el problema está en la clave.
+  if (apiKeyProblem(apiKey)) {
+    return {
+      drafts: [],
+      error:
+        'La clave guardada no parece una clave de la API (tiene caracteres o una longitud que una clave no tiene). Vuelve a introducirla en «IA…» de la barra superior.'
+    }
+  }
   const model = settings.models[settings.provider]
 
   const drafts: AiStepDraft[] = []
@@ -111,10 +133,13 @@ export async function draftSteps(
   for (let i = 0; i < total; i += CHUNK_SIZE) {
     const chunk = request.steps.slice(i, i + CHUNK_SIZE)
     try {
+      const parts = await buildParts(request, chunk, settings.useScreenshot)
       if (process.env['DOCRECORDER_AI_FAKE']) {
-        drafts.push(...fakeDrafts(chunk))
+        const prompt = parts
+          .map((part) => (part.kind === 'text' ? part.text : ''))
+          .join('\n')
+        drafts.push(...fakeDrafts(chunk, prompt))
       } else {
-        const parts = await buildParts(request, chunk, settings.useScreenshot)
         const raw =
           settings.provider === 'anthropic'
             ? await draftWithClaude(apiKey, model, parts)

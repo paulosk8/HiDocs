@@ -13,21 +13,42 @@ import type {
   AiStatus,
   BranchDocInfo,
   CommitDocs,
+  DiscardResult,
+  DocSession,
   DocStep,
   EngineState,
   GitBranchInfo,
   GitCommitInfo,
+  GitCommitResult,
   GitRepoInfo,
   GitSaveOptions,
   FlowAction,
+  PendingDocInfo,
   ProjectEntry,
   RegenReport,
   RegenStepResult,
   SaveResult,
+  SelectorCandidate,
   SessionMeta,
   StepAction,
+  StepKind,
   Viewport
 } from './types'
+
+/**
+ * Clase de control con la que se interactuó, para decidir qué se funde solo.
+ *
+ * - `field`: se da un valor — escribir, elegir en un desplegable o una lista,
+ *   marcar una casilla, un radio o un interruptor (también los hechos con roles
+ *   ARIA sobre `div`, que es lo normal en las librerías actuales), y elegir la
+ *   opción de un desplegable abierto.
+ * - `tab`: una pestaña (`[role=tab]`).
+ * - `action`: se ejecuta algo — botones, enlaces, `<summary>` y las opciones de
+ *   un menú.
+ *
+ * Un envío, una tecla o una navegación no tienen familia: nunca se funden.
+ */
+export type StepFamily = 'field' | 'tab' | 'action'
 
 /**
  * Paso tal como viaja del motor a la GUI: además de los campos persistidos,
@@ -51,12 +72,32 @@ export interface RecordedStep extends DocStep {
    */
   ref?: number
   /**
-   * Fila de tabla que contiene al elemento, o `null` si no está en ninguna.
-   * Solo se usa en la GUI para agrupar: los controles de dos filas distintas
-   * son dos registros, no un formulario, y no deben fundirse en un paso. No se
-   * persiste.
+   * Clase de control con la que se interactuó. Solo se funden en un paso los
+   * pasos de la MISMA familia, que es lo que mantiene el corte natural del
+   * flujo: los campos de un formulario entre sí, las pestañas entre sí y los
+   * botones entre sí, pero el «Guardar» no se traga el formulario. `null` (o
+   * ausente) = este paso no se funde solo con nada. No se persiste.
+   */
+  family?: StepFamily | null
+  /**
+   * Carga de página en la que ocurrió. Dos pasos de cargas distintas no se
+   * funden aunque la URL coincida: recargar y volver a pulsar es otra cosa que
+   * pulsar dos veces seguidas. No se persiste.
+   */
+  loadRef?: number
+  /**
+   * Dónde está el elemento dentro de una tabla, o `null`/ausente si no está en
+   * ninguna. Es lo que permite fundir los controles de una misma **fila** (un
+   * registro que se edita en línea) o de una misma **columna** (la misma acción
+   * repetida sobre varios registros) sin mezclar cosas que no tienen que ver.
+   * No se persiste.
    */
   rowRef?: number | null
+  tableRef?: number | null
+  cellRef?: number | null
+  colIndex?: number | null
+  /** encabezado de esa columna, para poder titular el paso agrupado */
+  colHeader?: string | null
   /**
    * Campos fundidos en este paso, en orden. Es la fuente de verdad del grupo en
    * la GUI: de aquí se derivan `fields` (lo que se publica) y `mergedActions`
@@ -64,6 +105,85 @@ export interface RecordedStep extends DocStep {
    * dejar descuadrada su acción ni su resaltado.
    */
   groupItems?: GroupedField[]
+  /**
+   * Los pasos tal como eran antes de agruparlos a mano. Permite deshacer la
+   * agrupación devolviendo cada uno a su sitio con SU captura, en vez de dejar
+   * pasos huérfanos compartiendo la imagen del grupo. No se persiste en el
+   * paquete (sí en el borrador, para que deshacer siga funcionando mañana).
+   */
+  groupSources?: RecordedStep[]
+}
+
+/**
+ * Una funcionalidad ya commiteada, traída de vuelta a la sesión para seguir
+ * editándola (§7).
+ *
+ * La vista previa de un commit es de solo lectura, y hasta ahora terminaba ahí:
+ * para corregir una descripción o añadir un paso había que volver a grabar el
+ * proceso entero. Esto cierra el círculo: los pasos vuelven con SU captura ya
+ * materializada en un archivo temporal, así que a partir de aquí viajan por el
+ * mismo camino que una grabación (panel, borrador, MDX y commit).
+ *
+ * `outputDir` es la carpeta de salida que reproduce la ruta original del
+ * paquete: guardando con los mismos metadatos, el paquete se reescribe donde
+ * estaba y el commit nuevo se apila encima, sin duplicar la funcionalidad.
+ */
+export interface CommitDocEdit {
+  /** commit del que se trajo, para poder decirlo en el panel */
+  commit: string
+  /** carpeta de salida que hay que usar para reescribir el paquete donde estaba */
+  outputDir: string
+  /** ruta del paquete dentro del repositorio (la carpeta con session.json) */
+  dir: string
+  session: DocSession
+  /** los pasos del commit, cada uno con su captura ya escrita en un temporal */
+  steps: RecordedStep[]
+  /** capturas del commit que no se pudieron leer (el paso queda sin imagen) */
+  missingImages: number
+}
+
+/**
+ * Un elemento de un paso agrupado, para volver a marcarlo en la captura.
+ *
+ * Lleva las dos formas de encontrarlo, porque ninguna basta sola: las
+ * referencias del observador son exactas pero mueren cuando el framework
+ * reemplaza el nodo (guardar un formulario, redibujar una tabla), y los
+ * selectores sobreviven a eso pero pueden apuntar a otro elemento si la pantalla
+ * cambió del todo. Se prueban en ese orden.
+ */
+export interface GroupTarget {
+  /** referencias del observador a ese elemento (enfocarlo y escribir son dos) */
+  refs: number[]
+  /** selectores del paso, en orden de robustez, como los usa el runner */
+  selectorCandidates: SelectorCandidate[]
+}
+
+/** Una pantalla o ventana que se puede capturar (§12). */
+export interface CaptureSource {
+  /** id de `desktopCapturer`; solo vale para esta enumeración */
+  id: string
+  name: string
+  kind: 'screen' | 'window'
+  /** miniatura en data URI para reconocerla en el selector; '' si no se pudo */
+  thumbnail: string
+}
+
+/**
+ * Lo que había en el portapapeles cuando el usuario pidió pegar (§12).
+ *
+ * Es deliberadamente crudo: el proceso principal solo dice qué encontró, y la
+ * GUI decide qué paso hacer con ello (una imagen o un bloque de contenido). Con
+ * el portapapeles vacío llegan los tres campos vacíos, que es un caso normal y
+ * no un error.
+ */
+export interface ClipboardPaste {
+  /** ruta del PNG temporal ya escrito, si el portapapeles traía una imagen */
+  file?: string
+  /** texto plano del portapapeles, si no traía imagen */
+  text?: string
+  /** versión enriquecida del texto, para convertir tablas a Markdown */
+  html?: string
+  error?: string
 }
 
 /** Un campo dentro de un paso de formulario agrupado. */
@@ -130,11 +250,15 @@ export interface AiStepInput {
   id: string
   order: number
   action: StepAction
+  /** de dónde sale el paso: cambia lo que se le puede pedir a la IA */
+  kind: StepKind
   /** título actual (el que generó el motor, o el que ya editó el usuario) */
   title: string
   description: string
   value?: string
   fields?: Array<{ label: string; value: string }>
+  /** cuerpo del bloque de contenido, si el paso lo lleva */
+  content?: string
   url: string
   /**
    * Ruta absoluta de la captura. La lee el proceso principal, no el renderer, y
@@ -152,6 +276,12 @@ export interface AiDraftRequest {
   outline: Array<{ order: number; title: string }>
   /** pasos que hay que redactar */
   steps: AiStepInput[]
+  /**
+   * Material de referencia pegado por quien documenta (`meta.aiContext`). Va como
+   * campo propio y no dentro de `meta` para que el prompt lo trate como lo que es:
+   * datos del sistema, no la identidad del manual.
+   */
+  context?: string
 }
 
 /** Canales renderer → main con respuesta (ipcRenderer.invoke). */
@@ -168,10 +298,35 @@ export interface IpcInvokeMap {
   'recorder:resume': () => EngineState
   'recorder:stop': () => EngineState
   /**
-   * Re-captura un paso de formulario agrupado marcando todos sus campos.
-   * Devuelve la ruta del PNG nuevo, o `null` si ya no se pudo marcar ninguno.
+   * Re-captura un paso agrupado marcando todos sus elementos (los campos de un
+   * formulario, o lo que se haya agrupado a mano). Devuelve la ruta del PNG
+   * nuevo, o `null` si la captura no mejoraría la que el paso ya tiene: la
+   * pantalla es otra (`url` ya no coincide) o no queda nada que marcar.
    */
-  'recorder:capture-group': (args: { refs: number[] }) => string | null
+  'recorder:capture-group': (args: { targets: GroupTarget[]; url?: string }) => string | null
+  /** pantallas y ventanas capturables, con miniatura (o el motivo de no poder) */
+  'capture:sources': () => { sources: CaptureSource[]; error?: string }
+  /**
+   * Captura la pantalla o ventana elegida y devuelve la ruta del PNG temporal.
+   * Con `hideWindow`, HiDocs se aparta mientras dispara.
+   */
+  'capture:take': (args: { sourceId: string; hideWindow: boolean }) => {
+    file?: string
+    error?: string
+  }
+  /** copia una imagen del disco (elegida con un selector) a la sesión */
+  'capture:import-file': () => { file?: string; error?: string; canceled?: boolean }
+  /**
+   * Lee el portapapeles del sistema. Si trae una imagen, la escribe como PNG en
+   * la carpeta de capturas y devuelve su ruta; si no, devuelve el texto (y su
+   * HTML, si lo hay) para que la GUI arme un bloque de contenido.
+   */
+  'clipboard:read': () => ClipboardPaste
+  /**
+   * Guarda como captura de la sesión la imagen ya editada en la GUI (recorte y
+   * resaltado). Recibe un data URI PNG y devuelve la ruta del archivo.
+   */
+  'capture:save-edited': (dataUrl: string) => string | null
   'dialog:pick-output-dir': () => string | null
   'session:save': (payload: SavePayload) => SaveResult
   'shell:open-path': (path: string) => void
@@ -190,8 +345,44 @@ export interface IpcInvokeMap {
   'git:branch-docs': (args: { repoRoot: string; branch: string }) => BranchDocInfo[]
   /** documentación registrada en un commit, para previsualizar (solo lectura) */
   'git:commit-docs': (args: { repoRoot: string; commit: string }) => CommitDocs[]
+  /**
+   * Trae una funcionalidad de un commit a la sesión para volver a editarla: sus
+   * pasos y sus capturas, más la carpeta de salida que la devuelve a su sitio.
+   * Solo lectura sobre el repositorio: escribe únicamente los PNG temporales.
+   */
+  'git:commit-doc-edit': (args: {
+    repoRoot: string
+    commit: string
+    /** ruta del session.json dentro del repo, tal como la da `git:commit-docs` */
+    path: string
+  }) => CommitDocEdit | null
   /** una captura commiteada como data URI, para la vista previa (solo lectura) */
   'git:doc-image': (args: { repoRoot: string; commit: string; imagePath: string }) => string | null
+  /**
+   * Paquetes escritos en el repositorio que Git no tiene registrados (carpetas
+   * nuevas sin commitear, o cambiadas después del commit). Solo lectura: leerlos
+   * es lo que permite recuperar una grabación guardada que se quedó sin commit.
+   */
+  'git:pending-docs': (repoRoot: string) => PendingDocInfo[]
+  /**
+   * Registra en Git uno de esos paquetes, tal cual está en el disco. Indexa solo
+   * los archivos de su carpeta (y los `_category_.json` que le falten por encima),
+   * con las mismas salvaguardas que el guardado normal.
+   */
+  'git:commit-pending': (args: {
+    repoRoot: string
+    dir: string
+    branch: string
+    message: string
+    push: boolean
+  }) => GitCommitResult
+  /**
+   * Descarta uno de esos paquetes: lo nuevo va a la papelera del sistema (no se
+   * borra a lo bruto: se puede recuperar desde el escritorio) y lo que ya estaba
+   * commiteado vuelve a su versión del último commit. Nunca toca nada fuera de la
+   * carpeta del paquete.
+   */
+  'git:discard-pending': (args: { repoRoot: string; dir: string }) => DiscardResult
   /** repositorios de documentación ya usados, del más reciente al más antiguo */
   'projects:list': () => ProjectEntry[]
   /** quita el repositorio del registro; no toca nada en disco */
@@ -251,6 +442,11 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'recorder:resume',
   'recorder:stop',
   'recorder:capture-group',
+  'capture:sources',
+  'capture:take',
+  'capture:import-file',
+  'capture:save-edited',
+  'clipboard:read',
   'dialog:pick-output-dir',
   'session:save',
   'shell:open-path',
@@ -260,7 +456,11 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'git:commits',
   'git:branch-docs',
   'git:commit-docs',
+  'git:commit-doc-edit',
   'git:doc-image',
+  'git:pending-docs',
+  'git:commit-pending',
+  'git:discard-pending',
   'projects:list',
   'projects:forget',
   'docusaurus:suggest-docs',

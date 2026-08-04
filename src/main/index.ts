@@ -1,5 +1,6 @@
 import { join } from 'node:path'
-import { readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { readFile, writeFile } from 'node:fs/promises'
 import {
   app,
   BrowserWindow,
@@ -7,6 +8,7 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  nativeImage,
   protocol,
   screen,
   session,
@@ -20,6 +22,7 @@ import {
   SHOT_PROTOCOL,
   type AiDraftRequest,
   type DraftPayload,
+  type GroupTarget,
   type RecordedStep,
   type SavePayload,
   type ViewportBounds
@@ -33,13 +36,18 @@ import {
   type RegenReport
 } from '../shared/types'
 import { saveSession } from './storage'
+import { captureSourceToFile, listCaptureSources, readClipboard } from './capture'
 import {
+  commitPendingDoc,
+  discardPendingDoc,
   inspectRepo,
   listBranches,
   listCommits,
   readBranchDocs,
+  readCommitDocForEdit,
   readCommitDocs,
-  readDocImage
+  readDocImage,
+  readPendingDocs
 } from './git'
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
@@ -64,7 +72,18 @@ if (process.env['DOCRECORDER_USER_DATA']) {
 // Debe declararse antes de `whenReady` para que el renderer pueda usar
 // `docshot:` en `<img src>` bajo su Content-Security-Policy.
 protocol.registerSchemesAsPrivileged([
-  { scheme: SHOT_PROTOCOL, privileges: { standard: true, secure: true, supportFetchAPI: true } }
+  {
+    scheme: SHOT_PROTOCOL,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      // El editor de capturas externas carga la imagen con `crossOrigin` para
+      // poder recortarla en un `<canvas>` y leer el resultado. Sin habilitar CORS
+      // en el esquema, Chromium bloquea esa petición antes de llegar al handler.
+      corsEnabled: true
+    }
+  }
 ])
 
 /** Ancho mínimo del panel de pasos (§8). */
@@ -102,7 +121,16 @@ function registerShotProtocol(): void {
     }
     try {
       const data = await readFile(filePath)
-      return new Response(data, { headers: { 'Content-Type': 'image/png' } })
+      return new Response(data, {
+        headers: {
+          'Content-Type': 'image/png',
+          // El editor de capturas externas dibuja la imagen en un `<canvas>` para
+          // recortarla: sin esta cabecera el lienzo queda «contaminado» (otro
+          // origen) y el navegador prohíbe leer el resultado. Solo se sirven
+          // capturas propias de la sesión, así que abrirlo no expone nada.
+          'Access-Control-Allow-Origin': '*'
+        }
+      })
     } catch {
       return new Response('No encontrado', { status: 404 })
     }
@@ -288,8 +316,8 @@ function registerIpc(): void {
 
   ipcMain.handle(
     'recorder:capture-group',
-    async (_e, args: { refs: number[] }) => {
-      return engine.captureGroup(args.refs)
+    async (_e, args: { targets: GroupTarget[]; url?: string }) => {
+      return engine.captureGroup(args.targets, args.url)
     }
   )
 
@@ -297,6 +325,56 @@ function registerIpc(): void {
     const result = await saveSession(payload, viewport.currentSize)
     engine.log('info', `Sesión guardada en ${result.path}`)
     return result
+  })
+
+  // --- capturas ajenas al visor (§12) ---
+
+  ipcMain.handle('capture:sources', async () => {
+    return listCaptureSources().catch((err) => ({
+      sources: [],
+      error: err instanceof Error ? err.message : String(err)
+    }))
+  })
+
+  ipcMain.handle('capture:take', async (_e, args: { sourceId: string; hideWindow: boolean }) => {
+    const file = join(engine.ensureShotDir(), `externa-${randomUUID()}.png`)
+    return captureSourceToFile(args.sourceId, file, args.hideWindow, mainWindow)
+  })
+
+  ipcMain.handle('capture:import-file', async () => {
+    if (!mainWindow) return { canceled: true }
+    // Como en el resto de selectores nativos, la vista del visor se aparta.
+    viewport.setVisible(false)
+    try {
+      const picked = await dialog.showOpenDialog(mainWindow, {
+        title: 'Imagen que documentar',
+        properties: ['openFile'],
+        filters: [{ name: 'Imágenes', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }]
+      })
+      if (picked.canceled || !picked.filePaths[0]) return { canceled: true }
+      // La imagen se copia (no se enlaza): el archivo original puede moverse o
+      // borrarse, y el paso debe seguir teniendo su captura.
+      const source = picked.filePaths[0]
+      const image = nativeImage.createFromPath(source)
+      if (image.isEmpty()) return { error: 'No se pudo leer esa imagen.' }
+      const file = join(engine.ensureShotDir(), `externa-${randomUUID()}.png`)
+      await writeFile(file, image.toPNG())
+      return { file }
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) }
+    } finally {
+      viewport.setVisible(true)
+    }
+  })
+
+  ipcMain.handle('clipboard:read', async () => readClipboard(engine.ensureShotDir()))
+
+  ipcMain.handle('capture:save-edited', async (_e, dataUrl: string) => {
+    const match = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(dataUrl)
+    if (!match) return null
+    const file = join(engine.ensureShotDir(), `externa-${randomUUID()}.png`)
+    await writeFile(file, Buffer.from(match[1], 'base64'))
+    return file
   })
 
   ipcMain.handle('dialog:pick-output-dir', async () => {
@@ -351,12 +429,48 @@ function registerIpc(): void {
     return readCommitDocs(args.repoRoot, args.commit).catch(() => [])
   })
 
+  // Las capturas del commit se escriben en la misma carpeta temporal que las
+  // grabadas: a partir de ahí el paso es uno más del panel.
+  ipcMain.handle(
+    'git:commit-doc-edit',
+    async (_e, args: { repoRoot: string; commit: string; path: string }) => {
+      return readCommitDocForEdit(
+        args.repoRoot,
+        args.commit,
+        args.path,
+        engine.ensureShotDir()
+      ).catch(() => null)
+    }
+  )
+
   ipcMain.handle(
     'git:doc-image',
     async (_e, args: { repoRoot: string; commit: string; imagePath: string }) => {
       return readDocImage(args.repoRoot, args.commit, args.imagePath).catch(() => null)
     }
   )
+
+  ipcMain.handle('git:pending-docs', async (_e, repoRoot: string) => {
+    return readPendingDocs(repoRoot).catch(() => [])
+  })
+
+  // El error SÍ se propaga: aquí se escribe en el repositorio, y si el commit no
+  // sale hay que decir por qué (rama, cambios ajenos), igual que al guardar.
+  ipcMain.handle(
+    'git:commit-pending',
+    async (
+      _e,
+      args: { repoRoot: string; dir: string; branch: string; message: string; push: boolean }
+    ) => {
+      return commitPendingDoc(args)
+    }
+  )
+
+  // Descartar también escribe (borra y revierte): el error se propaga para poder
+  // decir qué no se pudo tirar, en vez de dejar creer que se limpió todo.
+  ipcMain.handle('git:discard-pending', async (_e, args: { repoRoot: string; dir: string }) => {
+    return discardPendingDoc(args)
+  })
 
   ipcMain.handle('projects:list', async () => listProjects().catch(() => []))
 

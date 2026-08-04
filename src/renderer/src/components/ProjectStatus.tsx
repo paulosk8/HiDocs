@@ -28,6 +28,9 @@ export function ProjectStatus(): React.JSX.Element {
   const setPickerOpen = useSession((s) => s.setBranchPickerOpen)
   const projectsOpen = useSession((s) => s.projectsOpen)
   const setProjectsOpen = useSession((s) => s.setProjectsOpen)
+  const pendingDocsOpen = useSession((s) => s.pendingDocsOpen)
+  const setPendingDocsOpen = useSession((s) => s.setPendingDocsOpen)
+  const [pendingDocs, setPendingDocs] = useState(0)
   const [projectCount, setProjectCount] = useState<number | null>(null)
   const [docsDir, setDocsDir] = useState<string | null>(null)
   const branches = useBranches(repo?.root)
@@ -39,6 +42,16 @@ export function ProjectStatus(): React.JSX.Element {
     if (projectsOpen) return
     void ipc.invoke('projects:list').then((list) => setProjectCount(list.length))
   }, [repo?.root, projectsOpen])
+
+  // Paquetes escritos y sin registrar en Git. Se recuenta con cada inspección del
+  // repositorio (cambiar de carpeta, guardar) y al cerrar la lista, que es donde
+  // se registran: mientras está abierta manda ella, que ya relee por su cuenta.
+  useEffect(() => {
+    // Sin repositorio no hay nada que contar, y el aviso tampoco se pinta: la
+    // franja entera es otra en ese caso.
+    if (pendingDocsOpen || !repo?.root) return
+    void ipc.invoke('git:pending-docs', repo.root).then((docs) => setPendingDocs(docs.length))
+  }, [repo, pendingDocsOpen])
 
   // ¿La carpeta elegida es la raíz de un Docusaurus? Entonces la documentación
   // caería fuera de `docs/` y no se renderizaría.
@@ -144,6 +157,18 @@ export function ProjectStatus(): React.JSX.Element {
           <>
             <span className="status-sep">·</span>
             <span className="muted">sin remoto</span>
+          </>
+        )}
+        {pendingDocs > 0 && (
+          <>
+            <span className="status-sep">·</span>
+            <button
+              className="status-link warn"
+              onClick={() => setPendingDocsOpen(true)}
+              title="Documentación escrita en el repositorio que Git no tiene registrada todavía"
+            >
+              ⚠ {pendingDocs} sin registrar
+            </button>
           </>
         )}
         <span className="status-spacer" />
