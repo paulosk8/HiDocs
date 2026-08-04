@@ -35,16 +35,26 @@ async function newerOrMissing(src: string, dest: string): Promise<boolean> {
 export async function saveDraft(draft: DraftPayload): Promise<void> {
   await mkdir(imgDir(), { recursive: true })
 
+  /** Copia la captura del paso a la carpeta durable y devuelve su ruta nueva. */
+  const persistShot = async <T extends { id: string; tempFile: string }>(step: T): Promise<T> => {
+    const dest = join(imgDir(), `${step.id}.png`)
+    if (step.tempFile && step.tempFile !== dest && (await newerOrMissing(step.tempFile, dest))) {
+      await copyFile(step.tempFile, dest).catch(() => undefined)
+    }
+    const stored = await stat(dest)
+      .then(() => true)
+      .catch(() => false)
+    return { ...step, tempFile: stored ? dest : step.tempFile }
+  }
+
   const steps = await Promise.all(
     draft.steps.map(async (step) => {
-      const dest = join(imgDir(), `${step.id}.png`)
-      if (step.tempFile && step.tempFile !== dest && (await newerOrMissing(step.tempFile, dest))) {
-        await copyFile(step.tempFile, dest).catch(() => undefined)
-      }
-      const stored = await stat(dest)
-        .then(() => true)
-        .catch(() => false)
-      return { ...step, tempFile: stored ? dest : step.tempFile }
+      const saved = await persistShot(step)
+      // Los pasos que quedaron dentro de una agrupación manual conservan su
+      // propia captura: es lo que devuelve «deshacer agrupación», y sin copiarla
+      // aquí deshacerla mañana dejaría los pasos sin imagen.
+      if (!step.groupSources?.length) return saved
+      return { ...saved, groupSources: await Promise.all(step.groupSources.map(persistShot)) }
     })
   )
 

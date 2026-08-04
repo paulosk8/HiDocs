@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   DndContext,
   KeyboardSensor,
@@ -17,14 +17,25 @@ import {
 import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
-import { useSession } from '../store'
+import { sectionSize, selectionProblem, useSession } from '../store'
 import { invalidateBranches } from '../useBranches'
+import { SectionCard } from './SectionCard'
 import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
+import { CaptureModal } from './CaptureModal'
+import { ContentModal } from './ContentModal'
 import { ConfirmDialog } from './ConfirmDialog'
 import { GitSection } from './GitSection'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
 import { useAiDraft } from '../useAiDraft'
+import { useGroupCapture } from '../useGroupCapture'
+import { usePasteStep } from '../usePasteStep'
+import { isEditable } from '../paste-step'
+
+/** Pasos que tiene sentido mandar a redactar: los que se publican y se ejecutan. */
+function draftable(step: RecordedStep): boolean {
+  return step.includeInDocs && step.kind !== 'section'
+}
 
 export function StepsPanel(): React.JSX.Element {
   const steps = useSession((s) => s.steps)
@@ -42,15 +53,57 @@ export function StepsPanel(): React.JSX.Element {
   // El informe del runner se muestra al terminar; durante el replay el visor
   // debe quedar VISIBLE (se ve la reproducción y las capturas salen con tamaño).
   const runnerReportOpen = useSession((s) => s.runnerPhase === 'done')
-  const groupFormFields = useSession((s) => s.groupFormFields)
-  const setGroupFormFields = useSession((s) => s.setGroupFormFields)
+  const groupConsecutive = useSession((s) => s.groupConsecutive)
+  const setGroupConsecutive = useSession((s) => s.setGroupConsecutive)
   const aiOpen = useSession((s) => s.aiOpen)
+  const aiContextOpen = useSession((s) => s.aiContextOpen)
+  const setAiContextOpen = useSession((s) => s.setAiContextOpen)
+  const pendingDocsOpen = useSession((s) => s.pendingDocsOpen)
+  const aiContext = useSession((s) => s.meta.aiContext ?? '')
   const aiBusyIds = useSession((s) => s.aiBusyIds)
   const aiProgress = useSession((s) => s.aiProgress)
   const aiError = useSession((s) => s.aiError)
   const setAiError = useSession((s) => s.setAiError)
+  const selectedIds = useSession((s) => s.selectedIds)
+  const clearSelection = useSession((s) => s.clearSelection)
+  const groupSelected = useSession((s) => s.groupSelected)
+  const removeSelected = useSession((s) => s.removeSelected)
+  const addManualStep = useSession((s) => s.addManualStep)
+  const wideContentId = useSession((s) => s.wideContentId)
+  const setWideContentId = useSession((s) => s.setWideContentId)
+  const updateStep = useSession((s) => s.updateStep)
+  const activeStepId = useSession((s) => s.activeStepId)
+  const collapsedSections = useSession((s) => s.collapsedSections)
+  const editing = useSession((s) => s.editing)
+  const discardEditing = useSession((s) => s.discardEditing)
   const { draft } = useAiDraft()
+  const recaptureGroup = useGroupCapture()
+  const {
+    pasteFromEvent,
+    pasteFromClipboard,
+    problem: pasteProblem,
+    clearProblem: clearPasteProblem
+  } = usePasteStep()
 
+  const [addOpen, setAddOpen] = useState(false)
+  /**
+   * El diálogo de la imagen, en sus tres formas: elegir una fuente que capturar,
+   * ajustar lo que se acaba de pegar antes de crear la tarjeta, o retocar la
+   * imagen de una tarjeta que ya existe (`stepId`).
+   */
+  const [capture, setCapture] = useState<
+    | { mode: 'source' }
+    | { mode: 'paste'; file: string }
+    | { mode: 'edit'; stepId: string; file: string; name: string }
+    | null
+  >(null)
+  const addRef = useRef<HTMLDivElement>(null)
+  /**
+   * Momento del último pegado atendido POR LA TECLA. Si el mismo gesto acaba
+   * emitiendo además un evento `paste`, se ignora: si no, una sola pulsación
+   * crearía dos tarjetas.
+   */
+  const keyPasteAt = useRef(0)
   const [shot, setShot] = useState<RecordedStep | null>(null)
   const [pendingSave, setPendingSave] = useState<{ untitled: number } | null>(null)
   const [pendingCommit, setPendingCommit] = useState<{
@@ -58,9 +111,49 @@ export function StepsPanel(): React.JSX.Element {
     message: string
     untitled: number
   } | null>(null)
+  /** confirmación de «descartar la edición» (no registra nada) */
+  const [discardEdit, setDiscardEdit] = useState(false)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // Por qué no se puede agrupar lo marcado (o null si sí se puede): se muestra
+  // como pista en la barra de selección en vez de dejar el botón mudo.
+  const groupProblem = selectedIds.length ? selectionProblem(steps, selectedIds) : null
+  const wideStep = steps.find((s) => s.id === wideContentId) ?? null
+
+  // Dónde va a caer lo que se añada. Insertar junto a la tarjeta en la que se
+  // trabaja es lo natural documentando, pero solo se adivina si se dice.
+  const activeIndex = steps.findIndex((s) => s.id === activeStepId)
+  const insertHint =
+    activeIndex >= 0 && activeIndex < steps.length - 1
+      ? `Se insertará detrás de la tarjeta ${activeIndex + 1} de la lista.`
+      : 'Se añadirá al final.'
+
+  // El recuento del encabezado cuenta PASOS: una sección es un título, y sumarla
+  // haría que el panel dijera 12 donde el manual numera 10.
+  const stepCount = steps.filter((s) => s.kind !== 'section').length
+
+  // Lo que se pinta: las secciones siempre, y los pasos de las que estén
+  // desplegadas. Plegar es lo que hace manejable una grabación de cuarenta pasos,
+  // y solo afecta a la vista: lo plegado se guarda y se publica igual.
+  const visible = useMemo(() => {
+    const rows: { step: RecordedStep; count: number; nested: boolean }[] = []
+    let hidden = false
+    // `nested` sangra los pasos que cuelgan de una sección: sin ese escalón, una
+    // sección parece un separador suelto y no se ve dónde acaba su apartado.
+    let nested = false
+    steps.forEach((step, index) => {
+      if (step.kind === 'section') {
+        hidden = collapsedSections.includes(step.id)
+        nested = true
+        rows.push({ step, count: sectionSize(steps, index), nested: false })
+      } else if (!hidden) {
+        rows.push({ step, count: 0, nested })
+      }
+    })
+    return rows
+  }, [steps, collapsedSections])
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -205,6 +298,24 @@ export function StepsPanel(): React.JSX.Element {
     [toggleRecording]
   )
 
+  // El menú «Añadir» se cierra al pulsar fuera o con Escape, como el resto de
+  // desplegables de la app.
+  useEffect(() => {
+    if (!addOpen) return
+    const onDown = (e: MouseEvent): void => {
+      if (!addRef.current?.contains(e.target as Node)) setAddOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setAddOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [addOpen])
+
   // El WebContentsView se pinta por encima del HTML del renderer, así que
   // cualquier superposición propia exige ocultarlo mientras esté abierta. Incluye
   // el explorador de proyectos: si no, la página nativa lo tapa y solo asoma su
@@ -223,10 +334,59 @@ export function StepsPanel(): React.JSX.Element {
     docusaurusIntroOpen ||
     runnerReportOpen ||
     aiOpen ||
+    aiContextOpen ||
+    pendingDocsOpen ||
+    capture !== null ||
+    wideContentId !== null ||
+    pasteProblem !== null ||
+    discardEdit ||
     aiError !== null
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
   }, [modalOpen])
+
+  /**
+   * Pegar (⌘/Ctrl+V) crea la tarjeta de lo que haya en el portapapeles: una
+   * imagen, o un bloque de contenido si es texto. Es el atajo del flujo real —se
+   * graba un paso, se recorta algo por fuera y se pega aquí mismo— y por eso se
+   * escucha en todo el panel y no en un campo concreto.
+   *
+   * Se escucha por partida doble a propósito. Fuera de un campo editable, pulsar
+   * la tecla NO produce un evento `paste`: el navegador solo lo emite cuando el
+   * pegado tiene dónde caer, así que sin el `keydown` el atajo no existiría. Y el
+   * evento hace falta igualmente porque hay pegados que sí lo emiten (y traen los
+   * datos consigo, sin preguntar al portapapeles del sistema). Cuando un mismo
+   * gesto dispara los dos, manda la tecla —llega primero— y el evento que venga
+   * detrás se descarta por eco. La ventana es corta a propósito: solo cubre el eco
+   * de una pulsación, no dos pegados seguidos, que son dos tarjetas legítimas.
+   *
+   * No se toca el pegado que ya tenía sentido: dentro de un campo de texto se
+   * pega texto, y con una superposición abierta manda ella (el diálogo de la
+   * imagen tiene su propio pegado).
+   */
+  useEffect(() => {
+    if (modalOpen) return
+    const onPaste = (event: ClipboardEvent): void => {
+      if (isEditable(event.target)) return
+      event.preventDefault()
+      // El mismo gesto ya se atendió por la tecla: este evento es su eco.
+      if (Date.now() - keyPasteAt.current < 250) return
+      void pasteFromEvent(event.clipboardData)
+    }
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'v') return
+      if (event.altKey || event.shiftKey || isEditable(event.target)) return
+      event.preventDefault()
+      keyPasteAt.current = Date.now()
+      void pasteFromClipboard()
+    }
+    document.addEventListener('paste', onPaste)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('paste', onPaste)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [modalOpen, pasteFromEvent, pasteFromClipboard])
 
   const record = async (): Promise<void> => {
     setProblem(null)
@@ -258,7 +418,7 @@ export function StepsPanel(): React.JSX.Element {
       <button
         className="ctrl"
         disabled={busy || (status === 'idle' && steps.length === 0)}
-        title="Detener y guardar"
+        title={editing ? 'Guardar los cambios y registrarlos en Git' : 'Detener y guardar'}
         onClick={() => void stopAndSave()}
       >
         ■
@@ -271,6 +431,50 @@ export function StepsPanel(): React.JSX.Element {
   const dialogs = (
     <>
       {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
+
+      {capture && (
+        <CaptureModal
+          initial={
+            capture.mode === 'paste'
+              ? { file: capture.file, name: 'Imagen pegada' }
+              : capture.mode === 'edit'
+                ? { file: capture.file, name: capture.name }
+                : null
+          }
+          confirmLabel={capture.mode === 'edit' ? 'Guardar la imagen' : 'Añadir como paso'}
+          onClose={() => setCapture(null)}
+          onCaptured={(file, sourceName) => {
+            // Ajustando la imagen de una tarjeta solo cambia su imagen: el título,
+            // la descripción y la nota que ya se hubieran escrito se conservan.
+            if (capture.mode === 'edit') updateStep(capture.stepId, { tempFile: file })
+            // El título de partida nombra el origen («Captura de Excel»); es
+            // editable y la IA puede redactarlo mejor, pero nunca queda vacío.
+            else if (capture.mode === 'paste')
+              addManualStep({ kind: 'image', title: 'Imagen pegada', tempFile: file })
+            else
+              addManualStep({ kind: 'capture', title: `Captura de ${sourceName}`, tempFile: file })
+            setCapture(null)
+          }}
+        />
+      )}
+
+      {pasteProblem && (
+        <ConfirmDialog
+          title="No se pudo pegar"
+          body={pasteProblem}
+          confirmLabel="Entendido"
+          onConfirm={clearPasteProblem}
+        />
+      )}
+
+      {wideStep && (
+        <ContentModal
+          title={wideStep.title}
+          value={wideStep.content ?? ''}
+          onChange={(content) => updateStep(wideStep.id, { content })}
+          onClose={() => setWideContentId(null)}
+        />
+      )}
 
       {pendingCommit && (
         <ConfirmDialog
@@ -299,10 +503,35 @@ export function StepsPanel(): React.JSX.Element {
       {pendingSave && (
         <ConfirmDialog
           title="Hay pasos sin título"
-          body={`${pendingSave.untitled} de ${steps.length} pasos no tienen título. Puedes guardar igualmente y completarlos después.`}
+          body={`${pendingSave.untitled} de ${stepCount} pasos no tienen título. Puedes guardar igualmente y completarlos después.`}
           confirmLabel="Guardar de todos modos"
           onConfirm={() => void write()}
           onCancel={() => setPendingSave(null)}
+        />
+      )}
+
+      {discardEdit && (
+        <ConfirmDialog
+          title="Descartar la edición"
+          body={[
+            `Se vaciará el panel y «${editing?.title ?? ''}» se quedará como está publicada.`,
+            '',
+            'No se registra nada: el commit del que salió no se toca, y el paquete del',
+            'repositorio tampoco (cargarlo solo leyó de Git).',
+            '',
+            'Lo que hayas escrito aquí se pierde.'
+          ].join('\n')}
+          confirmLabel="Descartar"
+          cancelLabel="Seguir editando"
+          tone="danger"
+          onConfirm={() => {
+            setDiscardEdit(false)
+            discardEditing()
+            // El borrador guardaba esta edición: sin borrarlo, al abrir la app
+            // mañana se ofrecería continuar lo que se acaba de descartar.
+            void ipc.invoke('draft:clear')
+          }}
+          onCancel={() => setDiscardEdit(false)}
         />
       )}
 
@@ -365,8 +594,8 @@ export function StepsPanel(): React.JSX.Element {
           >
             «
           </button>
-          <span className="count" title={`${steps.length} paso(s)`}>
-            {steps.length}
+          <span className="count" title={`${stepCount} paso(s)`}>
+            {stepCount}
           </span>
           <div className="controls controls-vertical">{controls}</div>
         </div>
@@ -377,6 +606,28 @@ export function StepsPanel(): React.JSX.Element {
 
   return (
     <aside className="panel">
+      {/* Editando algo ya publicado: qué es, dónde irá y cómo salir sin registrar
+          nada. Sin esta franja, el panel aparece lleno de pasos que nadie ha
+          grabado aquí y la única salida a la vista es ■, que guarda y comitea. */}
+      {editing && (
+        <div className="editing-strip">
+          <span className="editing-what">
+            ✎ Editando <b>{editing.title}</b>
+          </span>
+          <button
+            className="btn"
+            title="Vaciar el panel y dejar la documentación publicada como está. No se registra nada."
+            onClick={() => setDiscardEdit(true)}
+          >
+            Descartar la edición
+          </button>
+          <span className="muted editing-where">
+            commit {editing.commit} · se registrará en <code>{editing.branch}</code> sobre{' '}
+            <code>{editing.dir}</code>
+          </span>
+        </div>
+      )}
+
       <div className="panel-header">
         <button
           className="strip-toggle"
@@ -387,34 +638,146 @@ export function StepsPanel(): React.JSX.Element {
           »
         </button>
         <h2>Pasos</h2>
-        <span className="count">{steps.length}</span>
-        <label
-          className="group-toggle"
-          title="Une los campos que RELLENAS o SELECCIONAS de un mismo formulario en un solo paso (una captura en vez de una por campo). No afecta a los clics."
-        >
-          <input
-            type="checkbox"
-            checked={groupFormFields}
-            onChange={(e) => setGroupFormFields(e.target.checked)}
-          />
-          agrupar campos
-        </label>
-        {/* Solo se redactan los pasos que van al manual: pagar tokens por un paso
-            excluido de la documentación no tendría sentido. */}
-        <button
-          className="btn btn-ai"
-          disabled={aiBusyIds.length > 0 || !steps.some((s) => s.includeInDocs)}
-          title="Propone título y descripción para todos los pasos incluidos en la documentación"
-          onClick={() =>
-            void draft(steps.filter((s) => s.includeInDocs).map((s) => s.id))
-          }
-        >
-          {aiBusyIds.length > 0
-            ? `Redactando ${aiProgress ? `${aiProgress.done}/${aiProgress.total}` : ''}…`
-            : '✨ Redactar todos'}
-        </button>
+        <span className="count">{stepCount}</span>
         <div className="controls">{controls}</div>
       </div>
+
+      {/* Segunda fila: lo que se HACE con los pasos, separado de los controles de
+          grabación. Cuando hay pasos marcados, esta fila pasa a ser la barra de
+          selección: las acciones que ofrece son otras y mezclarlas confundía. */}
+      {selectedIds.length > 0 ? (
+        <div className="panel-toolbar selection">
+          <span className="selection-count">{selectedIds.length} marcado(s)</span>
+          <button
+            className="btn primary"
+            disabled={groupProblem !== null}
+            title={groupProblem ?? 'Funde los pasos marcados en uno solo'}
+            onClick={() => recaptureGroup(groupSelected())}
+          >
+            ⊞ Agrupar
+          </button>
+          <button className="btn danger" onClick={removeSelected}>
+            Eliminar
+          </button>
+          <button className="btn" onClick={clearSelection}>
+            Cancelar
+          </button>
+          {groupProblem && <span className="muted selection-hint">{groupProblem}</span>}
+        </div>
+      ) : (
+        <div className="panel-toolbar">
+          <div className="add-menu" ref={addRef}>
+            <button
+              className="btn"
+              aria-expanded={addOpen}
+              title={`Añadir algo que no se graba: una imagen pegada, una captura externa, un bloque de contenido o una sección. ${insertHint}`}
+              onClick={() => setAddOpen((v) => !v)}
+            >
+              + Añadir ▾
+            </button>
+            {addOpen && (
+              <div className="add-menu-list" role="menu">
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddOpen(false)
+                    void pasteFromClipboard()
+                  }}
+                >
+                  📋 Imagen del portapapeles
+                  <small>Lo que tengas copiado, tal cual (⌘/Ctrl+V)</small>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddOpen(false)
+                    void ipc.invoke('clipboard:read').then((clip) => {
+                      if (clip.file) setCapture({ mode: 'paste', file: clip.file })
+                      // Sin imagen que ajustar se cae al selector de fuentes, que
+                      // es de donde se puede sacar una.
+                      else setCapture({ mode: 'source' })
+                    })
+                  }}
+                >
+                  ✂ Pegar y ajustar…
+                  <small>Recortar o señalar antes de crear la tarjeta</small>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddOpen(false)
+                    setCapture({ mode: 'source' })
+                  }}
+                >
+                  📷 Captura de pantalla…
+                  <small>Otra ventana, el escritorio o una imagen del disco</small>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddOpen(false)
+                    addManualStep({ kind: 'content', title: '' })
+                  }}
+                >
+                  ▦ Bloque de contenido
+                  <small>Una tabla, código o pestañas de Docusaurus</small>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddOpen(false)
+                    addManualStep({ kind: 'section', title: '' })
+                  }}
+                >
+                  ▤ Sección
+                  <small>Encabeza los pasos siguientes; se pliega y se mueve entera</small>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Solo se redactan los pasos que van al manual: pagar tokens por un paso
+              excluido de la documentación no tendría sentido. Las secciones
+              tampoco: su título lo pone quien decide la estructura. */}
+          <button
+            className="btn btn-ai"
+            disabled={aiBusyIds.length > 0 || !steps.some(draftable)}
+            title="Propone título y descripción para todos los pasos incluidos en la documentación"
+            onClick={() => void draft(steps.filter(draftable).map((s) => s.id))}
+          >
+            {aiBusyIds.length > 0
+              ? `Redactando ${aiProgress ? `${aiProgress.done}/${aiProgress.total}` : ''}…`
+              : '✨ Redactar todos'}
+          </button>
+
+          {/* El contexto es lo que hace que «Redactar todos» acierte con los
+              nombres del sistema, así que vive junto a él y no en los ajustes. */}
+          <button
+            className={aiContext ? 'btn btn-context set' : 'btn btn-context'}
+            title={
+              aiContext
+                ? `Material de referencia para la IA (${aiContext.length} caracteres). Se envía con cada redacción.`
+                : 'Pega un texto o código de referencia para que la IA redacte con los nombres reales del sistema'
+            }
+            onClick={() => setAiContextOpen(true)}
+          >
+            {aiContext ? '▣ Contexto' : '▢ Contexto'}
+            {aiContext && <em className="context-size">{Math.ceil(aiContext.length / 1000)} k</em>}
+          </button>
+
+          <label
+            className="group-toggle"
+            title="Une en un solo paso los controles seguidos del MISMO tipo: los campos de un formulario, las casillas de una misma columna de la tabla, varias pestañas o varios botones. Al cambiar de tipo empieza un paso nuevo. Para unir cosas distintas, marca los pasos con su casilla."
+          >
+            <input
+              type="checkbox"
+              checked={groupConsecutive}
+              onChange={(e) => setGroupConsecutive(e.target.checked)}
+            />
+            agrupar seguidos
+          </label>
+        </div>
+      )}
 
       <div className="panel-body">
         {!attached && status === 'idle' && steps.length === 0 && (
@@ -436,10 +799,30 @@ export function StepsPanel(): React.JSX.Element {
           modifiers={[restrictToVerticalAxis, restrictToParentElement]}
           onDragEnd={onDragEnd}
         >
-          <SortableContext items={steps.map((s) => s.id)} strategy={verticalListSortingStrategy}>
-            {steps.map((step) => (
-              <StepCard key={step.id} step={step} onOpenShot={setShot} />
-            ))}
+          <SortableContext
+            items={visible.map((row) => row.step.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            {visible.map(({ step, count, nested }) =>
+              step.kind === 'section' ? (
+                <SectionCard key={step.id} step={step} count={count} />
+              ) : (
+                <StepCard
+                  key={step.id}
+                  step={step}
+                  nested={nested}
+                  onOpenShot={setShot}
+                  onAdjustImage={(target) =>
+                    setCapture({
+                      mode: 'edit',
+                      stepId: target.id,
+                      file: target.tempFile,
+                      name: target.title
+                    })
+                  }
+                />
+              )
+            )}
           </SortableContext>
         </DndContext>
       </div>

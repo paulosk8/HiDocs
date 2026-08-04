@@ -17,15 +17,20 @@ function toInput(step: ReturnType<typeof useSession.getState>['steps'][number]):
     id: step.id,
     order: step.order,
     action: step.action,
+    kind: step.kind ?? 'interaction',
     title: step.title,
     description: step.description,
     url: step.url,
     // Se manda siempre la ruta: es el main quien decide si adjuntar la imagen,
-    // según la configuración, y quien la lee del disco.
-    screenshot: step.tempFile
+    // según la configuración, y quien la lee del disco. Un bloque de contenido no
+    // tiene captura, y entonces no hay nada que adjuntar.
+    screenshot: step.tempFile || undefined
   }
   if (step.value !== undefined) input.value = step.value
   if (step.fields?.length) input.fields = step.fields
+  // El cuerpo del bloque es lo único que describe ese paso: sin él, la IA no
+  // tendría de qué titular una tabla o un fragmento de código.
+  if (step.content?.trim()) input.content = step.content.trim()
   return input
 }
 
@@ -44,7 +49,9 @@ export function useAiDraft(): { draft: (ids: string[]) => Promise<void> } {
       const result = await ipc.invoke('ai:draft', {
         meta: s.meta,
         outline: s.steps.map((step) => ({ order: step.order, title: step.title })),
-        steps: targets.map(toInput)
+        steps: targets.map(toInput),
+        // Material pegado por quien documenta; el main lo delimita en el prompt.
+        context: s.meta.aiContext?.trim() || undefined
       })
       // El resultado puede traer redacciones Y error a la vez (fallo a mitad):
       // se aplica lo que haya llegado y se avisa igualmente del motivo.

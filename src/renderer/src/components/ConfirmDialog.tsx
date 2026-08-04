@@ -3,6 +3,12 @@ interface Props {
   body: string
   confirmLabel: string
   cancelLabel?: string
+  /**
+   * `danger` para lo que destruye algo (descartar documentación). El botón deja
+   * de ser el azul de «continuar» y pasa a leerse como lo que es, que es la única
+   * forma de que confirmar a ciegas cueste un poco más.
+   */
+  tone?: 'primary' | 'danger'
   onConfirm: () => void
   onCancel?: () => void
 }
@@ -12,6 +18,7 @@ export function ConfirmDialog({
   body,
   confirmLabel,
   cancelLabel,
+  tone = 'primary',
   onConfirm,
   onCancel
 }: Props): React.JSX.Element {
@@ -26,7 +33,7 @@ export function ConfirmDialog({
               {cancelLabel ?? 'Cancelar'}
             </button>
           )}
-          <button className="btn primary" onClick={onConfirm}>
+          <button className={`btn ${tone}`} onClick={onConfirm}>
             {confirmLabel}
           </button>
         </div>

@@ -55,10 +55,27 @@ export interface RawEvent {
   ref: number
   /**
    * Identidad de la fila de tabla que contiene al elemento, o `null` si no está
-   * en ninguna. Dos filas son dos registros distintos, no un formulario: sirve
-   * para no fundir en un paso los controles de filas diferentes.
+   * en ninguna. Junto con `tableRef`, `cellRef` y `colIndex` sitúa el control
+   * dentro de la rejilla, que es lo que decide qué se funde en un paso: los
+   * controles de una misma fila (un registro que se edita) o de una misma
+   * columna (la misma acción repetida sobre varios registros).
    */
   rowRef: number | null
+  /**
+   * Identidad de esta carga de la página. Cambia con cada navegación real,
+   * porque el observador se instala de nuevo en un contexto nuevo. Dos pasos de
+   * cargas distintas NO se funden aunque la URL coincida: recargar y volver a
+   * pulsar es otra cosa que pulsar dos veces seguidas.
+   */
+  loadRef: number
+  /** identidad de la tabla que lo contiene, o `null` si no está en ninguna */
+  tableRef: number | null
+  /** identidad de la celda que lo contiene, o `null` */
+  cellRef: number | null
+  /** número de columna dentro de su fila, o `null` */
+  colIndex: number | null
+  /** texto del encabezado de esa columna, para poder titular el paso */
+  colHeader: string | null
   url: string
   value?: string
   isPassword: boolean
@@ -90,6 +107,51 @@ export interface HighlightResult {
 }
 
 /**
+ * Qué hay pintado por encima del elemento señalado. Decide si al recuadro se le
+ * añade compensación de brillo, y si lo marcado se ve o no.
+ */
+export type CoverKind = 'none' | 'translucent' | 'opaque'
+
+/**
+ * Un elemento del grupo, tal como se le pide al observador que lo marque.
+ *
+ * Lleva **varias** referencias porque un campo puede haberse tocado más de una
+ * vez (enfocarlo y escribir en él son dos eventos), y un `fallback` que resuelve
+ * el motor con los selectores del paso cuando ninguna sigue viva: los frameworks
+ * actuales reemplazan el nodo al re-renderizar —guardar un formulario, redibujar
+ * una tabla—, y entonces la referencia apunta a un elemento que ya no está en el
+ * documento aunque el campo siga a la vista.
+ */
+export interface GroupHighlightTarget {
+  refs: number[]
+  /** elemento localizado por selector en el proceso principal, o `null` */
+  fallback: Element | null
+}
+
+/**
+ * Cuántos elementos del grupo se pudieron marcar y en qué estado están.
+ *
+ * `blocked` cuenta los que están desvaneciéndose o tapados por algo opaco: la
+ * captura los señalaría sin que se vean, así que quien la pide puede esperar un
+ * momento y repetir (un menú que se cierra tarda unos cientos de milisegundos).
+ * `dimmed` son los que están bajo un velo translúcido —el fondo de un modal— y a
+ * los que sí se les devuelve el brillo dentro del recuadro.
+ */
+export interface GroupHighlightResult {
+  marked: number
+  missing: number
+  blocked: number
+  dimmed: number
+  /**
+   * Elementos que se están DESVANECIENDO (un menú que se cierra al elegir su
+   * opción). Se cuentan aparte de `blocked` porque piden lo contrario: uno
+   * tapado se vuelve a intentar y, si sigue tapado, se captura igual; uno que se
+   * va no va a mejorar, y la captura buena es la que el paso ya tiene.
+   */
+  fading: number
+}
+
+/**
  * Script que corre dentro del sistema documentado.
  *
  * Se pasa a `page.addInitScript` (para sobrevivir recargas) y se evalúa también
@@ -104,6 +166,13 @@ export function observerScript(config: ObserverConfig): void {
   if (w[config.namespace]) return
 
   const MAX_TEXT = 80
+  /**
+   * Identidad de esta carga de la página: el observador se instala una vez por
+   * contexto, así que una navegación real trae un número nuevo. Es lo que
+   * distingue «dos clics seguidos» de «un clic, una recarga y otro clic», que en
+   * un manual no son lo mismo aunque la URL coincida.
+   */
+  const LOAD_REF = Date.now()
   /** Cuántas referencias a elementos se conservan para poder re-resaltarlas. */
   const MAX_REFS = 60
   const emit = w[config.bindingName] as ((event: RawEvent) => Promise<void>) | undefined
@@ -141,18 +210,66 @@ export function observerScript(config: ObserverConfig): void {
   /** Espera máxima por el `click` antes de dar el gesto por hecho. */
   const CLICK_FALLBACK_MS = 400
 
-  /** Identidad de la fila de tabla que contiene al elemento, si la hay. */
-  const rowRefs = new WeakMap<Element, number>()
-  let nextRowRef = 1
-  const rowRefOf = (el: Element): number | null => {
-    const row = el.closest('tr,[role=row]')
-    if (!row) return null
-    let id = rowRefs.get(row)
+  /**
+   * Identidades de la tabla y la fila que contienen al elemento, si las hay.
+   *
+   * Son lo que sitúa un control **dentro de la rejilla**: con la tabla, la fila y
+   * el número de columna, la GUI puede decidir qué se funde en un paso y qué no
+   * (misma fila = un registro que se edita; misma columna = la misma acción
+   * repetida sobre varios registros; tablas distintas = nada que ver).
+   */
+  const nodeRefs = new WeakMap<Element, number>()
+  let nextNodeRef = 1
+  const refOfNode = (node: Element | null): number | null => {
+    if (!node) return null
+    let id = nodeRefs.get(node)
     if (id === undefined) {
-      id = nextRowRef++
-      rowRefs.set(row, id)
+      id = nextNodeRef++
+      nodeRefs.set(node, id)
     }
     return id
+  }
+
+  const rowOf = (el: Element): Element | null => el.closest('tr,[role=row]')
+  const cellOf = (el: Element): Element | null =>
+    el.closest('td,th,[role=cell],[role=gridcell],[role=columnheader],[role=rowheader]')
+  const rowRefOf = (el: Element): number | null => refOfNode(rowOf(el))
+  const cellRefOf = (el: Element): number | null => refOfNode(cellOf(el))
+  const tableRefOf = (el: Element): number | null =>
+    refOfNode(el.closest('table,[role=table],[role=grid],[role=treegrid]'))
+
+  /**
+   * Número de columna del elemento dentro de su fila, o `null` fuera de una
+   * tabla. Es la posición entre las celdas hermanas: `cellIndex` cuando el
+   * navegador lo da (tablas HTML), y si no el índice entre hermanas, que es lo
+   * que queda en las rejillas hechas con `div` y roles ARIA.
+   */
+  const colIndexOf = (el: Element): number | null => {
+    const cell = cellOf(el)
+    if (!cell) return null
+    const index = (cell as HTMLTableCellElement).cellIndex
+    if (typeof index === 'number' && index >= 0) return index
+    const parent = cell.parentElement
+    return parent ? Array.prototype.indexOf.call(parent.children, cell) : null
+  }
+
+  /**
+   * Encabezado de esa columna, para poder titular el paso por lo que se hizo
+   * («Rellenar «Nota» en 3 filas») en vez de por un número de columna, que no
+   * significa nada en un manual.
+   */
+  const colHeaderOf = (el: Element): string | null => {
+    const index = colIndexOf(el)
+    if (index === null) return null
+    const table = el.closest('table,[role=table],[role=grid],[role=treegrid]')
+    if (!table) return null
+    const headerRow = table.querySelector('thead tr,[role=rowgroup] [role=row],tr,[role=row]')
+    const cell = headerRow?.children?.[index] ?? null
+    if (!cell) return null
+    const text = ((cell as HTMLElement).innerText ?? cell.textContent ?? '')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return text ? text.slice(0, MAX_TEXT) : null
   }
 
   const clean = (s: string | null | undefined): string | null => {
@@ -495,7 +612,12 @@ export function observerScript(config: ObserverConfig): void {
     const event: RawEvent = {
       action,
       ref,
+      loadRef: LOAD_REF,
       rowRef: rowRefOf(el),
+      tableRef: tableRefOf(el),
+      cellRef: cellRefOf(el),
+      colIndex: colIndexOf(el),
+      colHeader: colHeaderOf(el),
       url: location.href,
       isPassword: isPasswordField(el),
       boundingRect: rect,
@@ -708,6 +830,14 @@ export function observerScript(config: ObserverConfig): void {
     overlay = null
   }
 
+  /** Capa donde se pintan los recuadros: por encima de todo y sin capturar clics. */
+  const newOverlay = (): HTMLElement => {
+    const container = document.createElement('div')
+    container.setAttribute('data-docrec-overlay', '')
+    container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647'
+    return container
+  }
+
   /**
    * Recuadro rojo sobre un elemento.
    *
@@ -716,7 +846,7 @@ export function observerScript(config: ObserverConfig): void {
    * así que acabaría contradiciendo al paso que ilustra. El número lo pone quien
    * sí puede mantenerlo al día: la tarjeta del panel y el encabezado del manual.
    */
-  const drawBox = (rect: DOMRect, dimmed: boolean): HTMLElement => {
+  const drawBox = (rect: DOMRect, cover: CoverKind): HTMLElement => {
     const box = document.createElement('div')
     box.style.cssText = [
       'position:fixed',
@@ -730,11 +860,17 @@ export function observerScript(config: ObserverConfig): void {
       'pointer-events:none',
       'margin:0',
       'padding:0',
-      // Si algo tapa al elemento —el fondo translúcido de un modal, casi
+      // Si un velo translúcido apaga al elemento —el fondo de un modal, casi
       // siempre—, se le devuelve el brillo solo dentro del recuadro. Si no, el
       // paso señala un elemento apagado justo cuando pide mirarlo. Sin tapar
       // nada: `backdrop-filter` aclara lo que ya hay pintado debajo.
-      dimmed ? 'backdrop-filter:brightness(1.9) saturate(1.15)' : ''
+      //
+      // SOLO con un velo translúcido. Aclarar lo que hay bajo un panel opaco (un
+      // desplegable abierto sobre el formulario) no devuelve nada a la vista y
+      // quema lo que sí se ve: con brillo 1.9 todo lo más claro que #868686
+      // acaba en blanco puro, así que los bordes y el texto gris de los campos
+      // desaparecen. Era lo que dejaba «borrosos» los campos del grupo.
+      cover === 'translucent' ? 'backdrop-filter:brightness(1.9) saturate(1.15)' : ''
     ]
       .filter(Boolean)
       .join(';')
@@ -742,19 +878,55 @@ export function observerScript(config: ObserverConfig): void {
     return box
   }
 
+  /** Alfa efectivo del fondo de un elemento (0 = transparente, 1 = opaco). */
+  const backgroundAlpha = (style: CSSStyleDeclaration): number => {
+    const color = style.backgroundColor
+    if (!color || color === 'transparent') return 0
+    const parts = color.match(/[\d.]+/g)
+    if (!parts) return 0
+    // `rgb(...)` sin alfa es opaco; `rgba(...)` trae el alfa en la cuarta parte.
+    const alpha = parts.length >= 4 ? Number(parts[3]) : 1
+    const own = Number(style.opacity)
+    return (Number.isFinite(alpha) ? alpha : 1) * (Number.isFinite(own) ? own : 1)
+  }
+
   /**
-   * ¿Hay algo pintado por encima del elemento? Se pregunta por su centro: si lo
-   * que hay ahí no es él ni parte de él, algo se le ha puesto delante.
+   * Qué hay pintado por encima del elemento, y cuánto tapa.
+   *
+   * Se pregunta por su centro: si lo que hay ahí no es él ni parte de él, algo se
+   * le ha puesto delante. Pero «delante» no es una sola cosa, y tratarlas igual
+   * era el error:
+   *
+   *  - `none` — nada, o algo **sin fondo**: el `<fieldset>` decorativo con el que
+   *    las librerías de componentes dibujan el borde de un campo se lleva el
+   *    `elementFromPoint` y no oscurece absolutamente nada.
+   *  - `translucent` — un velo que deja ver, apagado: el fondo de un modal.
+   *  - `opaque` — un panel que lo tapa del todo: un desplegable abierto sobre el
+   *    formulario, un menú, una hoja lateral. El elemento no se ve, y no hay
+   *    brillo que devolverle.
    *
    * Los overlays del propio grabador no interfieren: `pointer-events:none` los
    * excluye de `elementFromPoint`.
    */
-  const isCovered = (el: Element, rect: DOMRect): boolean => {
+  const OPAQUE_FROM = 0.9
+  const VISIBLE_FROM = 0.05
+  const coverOf = (el: Element, rect: DOMRect): CoverKind => {
     const x = rect.x + rect.width / 2
     const y = rect.y + rect.height / 2
-    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return 'none'
     const top = document.elementFromPoint(x, y)
-    return !!top && top !== el && !el.contains(top) && !top.contains(el)
+    if (!top || top === el || el.contains(top) || top.contains(el)) return 'none'
+
+    // Lo que tapa puede ser un hijo pequeño dentro del panel que de verdad tapa
+    // (el texto de una opción dentro del desplegable), así que se acumula el
+    // fondo más opaco de la cadena hasta el elemento tapado o el body.
+    let alpha = 0
+    for (let n: Element | null = top; n && n !== document.body; n = n.parentElement) {
+      if (n === el || n.contains(el)) break
+      alpha = Math.max(alpha, backgroundAlpha(getComputedStyle(n)))
+      if (alpha >= OPAQUE_FROM) return 'opaque'
+    }
+    return alpha >= VISIBLE_FROM ? 'translucent' : 'none'
   }
 
   /**
@@ -793,10 +965,7 @@ export function observerScript(config: ObserverConfig): void {
   const highlight = (targets: number[]): HighlightResult | null => {
     removeOverlay()
 
-    const container = document.createElement('div')
-    container.setAttribute('data-docrec-overlay', '')
-    container.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647'
-
+    const container = newOverlay()
     let last: HighlightResult | null = null
     let painted = 0
     for (const ref of targets) {
@@ -804,7 +973,7 @@ export function observerScript(config: ObserverConfig): void {
       if (!el || !el.isConnected) continue
       const rect = el.getBoundingClientRect()
       if (rect.width === 0 && rect.height === 0) continue
-      container.appendChild(drawBox(rect, isCovered(el, rect)))
+      container.appendChild(drawBox(rect, coverOf(el, rect)))
       painted++
       last = {
         rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -818,6 +987,70 @@ export function observerScript(config: ObserverConfig): void {
     return last
   }
 
+  /**
+   * Resalta los elementos de un paso agrupado y cuenta en qué estado están.
+   *
+   * Se separa de `highlight` porque un grupo tiene dos exigencias que un paso
+   * suelto no tiene:
+   *
+   *  - **Cada elemento puede haber cambiado de nodo.** Un formulario que se
+   *    guarda, una tabla que se redibuja: el campo sigue en la pantalla, pero es
+   *    otro nodo y la referencia guardada apunta al viejo. Por eso se acepta un
+   *    `fallback` que el motor localiza con los selectores del paso (los mismos
+   *    que usa el runner), y por eso se prueban TODAS las referencias del campo.
+   *  - **Hay que saber si lo marcado se ve.** Marcar cinco campos con un
+   *    desplegable abierto encima documenta el desplegable, no los campos: quien
+   *    pide la captura necesita saberlo para esperar y repetir.
+   */
+  const highlightGroup = (payload: {
+    targets: GroupHighlightTarget[]
+  }): GroupHighlightResult => {
+    removeOverlay()
+
+    const container = newOverlay()
+    const result: GroupHighlightResult = {
+      marked: 0,
+      missing: 0,
+      blocked: 0,
+      dimmed: 0,
+      fading: 0
+    }
+
+    for (const target of payload.targets ?? []) {
+      let el: Element | null = null
+      for (const ref of target.refs ?? []) {
+        const candidate = refs.get(ref)
+        if (candidate && candidate.isConnected) {
+          el = candidate
+          break
+        }
+      }
+      if (!el && target.fallback && target.fallback.isConnected) el = target.fallback
+      if (!el) {
+        result.missing++
+        continue
+      }
+      const rect = el.getBoundingClientRect()
+      if (rect.width === 0 && rect.height === 0) {
+        result.missing++
+        continue
+      }
+      const cover = coverOf(el, rect)
+      container.appendChild(drawBox(rect, cover))
+      result.marked++
+      if (cover === 'translucent') result.dimmed++
+      const fading = isFading(el)
+      if (fading) result.fading++
+      if (cover === 'opaque' || fading) result.blocked++
+    }
+
+    if (result.marked) {
+      document.body.appendChild(container)
+      overlay = container
+    }
+    return result
+  }
+
   w[config.namespace] = {
     setEnabled: (value: boolean): void => {
       if (!value) flushPending()
@@ -825,6 +1058,15 @@ export function observerScript(config: ObserverConfig): void {
     },
     flushPending,
     highlight,
+    highlightGroup,
+    /** Qué referencias del grupo siguen apuntando a un elemento del documento. */
+    groupRefsAlive: (groups: number[][]): boolean[] =>
+      (groups ?? []).map((group) =>
+        (group ?? []).some((ref) => {
+          const el = refs.get(ref)
+          return !!el && el.isConnected
+        })
+      ),
     clearHighlight: removeOverlay,
     release: (ref: number): void => {
       refs.delete(ref)

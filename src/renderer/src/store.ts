@@ -1,5 +1,12 @@
 import { create } from 'zustand'
-import type { DraftPayload, GroupedField, RecordedStep } from '../../shared/ipc-contract'
+import type {
+  CommitDocEdit,
+  DraftPayload,
+  GroupTarget,
+  GroupedField,
+  RecordedStep,
+  StepFamily
+} from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
   type AiStatus,
@@ -11,9 +18,27 @@ import {
   type RecorderStatus,
   type RegenReport,
   type RegenStepResult,
+  type SelectorCandidate,
   type SessionMeta,
   type Viewport
 } from '../../shared/types'
+
+/**
+ * De dónde salió la documentación que hay en el panel, cuando no la ha grabado
+ * esta sesión. Se muestra en la franja de edición del panel.
+ */
+export interface EditingSource {
+  /** título legible de la funcionalidad que se está editando */
+  title: string
+  /** carpeta del paquete dentro del repositorio */
+  dir: string
+  /** commit del que se trajo */
+  commit: string
+  /** rama en la que se registrará la corrección */
+  branch: string
+  /** pasos que traía al cargarse, para saber si se ha tocado algo */
+  loadedSteps: number
+}
 
 interface SessionState {
   sessionId: string
@@ -28,6 +53,37 @@ interface SessionState {
   steps: RecordedStep[]
   /** id del paso recién llegado, para hacer scroll y enfocar su título (§8) */
   focusStepId: string | null
+  /**
+   * Tarjeta en la que está trabajando el usuario: la última que llegó grabando o
+   * la última que tocó con el ratón o el teclado. A diferencia de `focusStepId`
+   * —que se consume en cuanto se hace el scroll— esta se conserva, porque es la
+   * que decide DÓNDE se inserta el siguiente paso manual: junto al paso que se
+   * acaba de documentar, no al final de una lista de cincuenta. `null` = al final.
+   */
+  activeStepId: string | null
+  /**
+   * Pasos marcados en el panel. La selección es lo que permite agrupar a mano
+   * cualquier combinación de pasos —botones, filas de una tabla, un selector con
+   * su opción—, más allá de los campos de formulario que el motor une solo.
+   */
+  selectedIds: string[]
+  /**
+   * Secciones plegadas en el panel. Es estado de la vista, no del documento: una
+   * sección plegada oculta sus pasos para poder trabajar con listas largas, pero
+   * el manual sale igual. Se pliega/despliega con el chevrón de la sección.
+   */
+  collapsedSections: string[]
+  /**
+   * Documentación ya publicada que se trajo a la sesión para corregirla (§16), o
+   * `null` en una grabación normal.
+   *
+   * Existe para que la edición **se pueda cancelar**. Al cargar un commit, el
+   * panel se llena de pasos que nadie ha grabado en esta sesión, y sin decirlo la
+   * única salida visible es ■, que guarda y comitea: quien solo quería mirar se
+   * encuentra con que la salida es publicar. Con esto el panel dice qué se está
+   * editando, dónde va a ir y ofrece descartarlo sin registrar nada.
+   */
+  editing: EditingSource | null
 
   /** repositorio que contiene la carpeta de salida, o null si no hay ninguno */
   gitRepo: GitRepoInfo | null
@@ -58,6 +114,13 @@ interface SessionState {
   branchPickerOpen: boolean
   /** el explorador de repositorios está abierto */
   projectsOpen: boolean
+  /**
+   * Paso cuyo bloque de contenido se está editando a pantalla completa. Vive en
+   * el store, y no dentro de la tarjeta, porque el visor nativo se pinta por
+   * encima del HTML: el panel necesita saber que hay una superposición abierta
+   * para ocultarlo mientras dure.
+   */
+  wideContentId: string | null
   /** la sección de ayuda está abierta */
   helpOpen: boolean
   /** el aviso inicial sobre el uso con Docusaurus está abierto */
@@ -83,10 +146,11 @@ interface SessionState {
   /** informe final de la regeneración */
   runnerReport: RegenReport | null
   /**
-   * Agrupar los `fill`/`select` seguidos de un mismo formulario en un solo paso,
-   * para no generar una captura por cada campo. Preferencia persistida.
+   * Fundir en un solo paso los controles seguidos del mismo tipo: los campos de
+   * un formulario, las casillas de una columna de la tabla, las pestañas o los
+   * botones. Evita una captura por cada clic. Preferencia persistida.
    */
-  groupFormFields: boolean
+  groupConsecutive: boolean
 
   /**
    * Configuración de IA, tal como la conoce el main. `null` mientras no ha
@@ -95,6 +159,10 @@ interface SessionState {
   aiStatus: AiStatus | null
   /** los ajustes de IA están abiertos */
   aiOpen: boolean
+  /** el material de referencia para la IA está abierto */
+  aiContextOpen: boolean
+  /** la lista de paquetes escritos y sin registrar en Git está abierta */
+  pendingDocsOpen: boolean
   /** pasos que la IA está redactando ahora mismo */
   aiBusyIds: string[]
   /** avance del último «redactar todos», para la etiqueta del botón */
@@ -118,13 +186,60 @@ interface SessionState {
    * resaltado). Devuelve el paso resultante para poder rehacer su captura.
    */
   removeGroupField: (stepId: string, label: string) => RecordedStep | null
+  /**
+   * Añade un paso escrito a mano: una captura ajena al visor, una imagen pegada
+   * (ambas con su archivo ya escrito) o un bloque de contenido.
+   *
+   * Se coloca justo DESPUÉS de la tarjeta activa, que es donde el usuario está
+   * mirando: documentando se graba un paso y acto seguido se pega la imagen o la
+   * tabla que lo acompaña. Sin tarjeta activa se añade al final. Para moverlo
+   * está el arrastre, como con cualquier otro paso.
+   */
+  addManualStep: (step: {
+    kind: 'capture' | 'image' | 'content' | 'section'
+    title: string
+    tempFile?: string
+    /** cuerpo inicial del bloque, cuando viene pegado del portapapeles */
+    content?: string
+  }) => void
   updateStep: (id: string, patch: Partial<RecordedStep>) => void
   removeStep: (id: string) => void
+
+  /** pliega o despliega una sección (solo afecta a la vista) */
+  toggleSection: (id: string) => void
+  /** marca o desmarca un paso para agruparlo con otros */
+  toggleSelect: (id: string) => void
+  clearSelection: () => void
+  /**
+   * Funde los pasos marcados en uno solo. Devuelve el paso resultante para poder
+   * rehacer su captura con todos sus elementos señalados, o `null` si la
+   * selección no se puede agrupar (ver `selectionProblem`).
+   */
+  groupSelected: () => RecordedStep | null
+  /** Deshace una agrupación manual y devuelve cada paso a su sitio. */
+  ungroupStep: (id: string) => void
+  /** Elimina de golpe los pasos marcados. */
+  removeSelected: () => void
   reorderSteps: (fromIndex: number, toIndex: number) => void
   clearFocus: () => void
+  /** anota en qué tarjeta está trabajando el usuario (ver `activeStepId`) */
+  setActiveStep: (id: string | null) => void
   resetSteps: () => void
   /** carga un borrador guardado para continuar donde se dejó */
   restoreDraft: (draft: DraftPayload) => void
+  /**
+   * Trae a la sesión una funcionalidad ya commiteada para volver a editarla: sus
+   * pasos con sus capturas, sus metadatos, la carpeta que la devuelve a su sitio
+   * y la rama del commit. Guardar después reescribe ese mismo paquete y añade un
+   * commit encima.
+   */
+  loadCommitDoc: (payload: CommitDocEdit, branch: string) => void
+  /**
+   * Cancela la edición de algo ya publicado sin registrar nada: vacía el panel y
+   * deja la sesión lista para otra cosa. El commit original no se toca (nunca se
+   * tocó: cargarlo solo leyó de Git).
+   */
+  discardEditing: () => void
   /** deja la sesión lista para documentar una funcionalidad nueva (tras guardar) */
   startFreshSession: () => void
 
@@ -148,6 +263,7 @@ interface SessionState {
   setBranchDocs: (docs: BranchDocInfo[]) => void
   setBranchPickerOpen: (open: boolean) => void
   setProjectsOpen: (open: boolean) => void
+  setWideContentId: (id: string | null) => void
   setHelpOpen: (open: boolean) => void
   /** cierra el aviso inicial; si `remember`, no se vuelve a mostrar */
   dismissDocusaurusIntro: (remember: boolean) => void
@@ -156,7 +272,7 @@ interface SessionState {
   togglePanel: () => void
   toggleTheme: () => void
   setViewportActive: (active: boolean) => void
-  setGroupFormFields: (value: boolean) => void
+  setGroupConsecutive: (value: boolean) => void
   runnerStart: () => void
   runnerProgressAdd: (result: RegenStepResult) => void
   runnerFinish: (report: RegenReport) => void
@@ -164,6 +280,8 @@ interface SessionState {
 
   setAiStatus: (status: AiStatus) => void
   setAiOpen: (open: boolean) => void
+  setAiContextOpen: (open: boolean) => void
+  setPendingDocsOpen: (open: boolean) => void
   setAiBusy: (ids: string[]) => void
   setAiProgress: (progress: { done: number; total: number } | null) => void
   setAiError: (message: string | null) => void
@@ -171,12 +289,12 @@ interface SessionState {
   applyAiDrafts: (drafts: AiStepDraft[]) => void
 }
 
-const GROUP_FIELDS_KEY = 'docrecorder.groupFormFields'
+const GROUP_KEY = 'docrecorder.groupConsecutive'
 
-/** Agrupar campos está activado salvo que el usuario lo haya desactivado. */
-function initialGroupFormFields(): boolean {
+/** Agrupar seguidos está activado salvo que el usuario lo haya desactivado. */
+function initialGroupConsecutive(): boolean {
   try {
-    return localStorage.getItem(GROUP_FIELDS_KEY) !== '0'
+    return localStorage.getItem(GROUP_KEY) !== '0'
   } catch {
     return true
   }
@@ -201,16 +319,71 @@ function toFlowAction(step: RecordedStep): FlowAction {
 }
 
 /**
+ * Familia del paso: qué clase de control se accionó. La calcula el motor, que es
+ * quien ve el DOM; aquí solo se lee, con una reserva para los pasos que vienen
+ * de un borrador anterior a esta función (donde solo había «campo o no»).
+ */
+function familyOf(step: RecordedStep): StepFamily | null {
+  if (step.family !== undefined) return step.family
+  return step.action === 'fill' ||
+    step.action === 'select' ||
+    (step.action === 'click' && step.isFormField === true)
+    ? 'field'
+    : null
+}
+
+/**
  * Un paso pertenece a un formulario si escribe o selecciona un valor, o si es un
  * clic para enfocar un campo. Así, la secuencia real de rellenar (clic en el
  * campo → escribir → clic en el siguiente → escribir…) se agrupa entera; un clic
  * en un botón la rompe.
  */
 function isFormInput(step: RecordedStep): boolean {
+  return familyOf(step) === 'field'
+}
+
+/**
+ * ¿Los dos pasos ocurren en el mismo sitio, a efectos de fundirlos?
+ *
+ * Fuera de una tabla, el ámbito es la pantalla: dos campos seguidos son el mismo
+ * formulario (la URL ya se comprueba aparte). Dentro de una tabla no basta, y la
+ * rejilla tiene tres ámbitos que sí significan algo en un manual:
+ *
+ *  - **la misma celda** y **la misma fila** → un registro que se está editando
+ *    en línea («rellenar la fila de Andy»);
+ *  - **la misma columna** en filas distintas → la misma acción repetida sobre
+ *    varios registros («marcar la casilla de cinco alumnos»), que es un paso y
+ *    no cinco.
+ *
+ * Lo que sigue sin fundirse es lo que de verdad no tiene que ver: dos controles
+ * **distintos** de **filas distintas** (la casilla de la fila 1 con el
+ * desplegable de la fila 3), dos tablas distintas, y una tabla con lo de fuera.
+ */
+/**
+ * ¿El paso puede sumarse al grupo? Se compara con **todos** sus miembros, no
+ * solo con el último.
+ *
+ * Sin eso, un grupo se podría «arrastrar» fuera de su ámbito paso a paso: dos
+ * casillas de la misma columna forman un grupo cuyo primer miembro está en la
+ * fila 1, y un control cualquiera de esa fila 1 se colaría dentro aunque no
+ * tenga nada que ver con los otros. Exigiendo el ámbito con todos, un grupo de
+ * columna solo admite esa columna y uno de fila solo esa fila.
+ */
+function joinsGroup(last: RecordedStep, step: RecordedStep): boolean {
+  return (last.groupSources ?? [last]).every((member) => sameScope(member, step))
+}
+
+function sameScope(a: RecordedStep, b: RecordedStep): boolean {
+  const rowA = a.rowRef ?? null
+  const rowB = b.rowRef ?? null
+  if (rowA === null && rowB === null) return true
+  if (rowA === null || rowB === null) return false
+  if (rowA === rowB) return true
   return (
-    step.action === 'fill' ||
-    step.action === 'select' ||
-    (step.action === 'click' && step.isFormField === true)
+    a.tableRef != null &&
+    a.tableRef === b.tableRef &&
+    a.colIndex != null &&
+    a.colIndex === b.colIndex
   )
 }
 
@@ -236,9 +409,142 @@ function upsertItem(items: GroupedField[], incoming: GroupedField): GroupedField
   return next
 }
 
+/**
+ * Etiqueta con la que un paso se lista dentro de un grupo. Para un campo de
+ * formulario basta con su nombre («Correo»), que es como se lee un formulario;
+ * para cualquier otro paso —un botón, una fila de tabla— se conserva su título
+ * entero («Clic en «Guardar»»), porque ahí el verbo es parte de la información.
+ */
+function groupLabel(step: RecordedStep): string {
+  return isFormInput(step) ? fieldLabel(step) : step.title.trim() || fieldLabel(step)
+}
+
+/** «A», «B» y «C» — enumeración legible de los nombres de un grupo. */
+function nameList(steps: RecordedStep[]): string | null {
+  const names = steps.map((step) => fieldLabel(step))
+  // Un elemento sin nombre propio (el título entero como etiqueta) haría una
+  // enumeración ilegible; entonces se cae al recuento.
+  if (names.some((name, i) => !name || name === steps[i].title)) return null
+  const quoted = names.map((name) => `«${name}»`)
+  if (quoted.length === 1) return quoted[0]
+  return `${quoted.slice(0, -1).join(', ')} y ${quoted[quoted.length - 1]}`
+}
+
+/**
+ * Título de un paso agrupado.
+ *
+ * Un grupo se titula por lo que ES, no por un recuento («… y 2 más»), que no
+ * dice nada en un manual. Los casos que aparecen de verdad:
+ *
+ *  - los campos de un formulario → «Rellenar el formulario»;
+ *  - la misma columna de una tabla en varias filas → «Marcar «Estado» en 3
+ *    filas», que es como se cuenta marcar la casilla de tres registros;
+ *  - una fila que se edita en línea → «Rellenar la fila»;
+ *  - varias pestañas o varios botones → se enumeran, porque sus nombres son
+ *    cortos y son justo la información («Pulsar «Guardar» y «Cerrar»»);
+ *  - el caso mixto que se agrupa a mano: un formulario y la acción que lo cierra
+ *    → «Rellenar el formulario y pulsar «Guardar»».
+ */
+function groupTitle(chosen: RecordedStep[]): string {
+  const families = new Set(chosen.map(familyOf))
+  const family = families.size === 1 ? [...families][0] : null
+
+  if (family === 'tab') {
+    const names = nameList(chosen)
+    if (names) return `Ir a las pestañas ${names}`
+  }
+  if (family === 'action') {
+    const names = nameList(chosen)
+    if (names) return `Pulsar ${names}`
+  }
+  if (family === 'field') {
+    const rows = new Set(chosen.map((step) => step.rowRef ?? null))
+    const inTable = !rows.has(null)
+    if (inTable && rows.size > 1) {
+      // Misma columna, varias filas: el encabezado dice QUÉ se hizo mucho mejor
+      // que el nombre de cada control («Seleccionar Andy», «Seleccionar Paulo»…).
+      const header = chosen[0].colHeader?.trim()
+      const verb = chosen.every((step) => step.action === 'click') ? 'Marcar' : 'Rellenar'
+      return header
+        ? `${verb} «${header}» en ${rows.size} filas`
+        : `${verb} ${rows.size} filas de la tabla`
+    }
+    return inTable ? 'Rellenar la fila' : 'Rellenar el formulario'
+  }
+
+  const fields = chosen.filter(isFormInput)
+  const others = chosen.filter((step) => !isFormInput(step))
+  if (fields.length && others.length === 1) {
+    const label = fieldLabel(others[0])
+    // Solo si el elemento tiene nombre propio: «pulsar «<button>»» sería peor que
+    // el recuento.
+    if (label && label !== others[0].title) return `Rellenar el formulario y pulsar «${label}»`
+  }
+  const first = chosen[0]
+  return `${first.title.trim() || 'Paso'} y ${chosen.length - 1} más`
+}
+
+/** Los elementos que aporta un paso al grupo (si ya era un grupo, los suyos). */
+function itemsOf(step: RecordedStep): GroupedField[] {
+  if (step.groupItems?.length) return step.groupItems
+  return [
+    {
+      label: groupLabel(step),
+      value: step.value ?? '',
+      actions: step.mergedActions?.length ? step.mergedActions : [toFlowAction(step)],
+      refs: step.ref !== undefined ? [step.ref] : []
+    }
+  ]
+}
+
+/**
+ * Por qué NO se puede agrupar la selección actual, o `null` si sí se puede. Lo
+ * usa el panel para explicar el motivo en vez de dejar un botón apagado sin
+ * explicación.
+ *
+ * Se exige que los pasos sean seguidos porque el grupo se reproduce como una
+ * secuencia: fundir el paso 2 con el 7 reordenaría el flujo real y el runner
+ * repetiría las acciones en un orden que nunca ocurrió. Para juntarlos, primero
+ * se arrastran hasta ponerlos seguidos.
+ */
+export function selectionProblem(steps: RecordedStep[], selectedIds: string[]): string | null {
+  const indexes = steps
+    .map((step, index) => (selectedIds.includes(step.id) ? index : -1))
+    .filter((index) => index >= 0)
+  if (indexes.length < 2) return 'Marca al menos dos pasos para agruparlos.'
+  if (indexes[indexes.length - 1] - indexes[0] + 1 !== indexes.length) {
+    return 'Solo se pueden agrupar pasos seguidos. Arrástralos para ponerlos juntos.'
+  }
+  const chosen = indexes.map((index) => steps[index])
+  if (chosen.some((step) => step.kind && step.kind !== 'interaction')) {
+    return 'Las capturas, los bloques de contenido y las secciones no se agrupan: no son acciones del flujo.'
+  }
+  if (chosen.some((step) => !step.includeInDocs)) {
+    return 'Hay pasos excluidos de la documentación entre los marcados.'
+  }
+  return null
+}
+
 /** Referencias de todos los campos del grupo, para resaltarlos en la captura. */
-export function groupRefsOf(step: RecordedStep): number[] {
-  return (step.groupItems ?? []).flatMap((item) => item.refs)
+export function groupTargetsOf(step: RecordedStep): GroupTarget[] {
+  return (step.groupItems ?? []).map((item) => ({
+    refs: item.refs,
+    // Los selectores de sus acciones, sin repetir: con ellos el motor vuelve a
+    // localizar el elemento cuando el framework ha reemplazado el nodo (guardar
+    // el formulario, redibujar la tabla) y la referencia ya no vale.
+    selectorCandidates: dedupeSelectors(item.actions.flatMap((a) => a.selectorCandidates ?? []))
+  }))
+}
+
+function dedupeSelectors(candidates: SelectorCandidate[]): SelectorCandidate[] {
+  const seen = new Set<string>()
+  const unique: SelectorCandidate[] = []
+  for (const candidate of candidates) {
+    if (seen.has(candidate.value)) continue
+    seen.add(candidate.value)
+    unique.push(candidate)
+  }
+  return unique.sort((a, b) => b.score - a.score)
 }
 
 /**
@@ -279,14 +585,55 @@ function initialTheme(): 'light' | 'dark' {
   return 'light'
 }
 
+/**
+ * Renumera la lista. Los separadores de sección no consumen número: son
+ * estructura, no pasos, y si contaran el panel mostraría saltos («1, 2, 4») que
+ * no se corresponden con nada del manual.
+ */
 function renumber(steps: RecordedStep[]): RecordedStep[] {
-  return steps.map((step, index) => ({ ...step, order: index + 1 }))
+  let n = 0
+  return steps.map((step) =>
+    step.kind === 'section' ? { ...step, order: 0 } : { ...step, order: ++n }
+  )
+}
+
+/**
+ * Cuántos pasos cuelgan de la sección que empieza en `index`: todos los que van
+ * detrás hasta la sección siguiente (o hasta el final). Es lo que hace que una
+ * sección se arrastre con su contenido y se pueda plegar entera.
+ */
+export function sectionSize(steps: RecordedStep[], index: number): number {
+  let end = index + 1
+  while (end < steps.length && steps[end].kind !== 'section') end++
+  return end - index - 1
+}
+
+/** Despliega la sección que contiene al paso `index`, si estaba plegada. */
+function expand(collapsed: string[], steps: RecordedStep[], index: number): string[] {
+  const owner = sectionIdAt(steps, index)
+  return owner && collapsed.includes(owner) ? collapsed.filter((id) => id !== owner) : collapsed
+}
+
+/** Sección a la que pertenece el paso `index`, o `null` si va antes de la primera. */
+export function sectionIdAt(steps: RecordedStep[], index: number): string | null {
+  for (let i = Math.min(index, steps.length - 1); i >= 0; i--) {
+    if (steps[i].kind === 'section') return steps[i].id
+  }
+  return null
 }
 
 export const useSession = create<SessionState>((set) => ({
   sessionId: crypto.randomUUID(),
   createdAt: new Date().toISOString(),
-  meta: { module: '', subcategory: '', feature: '', title: '', role: '', baseUrl: '' },
+  meta: {
+    module: '',
+    subcategory: '',
+    feature: '',
+    title: '',
+    role: '',
+    baseUrl: '',
+    aiContext: ''
+  },
   viewport: DEFAULT_VIEWPORT,
   outputDir: '',
   status: 'idle',
@@ -295,6 +642,10 @@ export const useSession = create<SessionState>((set) => ({
   error: null,
   steps: [],
   focusStepId: null,
+  activeStepId: null,
+  selectedIds: [],
+  collapsedSections: [],
+  editing: null,
   gitRepo: null,
   gitEnabled: false,
   gitPush: false,
@@ -304,6 +655,7 @@ export const useSession = create<SessionState>((set) => ({
   gitBaseBranch: null,
   branchPickerOpen: false,
   projectsOpen: false,
+  wideContentId: null,
   helpOpen: false,
   docusaurusIntroOpen: initialIntroOpen(),
   theme: initialTheme(),
@@ -312,9 +664,11 @@ export const useSession = create<SessionState>((set) => ({
   runnerPhase: 'idle',
   runnerProgress: [],
   runnerReport: null,
-  groupFormFields: initialGroupFormFields(),
+  groupConsecutive: initialGroupConsecutive(),
   aiStatus: null,
   aiOpen: false,
+  aiContextOpen: false,
+  pendingDocsOpen: false,
   aiBusyIds: [],
   aiProgress: null,
   aiError: null,
@@ -338,24 +692,33 @@ export const useSession = create<SessionState>((set) => ({
     // solo se conoce tras renumerar, y es el número que llevará el resaltado.
     const result: { merged: RecordedStep | null } = { merged: null }
     set((s) => {
-      const last = s.steps[s.steps.length - 1]
-      // Se funde con el paso anterior si ambos son campos del MISMO formulario
-      // (escribir, seleccionar o enfocar un campo con un clic), en la misma URL.
-      // Un clic en un botón, un envío o una navegación rompe la secuencia. No se
-      // funde dentro de un paso excluido de docs.
-      //
-      // Y nunca a través de filas de una tabla: marcar la casilla de dos
-      // usuarios distintos son dos acciones sobre dos registros, no un
-      // formulario que se rellena. Fundirlas producía un paso «Rellenar el
-      // formulario» que mezclaba filas y no describía nada.
+      // Lo grabado entra justo DETRÁS de la tarjeta activa, igual que lo que se
+      // añade a mano. Grabando de corrido la activa es siempre la última —cada
+      // paso nuevo la mueve—, así que el comportamiento normal no cambia; pero si
+      // el usuario se coloca en un paso del medio para completar algo que se le
+      // olvidó, lo que grabe entra ahí y no al final de una lista de cincuenta.
+      const activeIndex = s.steps.findIndex((existing) => existing.id === s.activeStepId)
+      const at = activeIndex >= 0 ? activeIndex + 1 : s.steps.length
+      // El vecino de arriba es con quien se puede fundir el campo nuevo (no el
+      // último de la lista: insertando en medio, el último no pinta nada).
+      const last = s.steps[at - 1]
+      // Se funde con el paso anterior si son de la MISMA familia (los campos de
+      // un formulario entre sí, las pestañas entre sí, los botones entre sí), en
+      // la misma URL y en el mismo ámbito (ver `sameScope`). Cambiar de familia
+      // abre paso nuevo: así el «Guardar» de un formulario conserva su tarjeta y
+      // el corte del flujo sigue estando donde el lector lo espera. Un envío, una
+      // tecla o una navegación no tienen familia y nunca se funden, y tampoco se
+      // funde nada dentro de un paso excluido de la documentación.
+      const family = familyOf(step)
       const mergeable =
-        s.groupFormFields &&
-        isFormInput(step) &&
+        s.groupConsecutive &&
+        family !== null &&
         last &&
-        isFormInput(last) &&
+        familyOf(last) === family &&
         last.url === step.url &&
+        (last.loadRef ?? null) === (step.loadRef ?? null) &&
         last.includeInDocs &&
-        (last.rowRef ?? null) === (step.rowRef ?? null)
+        joinsGroup(last, step)
 
       if (mergeable) {
         // La captura pasa a ser la más reciente (el formulario más completo) y el
@@ -377,27 +740,52 @@ export const useSession = create<SessionState>((set) => ({
           actions: [toFlowAction(step)],
           refs: step.ref !== undefined ? [step.ref] : []
         })
+        // Los pasos originales se conservan siempre (también al fundir solo), y
+        // no únicamente al agrupar a mano: son los que devuelve «⊟ Deshacer», así
+        // que ahora una fusión automática también se puede deshacer sin tener que
+        // apagar el interruptor y volver a grabar.
+        const sources = [...(last.groupSources ?? [last]), step]
+        // El título se recalcula solo mientras siga siendo el que generó la app.
+        // Si quien documenta ya escribió el suyo —lo normal: el panel enfoca el
+        // título de cada paso nuevo—, el campo siguiente no se lo pisa.
+        const previousAuto = last.groupSources ? groupTitle(last.groupSources) : last.title
         const merged = withGroupItems(
           {
             ...last,
-            action: 'fill',
-            title: last.groupItems ? last.title : 'Rellenar el formulario',
+            // Un grupo de campos se reproduce como un `fill`; una cadena de
+            // botones o de pestañas conserva su acción, que es un clic.
+            action: family === 'field' ? 'fill' : last.action,
+            title: last.title === previousAuto ? groupTitle(sources) : last.title,
             tempFile: step.tempFile,
             boundingRect: step.boundingRect,
             timestamp: step.timestamp,
             value: undefined,
-            selectorCandidates: step.selectorCandidates
+            selectorCandidates: step.selectorCandidates,
+            groupSources: sources
           },
           items
         )
-        const steps = renumber([...s.steps.slice(0, -1), merged])
-        result.merged = steps[steps.length - 1]
-        return { steps, focusStepId: merged.id }
+        const steps = renumber([...s.steps.slice(0, at - 1), merged, ...s.steps.slice(at)])
+        result.merged = steps[at - 1]
+        return {
+          steps,
+          focusStepId: merged.id,
+          activeStepId: merged.id,
+          collapsedSections: expand(s.collapsedSections, steps, at - 1)
+        }
       }
 
+      const next = [...s.steps]
+      next.splice(at, 0, step)
       return {
-        steps: renumber([...s.steps, step]),
-        focusStepId: step.id
+        steps: renumber(next),
+        focusStepId: step.id,
+        // Grabar mueve el punto de trabajo: lo que se pegue a continuación
+        // acompaña a este paso, no al que el usuario tocara hace diez minutos.
+        activeStepId: step.id,
+        // Si cae dentro de una sección plegada, se despliega: un paso que llega y
+        // no se ve parecería que la grabación dejó de funcionar.
+        collapsedSections: expand(s.collapsedSections, next, at)
       }
     })
     return result.merged
@@ -418,31 +806,204 @@ export const useSession = create<SessionState>((set) => ({
       if (!target || !items || items.length < 2) return {}
       const kept = items.filter((item) => item.label !== label)
       if (kept.length === items.length || !kept.length) return {}
-      const updated = withGroupItems(target, kept)
+      // Quitar un elemento a mano deja de casar con los pasos originales, así que
+      // el grupo pierde la opción de deshacerse: restaurar lo que el usuario
+      // acaba de quitar sería justo lo contrario de lo que pidió.
+      const base = { ...target }
+      delete base.groupSources
+      const updated = withGroupItems(base, kept)
       result.updated = updated
       return { steps: s.steps.map((step) => (step.id === stepId ? updated : step)) }
     })
     return result.updated
   },
 
+  // Un paso manual comparte el modelo con los grabados —así viaja por el mismo
+  // camino: panel, borrador, MDX y Git— pero sin selector ni acción que
+  // reproducir. La URL se anota igual, porque sitúa dónde estaba el usuario.
+  addManualStep: ({ kind, title, tempFile, content }) =>
+    set((s) => {
+      const step: RecordedStep = {
+        id: crypto.randomUUID(),
+        order: s.steps.length + 1,
+        kind,
+        action: kind,
+        title,
+        description: '',
+        selectorCandidates: [],
+        url: s.currentUrl,
+        screenshot: '',
+        boundingRect: { x: 0, y: 0, width: 0, height: 0 },
+        includeInDocs: true,
+        timestamp: new Date().toISOString(),
+        tempFile: tempFile ?? '',
+        ...(kind === 'content' ? { content: content ?? '' } : {}),
+        // Una imagen o una captura también admiten bloque de contenido, pero solo
+        // si viene dado: abrir el editor vacío en cada imagen sería estorbo.
+        ...(kind !== 'content' && content ? { content } : {})
+      }
+      // Después de la tarjeta activa; si ya no existe (se eliminó, o se deshizo un
+      // grupo), al final, que es lo que el usuario ve al desplazarse. También las
+      // secciones: el título de un apartado se pone delante de los pasos que
+      // encabeza, así que se marca el paso ANTERIOR al apartado nuevo y se añade.
+      const active = s.steps.findIndex((existing) => existing.id === s.activeStepId)
+      const at = active >= 0 ? active + 1 : s.steps.length
+      const next = [...s.steps]
+      next.splice(at, 0, step)
+      return {
+        steps: renumber(next),
+        focusStepId: step.id,
+        activeStepId: step.id,
+        collapsedSections: expand(s.collapsedSections, next, at)
+      }
+    }),
+
   updateStep: (id, patch) =>
     set((s) => ({
       steps: s.steps.map((step) => (step.id === id ? { ...step, ...patch } : step))
     })),
 
-  removeStep: (id) => set((s) => ({ steps: renumber(s.steps.filter((step) => step.id !== id)) })),
+  // Quitar una sección quita SOLO su título: los pasos que colgaban de ella
+  // pasan al apartado anterior. Es lo contrario de lo que haría un borrado en
+  // cascada, y es lo que se espera de un separador: deshacer la división, no
+  // perder media grabación de un clic.
+  removeStep: (id) =>
+    set((s) => ({
+      steps: renumber(s.steps.filter((step) => step.id !== id)),
+      selectedIds: s.selectedIds.filter((selected) => selected !== id),
+      collapsedSections: s.collapsedSections.filter((section) => section !== id)
+    })),
 
+  toggleSection: (id) =>
+    set((s) => ({
+      collapsedSections: s.collapsedSections.includes(id)
+        ? s.collapsedSections.filter((section) => section !== id)
+        : [...s.collapsedSections, id]
+    })),
+
+  toggleSelect: (id) =>
+    set((s) => ({
+      selectedIds: s.selectedIds.includes(id)
+        ? s.selectedIds.filter((selected) => selected !== id)
+        : [...s.selectedIds, id]
+    })),
+
+  clearSelection: () => set({ selectedIds: [] }),
+
+  removeSelected: () =>
+    set((s) => ({
+      steps: renumber(s.steps.filter((step) => !s.selectedIds.includes(step.id))),
+      selectedIds: []
+    })),
+
+  // Agrupar a mano es la respuesta a lo que el motor no puede adivinar: que dos
+  // botones, o un selector y su opción, o varias filas de una tabla, son UN paso
+  // del manual. El resultado es el mismo tipo de paso agrupado que produce la
+  // fusión automática de formularios (mismos `groupItems`, `fields` y
+  // `mergedActions`), así que el resto de la app no necesita saber de dónde vino.
+  groupSelected: () => {
+    const result: { merged: RecordedStep | null } = { merged: null }
+    set((s) => {
+      if (selectionProblem(s.steps, s.selectedIds)) return {}
+      const indexes = s.steps
+        .map((step, index) => (s.selectedIds.includes(step.id) ? index : -1))
+        .filter((index) => index >= 0)
+      const chosen = indexes.map((index) => s.steps[index])
+      const first = chosen[0]
+      const last = chosen[chosen.length - 1]
+
+      let items: GroupedField[] = []
+      for (const step of chosen) {
+        for (const item of itemsOf(step)) items = upsertItem(items, item)
+      }
+
+      // La captura del grupo es la del ÚLTIMO paso: muestra la pantalla con todo
+      // hecho. Los campos se re-señalan después (`useGroupCapture`).
+      const merged = withGroupItems(
+        {
+          ...first,
+          action: chosen.every(isFormInput) ? 'fill' : first.action,
+          title: groupTitle(chosen),
+          tempFile: last.tempFile,
+          boundingRect: last.boundingRect,
+          timestamp: last.timestamp,
+          value: undefined,
+          selectorCandidates: last.selectorCandidates,
+          // Deshacer devuelve cada paso con SU captura, no una copia de la del
+          // grupo: si no, desagrupar empeoraría la documentación.
+          groupSources: chosen.flatMap((step) => step.groupSources ?? [step])
+        },
+        items
+      )
+
+      const steps = renumber([
+        ...s.steps.slice(0, indexes[0]),
+        merged,
+        ...s.steps.slice(indexes[indexes.length - 1] + 1)
+      ])
+      result.merged = steps[indexes[0]]
+      return { steps, selectedIds: [], focusStepId: merged.id }
+    })
+    return result.merged
+  },
+
+  ungroupStep: (id) =>
+    set((s) => {
+      const index = s.steps.findIndex((step) => step.id === id)
+      const sources = s.steps[index]?.groupSources
+      if (index < 0 || !sources?.length) return {}
+      return {
+        steps: renumber([...s.steps.slice(0, index), ...sources, ...s.steps.slice(index + 1)]),
+        selectedIds: []
+      }
+    }),
+
+  // Arrastrar una sección la mueve CON sus pasos: es la razón de existir de las
+  // secciones —reordenar un apartado entero de doce pasos sin arrastrarlos uno a
+  // uno—, y dejar el título viajando solo sería justo lo contrario.
   reorderSteps: (fromIndex, toIndex) =>
     set((s) => {
-      const next = [...s.steps]
-      const [moved] = next.splice(fromIndex, 1)
+      const moved = s.steps[fromIndex]
       if (!moved) return {}
-      next.splice(toIndex, 0, moved)
-      return { steps: renumber(next) }
+      const size = moved.kind === 'section' ? 1 + sectionSize(s.steps, fromIndex) : 1
+      const block = s.steps.slice(fromIndex, fromIndex + size)
+      const rest = [...s.steps.slice(0, fromIndex), ...s.steps.slice(fromIndex + size)]
+      // `toIndex` viene referido a la lista ORIGINAL (el paso sobre el que se
+      // soltó); al quitar el bloque, todo lo que había detrás se ha corrido.
+      const at = toIndex > fromIndex ? Math.max(0, toIndex - size + 1) : toIndex
+      rest.splice(at, 0, ...block)
+      return { steps: renumber(rest) }
     }),
 
   clearFocus: () => set({ focusStepId: null }),
-  resetSteps: () => set({ steps: [], focusStepId: null }),
+  setActiveStep: (activeStepId) => set({ activeStepId }),
+  resetSteps: () =>
+    set({
+      steps: [],
+      focusStepId: null,
+      activeStepId: null,
+      selectedIds: [],
+      collapsedSections: [],
+      editing: null
+    }),
+
+  // Descartar deja la sesión como estaba antes de cargar el commit en lo que se
+  // puede: sin pasos y sin funcionalidad. Módulo, subcategoría, rol y URL base se
+  // conservan —son de la categoría, no del proceso—, así que se puede seguir
+  // trabajando ahí sin volver a escribirlos.
+  discardEditing: () =>
+    set((s) => ({
+      steps: [],
+      focusStepId: null,
+      activeStepId: null,
+      selectedIds: [],
+      collapsedSections: [],
+      editing: null,
+      sessionId: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      meta: { ...s.meta, feature: '', title: '' },
+      gitMessageOverride: null
+    })),
 
   restoreDraft: (draft) =>
     set({
@@ -452,12 +1013,58 @@ export const useSession = create<SessionState>((set) => ({
       outputDir: draft.outputDir,
       steps: renumber(draft.steps),
       focusStepId: null,
+      activeStepId: null,
+      selectedIds: [],
+      // Un borrador se retoma con todo a la vista: qué estaba plegado ayer no es
+      // información que merezca sobrevivir al cierre de la aplicación.
+      collapsedSections: [],
+      editing: null,
       gitEnabled: draft.git.enabled,
       gitPush: draft.git.push,
       gitBranchOverride: draft.git.branchOverride,
       gitMessageOverride: draft.git.messageOverride,
       gitBaseBranch: draft.git.baseBranch
     }),
+
+  // Volver a editar algo ya publicado: se pisa la sesión entera con la del
+  // commit. Los metadatos vienen de su `session.json` (son los que deciden la
+  // carpeta de destino) y la carpeta de salida se ajusta para que el paquete se
+  // reescriba donde estaba, en vez de aparecer duplicado en otra rama del árbol.
+  loadCommitDoc: (payload, branch) =>
+    set((s) => ({
+      sessionId: payload.session.id || crypto.randomUUID(),
+      createdAt: payload.session.createdAt || new Date().toISOString(),
+      meta: {
+        ...s.meta,
+        module: payload.session.module,
+        subcategory: payload.session.subcategory ?? '',
+        feature: payload.session.feature,
+        title: payload.session.title,
+        role: payload.session.role,
+        baseUrl: payload.session.baseUrl || s.meta.baseUrl
+      },
+      outputDir: payload.outputDir,
+      steps: renumber(payload.steps),
+      focusStepId: null,
+      activeStepId: null,
+      selectedIds: [],
+      collapsedSections: [],
+      // El panel lo dice y ofrece cancelarlo: estos pasos no los ha grabado
+      // nadie en esta sesión, y sin decirlo la única salida visible sería ■.
+      editing: {
+        title: payload.session.title || payload.session.feature,
+        dir: payload.dir,
+        commit: payload.commit,
+        branch,
+        loadedSteps: payload.steps.length
+      },
+      // Se documenta sobre la rama de ese commit: guardar en otra dejaría dos
+      // versiones del mismo proceso en ramas distintas.
+      gitEnabled: true,
+      gitBranchOverride: branch,
+      // El mensaje se recalcula a partir de los metadatos recién cargados.
+      gitMessageOverride: null
+    })),
 
   // Tras guardar una funcionalidad se limpia la lista y se estrena sesión, listo
   // para documentar la siguiente (que irá a su rama). Los metadatos se conservan
@@ -466,6 +1073,10 @@ export const useSession = create<SessionState>((set) => ({
     set({
       steps: [],
       focusStepId: null,
+      activeStepId: null,
+      selectedIds: [],
+      collapsedSections: [],
+      editing: null,
       sessionId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       gitMessageOverride: null
@@ -524,6 +1135,8 @@ export const useSession = create<SessionState>((set) => ({
   // la documentación acabaría en otra carpeta.
   loadBranchDoc: (doc) =>
     set((s) => ({
+      // Ya no se está editando el paquete del commit: el destino es otro.
+      editing: null,
       meta: {
         ...s.meta,
         module: doc.module,
@@ -542,6 +1155,7 @@ export const useSession = create<SessionState>((set) => ({
   // usuario los escriba. Es lo que dispara un nodo del árbol del selector de rama.
   pickCategory: (module, subcategory) =>
     set((s) => ({
+      editing: null,
       meta: { ...s.meta, module, subcategory, feature: '', title: '' },
       gitMessageOverride: null
     })),
@@ -550,6 +1164,7 @@ export const useSession = create<SessionState>((set) => ({
 
   setBranchPickerOpen: (branchPickerOpen) => set({ branchPickerOpen }),
   setProjectsOpen: (projectsOpen) => set({ projectsOpen }),
+  setWideContentId: (wideContentId) => set({ wideContentId }),
   setHelpOpen: (helpOpen) => set({ helpOpen }),
   dismissDocusaurusIntro: (remember) => {
     if (remember) {
@@ -574,13 +1189,13 @@ export const useSession = create<SessionState>((set) => ({
       return { theme }
     }),
   setViewportActive: (viewportActive) => set({ viewportActive }),
-  setGroupFormFields: (groupFormFields) => {
+  setGroupConsecutive: (groupConsecutive) => {
     try {
-      localStorage.setItem(GROUP_FIELDS_KEY, groupFormFields ? '1' : '0')
+      localStorage.setItem(GROUP_KEY, groupConsecutive ? '1' : '0')
     } catch {
       // sin persistencia vale para esta sesión
     }
-    set({ groupFormFields })
+    set({ groupConsecutive })
   },
 
   runnerStart: () => set({ runnerPhase: 'running', runnerProgress: [], runnerReport: null }),
@@ -590,6 +1205,8 @@ export const useSession = create<SessionState>((set) => ({
 
   setAiStatus: (aiStatus) => set({ aiStatus }),
   setAiOpen: (aiOpen) => set({ aiOpen }),
+  setAiContextOpen: (aiContextOpen) => set({ aiContextOpen }),
+  setPendingDocsOpen: (pendingDocsOpen) => set({ pendingDocsOpen }),
   setAiBusy: (aiBusyIds) => set({ aiBusyIds }),
   setAiProgress: (aiProgress) => set({ aiProgress }),
   setAiError: (aiError) => set({ aiError }),

@@ -1,4 +1,6 @@
 import { useRef } from 'react'
+import { analyzeContent } from '../../../shared/mdx-content'
+import { renderMarkdown } from '../markdown'
 import type { AdmonitionType, StepNote } from '../../../shared/types'
 
 /**
@@ -9,8 +11,10 @@ import type { AdmonitionType, StepNote } from '../../../shared/types'
  * y una vista previa en vivo muestra el resultado tal como se verá en Docusaurus.
  *
  * No arranca Docusaurus ni añade dependencias: el cuerpo se guarda como
- * Markdown/MDX (lo que consume `mdx.ts`) y la vista previa lo renderiza con un
- * mini-render local acotado al subconjunto que ofrece la barra.
+ * Markdown/MDX (lo que consume `mdx.ts`) y la vista previa lo renderiza con el
+ * mismo motor que los bloques de contenido, sobre el mismo texto saneado que se
+ * publica. Dentro de un admonition cabe todo el Markdown, así que la nota admite
+ * también listas, tablas o código si hacen falta.
  */
 
 interface AdmonitionMeta {
@@ -28,61 +32,6 @@ const ADMONITIONS: Record<AdmonitionType, AdmonitionMeta> = {
 }
 
 const EMOJIS = ['✅', '⚠️', '❗', '👉', '🔑', '📌', '🔒', '⏱️', '🧾', '💾']
-
-/** Escapa HTML antes de reintroducir solo las etiquetas seguras de la vista previa. */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-/**
- * Markdown en línea → HTML seguro para la vista previa. Solo el subconjunto que
- * inserta la barra: negrita, cursiva, resaltado, código, enlaces y emojis.
- */
-function renderInline(text: string): string {
-  let html = escapeHtml(text)
-  // El resaltado es la única etiqueta MDX que se admite tal cual: se reintroduce
-  // tras el escape para que <mark> se pinte pero cualquier otro < siga inerte.
-  html = html.replace(/&lt;mark&gt;([\s\S]*?)&lt;\/mark&gt;/g, '<mark>$1</mark>')
-  html = html.replace(/`([^`]+)`/g, '<code>$1</code>')
-  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
-  html = html.replace(/(^|[^_])_([^_\n]+)_/g, '$1<em>$2</em>')
-  html = html.replace(
-    /\[([^\]]+)\]\(([^)\s]+)\)/g,
-    '<a href="$2" target="_blank" rel="noreferrer">$1</a>'
-  )
-  return html
-}
-
-/** Cuerpo Markdown → HTML por bloques (párrafos y listas con «- »). */
-function renderBody(body: string): string {
-  const lines = body.split('\n')
-  const out: string[] = []
-  let list: string[] = []
-  const flush = (): void => {
-    if (list.length) {
-      out.push(`<ul>${list.map((li) => `<li>${renderInline(li)}</li>`).join('')}</ul>`)
-      list = []
-    }
-  }
-  for (const line of lines) {
-    const item = /^\s*-\s+(.*)$/.exec(line)
-    if (item) {
-      list.push(item[1])
-    } else if (line.trim()) {
-      flush()
-      out.push(`<p>${renderInline(line)}</p>`)
-    } else {
-      flush()
-    }
-  }
-  flush()
-  return out.join('')
-}
 
 interface Props {
   value: StepNote | undefined
@@ -138,12 +87,10 @@ export function NoteEditor({ value, onChange }: Props): React.JSX.Element {
   }
 
   const meta = ADMONITIONS[note.type]
-  const previewHtml = renderBody(note.body || '_Escribe el contenido de la nota…_')
-  // Aviso honesto: un <mark> sin su cierre no se resalta (se publica literal), así
-  // que la vista previa y el manual coinciden pero conviene advertirlo.
-  const openMarks = (note.body.match(/<mark>/g) ?? []).length
-  const closeMarks = (note.body.match(/<\/mark>/g) ?? []).length
-  const unbalancedMark = openMarks !== closeMarks
+  const previewHtml = renderMarkdown(note.body || '_Escribe el contenido de la nota…_')
+  // Aviso honesto: una etiqueta sin cerrar (o no permitida) se publica literal.
+  // La vista previa y el manual coinciden, pero conviene advertirlo.
+  const issues = analyzeContent(note.body).issues
 
   return (
     <div className="note-editor">
@@ -204,11 +151,11 @@ export function NoteEditor({ value, onChange }: Props): React.JSX.Element {
         onChange={(e) => setNote({ body: e.target.value })}
       />
 
-      {unbalancedMark && (
-        <p className="note-warn">
-          Hay un resaltado <code>&lt;mark&gt;</code> sin cerrar: se publicará como texto normal.
+      {issues.map((issue, i) => (
+        <p key={i} className="note-warn">
+          {issue.message}
         </p>
-      )}
+      ))}
 
       <div className="note-preview-label">Vista previa</div>
       <div className={`note-preview admonition admonition-${note.type}`}>
@@ -216,7 +163,7 @@ export function NoteEditor({ value, onChange }: Props): React.JSX.Element {
           <span aria-hidden>{meta.icon}</span> {note.title?.trim() || meta.defaultTitle}
         </div>
         <div
-          className="admonition-content"
+          className="admonition-content markdown"
           dangerouslySetInnerHTML={{ __html: previewHtml }}
         />
       </div>

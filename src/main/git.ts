@@ -1,17 +1,32 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { relative, isAbsolute, join } from 'node:path'
-import { realpath } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  writeFile
+} from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { dirname } from 'node:path'
+import { shell } from 'electron'
+import type { CommitDocEdit, RecordedStep } from '../shared/ipc-contract'
 import type {
   BranchDocInfo,
   CommitDocs,
+  DiscardResult,
   DocSession,
   GitBranchInfo,
   GitCommitInfo,
   GitCommitOptions,
   GitCommitResult,
-  GitRepoInfo
+  GitRepoInfo,
+  PendingDocInfo
 } from '../shared/types'
 import { validateBranchName } from '../shared/naming'
 export { suggestBranchName, suggestCommitMessage, validateBranchName } from '../shared/naming'
@@ -51,6 +66,21 @@ async function gitRaw(cwd: string, args: string[]): Promise<string> {
 
 async function git(cwd: string, args: string[]): Promise<string> {
   return (await gitRaw(cwd, args)).trim()
+}
+
+async function exists(path: string): Promise<boolean> {
+  return access(path)
+    .then(() => true)
+    .catch(() => false)
+}
+
+/**
+ * `dirname` para rutas de Git. Git las devuelve siempre con `/`, también en
+ * Windows, donde `path.dirname` esperaría `\`. Devuelve '' en la raíz.
+ */
+function posixDirname(path: string): string {
+  const cut = path.lastIndexOf('/')
+  return cut <= 0 ? '' : path.slice(0, cut)
 }
 
 interface WorkingTreeStatus {
@@ -331,6 +361,272 @@ export async function readBranchDocs(
 }
 
 /**
+ * Paquetes de documentación escritos en el repositorio que Git no tiene
+ * registrados: carpetas nuevas sin commitear, o ya commiteadas pero cambiadas
+ * después.
+ *
+ * Es la otra mitad de `readBranchDocs`: esa lee el historial, y por tanto no ve
+ * nada de lo que se guardó sin llegar a comitear (porque el commit falló, porque
+ * se guardó con Git desactivado o porque se cerró la app antes). Sin esta lectura
+ * ese trabajo existe en el disco pero es invisible para la aplicación.
+ *
+ * Se parte de `git status` en vez de recorrer el disco: es una sola llamada, y es
+ * Git quien decide qué está al día y qué no. De cada ruta pendiente se sube por
+ * los directorios hasta encontrar el que tiene `session.json` —el paquete—, así
+ * una captura cambiada dentro de `img/` cuenta como su paquete y las rutas ajenas
+ * (que no cuelgan de ninguno) se descartan solas.
+ */
+export async function readPendingDocs(root: string): Promise<PendingDocInfo[]> {
+  const status = await readStatus(root)
+  const pending = [...new Set([...status.untracked, ...status.modified, ...status.staged])]
+  if (!pending.length) return []
+
+  /** paquete (carpeta con session.json) → rutas pendientes que le pertenecen */
+  const groups = new Map<string, string[]>()
+  /** carpetas ya consultadas: `git status` devuelve muchas rutas del mismo paquete */
+  const isPackage = new Map<string, boolean>()
+
+  for (const path of pending) {
+    let dir = posixDirname(path)
+    // Tres niveles bastan para `<paquete>/img/paso-01.png`; más arriba ya no es
+    // el paquete de ese archivo, y subir sin límite acabaría atribuyendo cualquier
+    // archivo del repositorio al primer paquete que hubiera por encima.
+    for (let up = 0; up < 3 && dir; up++) {
+      let known = isPackage.get(dir)
+      if (known === undefined) {
+        known = await exists(join(root, dir, 'session.json'))
+        isPackage.set(dir, known)
+      }
+      if (known) {
+        const list = groups.get(dir)
+        if (list) list.push(path)
+        else groups.set(dir, [path])
+        break
+      }
+      const parent = posixDirname(dir)
+      if (parent === dir) break
+      dir = parent
+    }
+  }
+
+  const untracked = new Set(status.untracked)
+  const docs: PendingDocInfo[] = []
+  for (const [dir, files] of groups) {
+    const sessionPath = `${dir}/session.json`
+    let session: DocSession
+    try {
+      session = JSON.parse(await readFile(join(root, sessionPath), 'utf8')) as DocSession
+    } catch {
+      // session.json ilegible: sin él no se puede decir qué proceso es, y ofrecer
+      // «registrar esto» sin saber qué es sería peor que no ofrecerlo.
+      continue
+    }
+    docs.push({
+      path: sessionPath,
+      dir,
+      module: session.module ?? '',
+      subcategory: session.subcategory ?? '',
+      feature: session.feature ?? '',
+      title: session.title ?? '',
+      role: session.role ?? '',
+      baseUrl: session.baseUrl ?? '',
+      createdAt: session.createdAt ?? '',
+      pendingFiles: files.sort(),
+      steps: Array.isArray(session.steps) ? session.steps.length : 0,
+      untracked: untracked.has(sessionPath)
+    })
+  }
+  // Lo más reciente primero: es lo que se acaba de grabar y lo que se busca.
+  return docs.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+}
+
+/**
+ * Registra en Git un paquete que ya está escrito en el disco.
+ *
+ * Se indexa la carpeta entera tal como está —no solo lo que `git status` marca—
+ * porque el paquete es la unidad que tiene sentido en un commit: un `index.mdx`
+ * que enlaza capturas que no viajan con él no sirve de nada. Se añaden además los
+ * `_category_.json` de los niveles superiores que Git no tenga todavía: sin ellos
+ * la barra lateral de Docusaurus mostraría la carpeta con su nombre en crudo.
+ */
+export async function commitPendingDoc(args: {
+  repoRoot: string
+  dir: string
+  branch: string
+  message: string
+  push: boolean
+  baseBranch?: string
+}): Promise<GitCommitResult> {
+  const { repoRoot, dir, branch, message, push, baseBranch } = args
+  if (!dir || dir.startsWith('/') || dir.includes('..')) {
+    throw new Error(`Ruta de paquete no válida: ${dir}`)
+  }
+  const root = await git(repoRoot, ['rev-parse', '--show-toplevel'])
+  const absolute = join(root, dir)
+  if (!(await exists(join(absolute, 'session.json')))) {
+    throw new Error(`En ${dir} ya no hay un paquete de documentación (falta session.json).`)
+  }
+
+  const files = await listFiles(absolute)
+  if (!files.length) throw new Error(`La carpeta ${dir} está vacía.`)
+
+  // `_category_.json` de los niveles por encima del paquete, mientras sigan dentro
+  // de la carpeta de documentación del repositorio.
+  const status = await readStatus(root)
+  const pending = new Set([...status.untracked, ...status.modified])
+  let parent = posixDirname(dir)
+  while (parent && parent !== '.' && parent !== '/') {
+    const category = `${parent}/_category_.json`
+    if (pending.has(category)) files.push(join(root, category))
+    const next = posixDirname(parent)
+    if (next === parent) break
+    parent = next
+  }
+
+  return commitDocs({ repoRoot: root, branch, message, push, baseBranch, files })
+}
+
+/**
+ * Manda un archivo o una carpeta a la papelera del sistema.
+ *
+ * Descartar documentación es una acción destructiva sobre trabajo real: media
+ * hora de grabación puede irse en un clic. La papelera es lo que hace que ese
+ * clic sea reversible sin que la aplicación tenga que inventarse una copia de
+ * seguridad propia, y es donde el usuario ya sabe buscar.
+ *
+ * Si el sistema no puede moverlo (un volumen sin papelera, permisos), se AVISA
+ * en vez de borrarlo de todos modos: quien pidió «a la papelera» no pidió
+ * «bórralo para siempre». La prueba de humo sí borra directamente, para no ir
+ * dejando carpetas temporales en la papelera de quien la ejecuta.
+ */
+async function trashPath(absolute: string): Promise<void> {
+  if (process.env['DOCRECORDER_NO_TRASH']) {
+    await rm(absolute, { recursive: true, force: true })
+    return
+  }
+  try {
+    await shell.trashItem(absolute)
+  } catch (err) {
+    throw new Error(
+      `No se pudo mover a la papelera ${absolute}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err }
+    )
+  }
+}
+
+/** Salida de un `git ... -z` como lista de rutas, sin el token vacío final. */
+async function gitPaths(root: string, args: string[]): Promise<string[]> {
+  const raw = await gitRaw(root, args).catch(() => '')
+  return raw.split('\0').filter(Boolean)
+}
+
+/**
+ * Descarta un paquete que Git no tiene registrado, dejando el repositorio como
+ * si nunca se hubiera escrito.
+ *
+ * Es la otra mitad de `commitPendingDoc`: al ver lo que quedó fuera del
+ * historial, unas veces se quiere registrar y otras tirar (una grabación de
+ * prueba, un proceso que se documentó dos veces, un intento fallido). Sin esto la
+ * única salida era ir al Finder a borrar carpetas a mano, con el riesgo de
+ * llevarse por delante lo que sí estaba commiteado.
+ *
+ * Tres casos, y ninguno toca nada fuera de la carpeta del paquete:
+ *
+ *  - archivos que Git no conoce → a la papelera;
+ *  - archivos ya commiteados y modificados → vuelven a su versión del commit;
+ *  - archivos añadidos al índice pero nunca commiteados → se sacan del índice y
+ *    van a la papelera (para Git son nuevos; en disco son un archivo más).
+ *
+ * Si al quitar el paquete su categoría queda vacía, esa carpeta se va también:
+ * un `_category_.json` suelto dejaría en la barra lateral de Docusaurus un
+ * apartado sin nada dentro. Solo si ese `_category_.json` tampoco estaba
+ * registrado, claro.
+ */
+export async function discardPendingDoc(args: {
+  repoRoot: string
+  dir: string
+}): Promise<DiscardResult> {
+  const { dir } = args
+  if (!dir || dir.startsWith('/') || dir.includes('..')) {
+    throw new Error(`Ruta de paquete no válida: ${dir}`)
+  }
+  const root = await git(args.repoRoot, ['rev-parse', '--show-toplevel'])
+  const absolute = join(root, dir)
+  if (!(await exists(join(absolute, 'session.json')))) {
+    throw new Error(`En ${dir} ya no hay un paquete de documentación (falta session.json).`)
+  }
+
+  const status = await readStatus(root)
+  const untracked = status.untracked.filter((path) => path.startsWith(`${dir}/`))
+  // Lo que el índice conoce dentro del paquete, y lo que además existe en el
+  // último commit: la diferencia son los archivos «añadidos pero nunca
+  // commiteados», que no se pueden restaurar porque no hay a qué volver.
+  const tracked = await gitPaths(root, ['ls-files', '-z', '--', dir])
+  const inHead = new Set(
+    await gitPaths(root, ['ls-tree', '-r', '--name-only', '-z', 'HEAD', '--', dir])
+  )
+  const staleIndex = tracked.filter((path) => !inHead.has(path))
+
+  let trashed = 0
+  let restored = 0
+
+  if (!tracked.length) {
+    // Paquete entero desconocido para Git: se va tal cual, con sus capturas.
+    await trashPath(absolute)
+    trashed = untracked.length || 1
+    // Y con él, las categorías que solo existían para contenerlo.
+    const untrackedSet = new Set(status.untracked)
+    let parent = posixDirname(dir)
+    while (parent) {
+      const rest = await readdir(join(root, parent)).catch(() => [] as string[])
+      const onlyCategory = rest.length === 1 && rest[0] === '_category_.json'
+      if (!onlyCategory || !untrackedSet.has(`${parent}/_category_.json`)) break
+      await trashPath(join(root, parent))
+      trashed++
+      parent = posixDirname(parent)
+    }
+  } else {
+    if (inHead.size) {
+      // Devuelve al disco Y al índice la versión commiteada de lo que ya existía.
+      await git(root, ['checkout', 'HEAD', '--', dir])
+      restored = inHead.size
+    }
+    for (const path of staleIndex) {
+      await git(root, ['rm', '--force', '--cached', '--', path]).catch(() => '')
+      await trashPath(join(root, path))
+      trashed++
+    }
+    for (const path of untracked) {
+      await trashPath(join(root, path))
+      trashed++
+    }
+  }
+
+  const parts: string[] = []
+  if (trashed) parts.push(`${trashed} archivo(s) a la papelera del sistema`)
+  if (restored) parts.push(`${restored} archivo(s) devuelto(s) a su versión commiteada`)
+  return {
+    trashed,
+    restored,
+    message: parts.length
+      ? `Descartado «${dir}»: ${parts.join(' y ')}.`
+      : `En «${dir}» no quedaba nada que descartar.`
+  }
+}
+
+/** Rutas absolutas de todos los archivos de una carpeta, recursivamente. */
+async function listFiles(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [])
+  const files: string[] = []
+  for (const entry of entries) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) files.push(...(await listFiles(full)))
+    else if (entry.isFile()) files.push(full)
+  }
+  return files
+}
+
+/**
  * Documentación registrada en un commit, para previsualizarla en el explorador
  * sin arrancar Docusaurus ni hacer checkout. Lee los `session.json` que el commit
  * añadió o modificó y devuelve sus pasos.
@@ -358,6 +654,23 @@ export async function readCommitDocs(root: string, commit: string): Promise<Comm
   return docs
 }
 
+/** Un blob del commit tal cual (binario), o `null` si no está o está vacío. */
+async function readBlob(root: string, commit: string, path: string): Promise<Buffer | null> {
+  try {
+    const { stdout } = await run('git', ['show', `${commit}:${path}`], {
+      cwd: root,
+      timeout: GIT_TIMEOUT_MS,
+      windowsHide: true,
+      maxBuffer: 20 * 1024 * 1024,
+      encoding: 'buffer'
+    })
+    const buf = stdout as unknown as Buffer
+    return buf.length ? buf : null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Una captura commiteada, como data URI, para mostrarla en la vista previa. Se
  * lee el blob binario directamente del commit (sin checkout).
@@ -367,25 +680,137 @@ export async function readDocImage(
   commit: string,
   imagePath: string
 ): Promise<string | null> {
+  const buf = await readBlob(root, commit, imagePath)
+  return buf ? `data:image/png;base64,${buf.toString('base64')}` : null
+}
+
+/**
+ * Trae una funcionalidad commiteada de vuelta a la sesión para seguir
+ * editándola.
+ *
+ * La diferencia con la vista previa es dónde acaban las capturas: previsualizar
+ * las lee en memoria, y aquí se ESCRIBEN como temporales, porque a partir de este
+ * momento el paso es un paso normal del panel —se reordena, se redacta, se
+ * agrupa— y al guardar se copia a `img/paso-NN.png` como cualquier otro. Sin
+ * materializarlas, volver a guardar dejaría el paquete sin sus imágenes.
+ *
+ * Sigue siendo solo lectura sobre el repositorio: no hay checkout ni cambio de
+ * rama. Lo que decide dónde se reescribirá el paquete es `outputDir`, deducido
+ * quitando de la ruta los niveles que la propia sesión declara (módulo,
+ * subcategoría y funcionalidad); guardando con esos mismos metadatos, el paquete
+ * vuelve exactamente a donde estaba.
+ */
+export async function readCommitDocForEdit(
+  root: string,
+  commit: string,
+  sessionPath: string,
+  shotDir: string
+): Promise<CommitDocEdit | null> {
+  const json = await git(root, ['show', `${commit}:${sessionPath}`]).catch(() => '')
+  if (!json) return null
+  let session: DocSession
   try {
-    const { stdout } = await run('git', ['show', `${commit}:${imagePath}`], {
-      cwd: root,
-      timeout: GIT_TIMEOUT_MS,
-      windowsHide: true,
-      maxBuffer: 20 * 1024 * 1024,
-      encoding: 'buffer'
-    })
-    const buf = stdout as unknown as Buffer
-    if (!buf.length) return null
-    return `data:image/png;base64,${buf.toString('base64')}`
+    session = JSON.parse(json) as DocSession
   } catch {
     return null
+  }
+
+  const dir = posixDirname(sessionPath)
+  const parts = dir ? dir.split('/') : []
+  // Módulo + funcionalidad, y la subcategoría en medio si la sesión la declara.
+  const depth = session.subcategory?.trim() ? 3 : 2
+  const outputRel = parts.slice(0, Math.max(0, parts.length - depth)).join('/')
+
+  const steps: RecordedStep[] = []
+  let missingImages = 0
+  for (const step of session.steps ?? []) {
+    let tempFile = ''
+    if (step.screenshot) {
+      const buf = await readBlob(root, commit, `${dir}/${step.screenshot}`)
+      if (buf) {
+        // El nombre lleva el commit para que dos ediciones del mismo proceso no
+        // se pisen los temporales entre sí.
+        tempFile = join(shotDir, `commit-${commit}-${step.screenshot.replace(/[\\/]/g, '-')}`)
+        await writeFile(tempFile, buf)
+      } else {
+        // Una captura que el commit no trae (se borró, o el commit solo tocaba el
+        // texto): el paso se conserva sin imagen en vez de perderse entero.
+        missingImages++
+      }
+    }
+    steps.push({ ...step, tempFile })
+  }
+
+  return {
+    commit,
+    outputDir: outputRel ? join(root, outputRel) : root,
+    dir,
+    session,
+    steps,
+    missingImages
   }
 }
 
 /** Ruta en el repo de la captura de un paso, a partir del path de su session.json. */
 export function docImagePath(sessionPath: string, screenshot: string): string {
   return `${dirname(sessionPath)}/${screenshot}`.replace(/\\/g, '/')
+}
+
+/**
+ * Cambia de rama aunque el paquete recién escrito estorbe.
+ *
+ * Git aborta un `checkout` si en el árbol hay archivos SIN SEGUIMIENTO que la
+ * rama de destino también tiene: no quiere pisar algo que no sabe de dónde
+ * salió. Y es exactamente lo que ocurre al reescribir una funcionalidad que ya
+ * está documentada en su rama —regrabarla, o traerla de un commit para
+ * corregirla— estando en otra rama: el paquete se escribe primero (para no
+ * perderlo si el commit falla) y, cuando llega el momento de cambiar de rama,
+ * esos archivos son «desconocidos» aquí y «conocidos» allí.
+ *
+ * La salida es apartar SOLO nuestros archivos —los que este guardado acaba de
+ * escribir—, cambiar de rama y volver a ponerlos encima. Pisar la versión de la
+ * rama con la nuestra es justo lo que se ha pedido al guardar; lo que nunca se
+ * toca es un archivo ajeno, que sigue abortando el cambio de rama con el mensaje
+ * de Git.
+ *
+ * Los archivos se apartan a un directorio temporal y se reponen SIEMPRE, también
+ * si el checkout falla: una salida a medias dejaría el trabajo fuera del árbol.
+ */
+async function checkoutKeepingOurFiles(
+  root: string,
+  checkoutArgs: string[],
+  /** rama (o base) cuya versión de nuestros archivos sería la que estorba */
+  target: string,
+  ourPaths: string[],
+  untracked: Set<string>
+): Promise<void> {
+  const inTarget = new Set(
+    await gitPaths(root, ['ls-tree', '-r', '--name-only', '-z', target, '--'])
+  )
+  const clash = ourPaths.filter((path) => untracked.has(path) && inTarget.has(path))
+  if (!clash.length) {
+    await git(root, checkoutArgs)
+    return
+  }
+
+  const aside = await mkdtemp(join(tmpdir(), 'docrecorder-switch-'))
+  const moved: string[] = []
+  try {
+    for (const path of clash) {
+      await mkdir(dirname(join(aside, path)), { recursive: true })
+      await rename(join(root, path), join(aside, path))
+      moved.push(path)
+    }
+    await git(root, checkoutArgs)
+  } finally {
+    for (const path of moved) {
+      await mkdir(dirname(join(root, path)), { recursive: true })
+      // `rename` sustituye el destino: la versión que traiga la rama se queda
+      // debajo de la nuestra, que es la que se va a commitear.
+      await rename(join(aside, path), join(root, path)).catch(() => undefined)
+    }
+    await rm(aside, { recursive: true, force: true }).catch(() => undefined)
+  }
 }
 
 /**
@@ -454,11 +879,15 @@ export async function commitDocs(options: GitCommitOptions): Promise<GitCommitRe
 
   let createdBranch = false
   let baseNote = ''
+  // Los archivos que este guardado acaba de escribir y que Git todavía no
+  // conoce: son los que hay que apartar para poder cambiar de rama.
+  const untracked = new Set(info.untrackedPaths)
+  const ours = [...ourPaths]
   if (mustSwitch) {
     if (branchExists) {
       // Reutilizar la rama permite regrabar una funcionalidad y añadir el
       // resultado a la misma rama en vez de dispersarlo.
-      await git(info.root, ['checkout', branch])
+      await checkoutKeepingOurFiles(info.root, ['checkout', branch], branch, ours, untracked)
     } else if (info.hasCommits) {
       // Se ramifica desde la rama por defecto, no desde HEAD: así cada
       // funcionalidad genera un PR independiente (GitHub Flow). El usuario puede
@@ -479,7 +908,13 @@ export async function commitDocs(options: GitCommitOptions): Promise<GitCommitRe
         if (!baseExists) {
           throw new Error(`La rama base «${base}» no existe en ${info.root}.`)
         }
-        await git(info.root, ['checkout', '-b', branch, base])
+        await checkoutKeepingOurFiles(
+          info.root,
+          ['checkout', '-b', branch, base],
+          base,
+          ours,
+          untracked
+        )
         if (base !== info.branch) baseNote = ` desde «${base}»`
       } else {
         // Repositorio sin main/master ni origin/HEAD: no hay base evidente, así

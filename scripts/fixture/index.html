@@ -147,24 +147,50 @@
           </div>
 
           <!--
-            Tabla de registros: cada fila tiene su casilla. Marcar dos filas son
-            dos acciones sobre dos registros, no un formulario que se rellena.
+            Pestañas con roles ARIA, como las de cualquier librería actual:
+            recorrer dos pestañas seguidas es un paso del manual, no dos.
+          -->
+          <div role="tablist" aria-label="Vistas de matrículas" class="tabs">
+            <button role="tab" id="tab-datos" aria-selected="true">Datos</button>
+            <button role="tab" id="tab-pagos" aria-selected="false">Pagos</button>
+          </div>
+          <p id="panel-tab">Datos de la matrícula.</p>
+
+          <!--
+            Tabla de registros, con dos columnas de controles. Sirve para los tres
+            ámbitos de una rejilla: la misma COLUMNA en varias filas (marcar la
+            casilla de dos registros es una sola acción repetida), la misma FILA
+            (editarla en línea) y columnas distintas de filas distintas, que no
+            tienen nada que ver entre sí.
           -->
           <table id="tabla-usuarios">
             <thead>
               <tr>
                 <th><input type="checkbox" id="sel-todos" aria-label="Seleccionar todo" /></th>
                 <th>Usuario</th>
+                <th>Estado</th>
               </tr>
             </thead>
             <tbody>
               <tr>
                 <td><input type="checkbox" id="sel-andy" aria-label="Seleccionar Andy" /></td>
                 <td>Andy Velez</td>
+                <td>
+                  <select id="estado-andy" aria-label="Estado de Andy">
+                    <option>Activo</option>
+                    <option>Retirado</option>
+                  </select>
+                </td>
               </tr>
               <tr>
                 <td><input type="checkbox" id="sel-paulo" aria-label="Seleccionar Paulo" /></td>
                 <td>Paulo Galarza</td>
+                <td>
+                  <select id="estado-paulo" aria-label="Estado de Paulo">
+                    <option>Activo</option>
+                    <option>Retirado</option>
+                  </select>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -218,6 +244,15 @@
               <input id="activa" name="activa" type="checkbox" class="switch-input" />
             </div>
 
+            <!--
+              Botón que NO navega pero re-renderiza el formulario: reemplaza cada
+              campo por un nodo nuevo con el mismo id y el mismo valor, como hace
+              React al confirmar. Es el caso que mataba las referencias del
+              observador: el campo sigue en pantalla, pero es otro elemento, y la
+              captura del grupo ya no podía marcarlo.
+            -->
+            <p><button type="button" data-testid="aplicar">Aplicar cambios</button></p>
+
             <p>
               <button type="submit" class="Button_primary__b3n1q">Guardar matrícula</button>
               <button type="button" data-testid="cancelar">Cancelar</button>
@@ -241,6 +276,16 @@
         })
       })
 
+      for (const tab of document.querySelectorAll('[role="tab"]')) {
+        tab.addEventListener('click', () => {
+          for (const other of document.querySelectorAll('[role="tab"]')) {
+            other.setAttribute('aria-selected', String(other === tab))
+          }
+          document.getElementById('panel-tab').textContent =
+            tab.id === 'tab-pagos' ? 'Pagos de la matrícula.' : 'Datos de la matrícula.'
+        })
+      }
+
       document.querySelector('[data-testid="nueva-matricula"]').addEventListener('click', () => {
         const tpl = document.getElementById('modal-template')
         // Retraso deliberado: simula la hidratación/animación de un modal real,
@@ -252,6 +297,25 @@
 
       portalRoot.addEventListener('click', (e) => {
         if (e.target.closest('[data-testid="cancelar"]')) portalRoot.replaceChildren()
+
+        // Re-render al estilo React: los campos se cambian por nodos nuevos con
+        // los mismos ids y valores. Lo que se ve es idéntico; los elementos, no.
+        if (e.target.closest('[data-testid="aplicar"]')) {
+          const form = document.getElementById('matricula-form')
+          const values = new Map(
+            [...form.querySelectorAll('input,select')].map((el) => [
+              el.id,
+              el.type === 'checkbox' ? el.checked : el.value
+            ])
+          )
+          form.replaceChildren(...[...form.children].map((child) => child.cloneNode(true)))
+          for (const [id, value] of values) {
+            const el = form.querySelector('#' + id)
+            if (!el) continue
+            if (el.type === 'checkbox') el.checked = value
+            else el.value = value
+          }
+        }
 
         // El interruptor reenvía el clic a su <input> escondido, como hacen las
         // librerías de componentes. Genera un segundo evento de clic para lo

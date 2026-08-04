@@ -5,6 +5,7 @@ import { shotUrl, type RecordedStep } from '../../../shared/ipc-contract'
 import { useSession } from '../store'
 import { useAiDraft } from '../useAiDraft'
 import { useGroupCapture } from '../useGroupCapture'
+import { ContentEditor } from './ContentEditor'
 import { NoteEditor } from './NoteEditor'
 
 const STRATEGY_LABEL: Record<string, string> = {
@@ -21,30 +22,49 @@ const ACTION_LABEL: Record<string, string> = {
   select: 'seleccionar',
   submit: 'enviar',
   press: 'tecla',
-  navigate: 'navegar'
+  navigate: 'navegar',
+  capture: 'captura externa',
+  image: 'imagen',
+  content: 'contenido'
 }
 
 interface Props {
   step: RecordedStep
+  /** el paso cuelga de una sección: se sangra para que se vea de quién es */
+  nested?: boolean
   onOpenShot: (step: RecordedStep) => void
+  /** abre el editor de recorte y resaltado sobre la imagen que ya tiene el paso */
+  onAdjustImage: (step: RecordedStep) => void
 }
 
-export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
+export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): React.JSX.Element {
   const updateStep = useSession((s) => s.updateStep)
   const removeStep = useSession((s) => s.removeStep)
   const focusStepId = useSession((s) => s.focusStepId)
   const clearFocus = useSession((s) => s.clearFocus)
+  const setActiveStep = useSession((s) => s.setActiveStep)
   const aiBusy = useSession((s) => s.aiBusyIds.includes(step.id))
   const removeGroupField = useSession((s) => s.removeGroupField)
+  const ungroupStep = useSession((s) => s.ungroupStep)
+  const selected = useSession((s) => s.selectedIds.includes(step.id))
+  const toggleSelect = useSession((s) => s.toggleSelect)
+  const setWideContentId = useSession((s) => s.setWideContentId)
   const { draft } = useAiDraft()
   const recaptureGroup = useGroupCapture()
 
   const titleRef = useRef<HTMLInputElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
   const descRef = useRef<HTMLTextAreaElement>(null)
-  // La nota se abre sola si el paso ya la trae (borrador restaurado), y a
-  // petición con el botón; así no estorba en los pasos sin nota.
+  // La nota y el bloque de contenido se abren solos si el paso ya los trae
+  // (borrador restaurado), y a petición con su botón; así no estorban en los
+  // pasos que no los usan.
   const [noteOpen, setNoteOpen] = useState(!!step.note?.body.trim())
+  const [contentOpen, setContentOpen] = useState(step.kind === 'content' || !!step.content?.trim())
+
+  const isContent = step.kind === 'content'
+  const isCapture = step.kind === 'capture'
+  const isImage = step.kind === 'image'
+  const isManual = isContent || isCapture || isImage
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: step.id
@@ -76,6 +96,7 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
   }, [step.description])
 
   const preferred = step.selectorCandidates[0]
+  const setContent = (content: string): void => updateStep(step.id, { content })
 
   return (
     <div
@@ -83,10 +104,26 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
         setNodeRef(node)
         cardRef.current = node
       }}
-      className={`step-card${isDragging ? ' dragging' : ''}${step.includeInDocs ? '' : ' excluded'}`}
+      className={
+        `step-card kind-${step.kind ?? 'interaction'}` +
+        `${isDragging ? ' dragging' : ''}${step.includeInDocs ? '' : ' excluded'}` +
+        `${selected ? ' selected' : ''}${nested ? ' nested' : ''}`
+      }
       style={{ transform: CSS.Transform.toString(transform), transition }}
+      // Tocar una tarjeta la convierte en el punto de trabajo: lo siguiente que se
+      // pegue o se añada irá justo detrás de ella, no al final de la lista.
+      onPointerDownCapture={() => setActiveStep(step.id)}
+      onFocusCapture={() => setActiveStep(step.id)}
     >
       <div className="step-head">
+        <input
+          type="checkbox"
+          className="step-select"
+          checked={selected}
+          title="Marcar para agrupar con otros pasos"
+          aria-label={`Marcar el paso ${step.order}`}
+          onChange={() => toggleSelect(step.id)}
+        />
         <button
           className="drag-handle"
           title="Arrastrar para reordenar"
@@ -106,6 +143,30 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
         >
           {aiBusy ? '⋯' : '✨'}
         </button>
+        {/* Recortar o señalar sobre la imagen que ya trae el paso. Solo en los
+            pasos cuya imagen es del usuario: la de un paso grabado la produce el
+            motor y la rehace el runner. */}
+        {(isImage || isCapture) && step.tempFile && (
+          <button
+            className="icon-btn"
+            title="Recortar la imagen o señalar algo en ella"
+            aria-label={`Ajustar la imagen del paso ${step.order}`}
+            onClick={() => onAdjustImage(step)}
+          >
+            ✂
+          </button>
+        )}
+        {!isContent && (
+          <button
+            className={`icon-btn content-btn${step.content?.trim() ? ' has-content' : ''}`}
+            title="Añadir una tabla, un bloque de código u otro contenido de Docusaurus"
+            aria-label={`Bloque de contenido del paso ${step.order}`}
+            aria-pressed={contentOpen}
+            onClick={() => setContentOpen((v) => !v)}
+          >
+            ▦
+          </button>
+        )}
         <button
           className={`icon-btn note-btn${step.note?.body.trim() ? ' has-note' : ''}`}
           title="Añadir una nota destacada (admonition de Docusaurus)"
@@ -115,6 +176,16 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
         >
           📝
         </button>
+        {step.groupSources?.length ? (
+          <button
+            className="icon-btn"
+            title="Deshacer la agrupación y devolver cada paso a su sitio"
+            aria-label={`Deshacer la agrupación del paso ${step.order}`}
+            onClick={() => ungroupStep(step.id)}
+          >
+            ⊟
+          </button>
+        ) : null}
         <button
           className="icon-btn danger"
           title="Eliminar paso"
@@ -125,20 +196,25 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
       </div>
 
       <div className="step-body">
-        <button
-          className="thumb"
-          title="Ver la captura a tamaño real"
-          onClick={() => onOpenShot(step)}
-        >
-          <img src={shotUrl(step.tempFile)} alt={`Captura del paso ${step.order}`} />
-        </button>
+        {!isContent &&
+          (step.tempFile ? (
+            <button
+              className="thumb"
+              title="Ver la captura a tamaño real"
+              onClick={() => onOpenShot(step)}
+            >
+              <img src={shotUrl(step.tempFile)} alt={`Captura del paso ${step.order}`} />
+            </button>
+          ) : (
+            <span className="thumb empty">sin captura</span>
+          ))}
 
         <div className="step-fields">
           <input
             ref={titleRef}
             className="step-title"
             value={step.title}
-            placeholder="Título del paso"
+            placeholder={isContent ? 'Título del bloque (opcional)' : 'Título del paso'}
             onChange={(e) => updateStep(step.id, { title: e.target.value })}
           />
           <textarea
@@ -158,14 +234,14 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
             {step.fields.map((f, i) => (
               <li key={i}>
                 <span className="field-label">{f.label}:</span> <code>{f.value || '—'}</code>
-                {/* Con un solo campo no se ofrece quitarlo: vaciar el grupo
+                {/* Con un solo elemento no se ofrece quitarlo: vaciar el grupo
                     dejaría un paso que no documenta nada, y para eso está el
                     botón de eliminar el paso entero. */}
                 {step.fields && step.fields.length > 1 && (
                   <button
                     className="field-remove"
                     title={`Quitar «${f.label}» de este paso`}
-                    aria-label={`Quitar el campo ${f.label}`}
+                    aria-label={`Quitar el elemento ${f.label}`}
                     onClick={() => recaptureGroup(removeGroupField(step.id, f.label))}
                   >
                     ✕
@@ -183,17 +259,32 @@ export function StepCard({ step, onOpenShot }: Props): React.JSX.Element {
         )
       )}
 
-      {noteOpen && (
-        <div className="step-note">
-          <NoteEditor
-            value={step.note}
-            onChange={(note) => updateStep(step.id, { note })}
+      {contentOpen && (
+        <div className="step-content">
+          <ContentEditor
+            value={step.content ?? ''}
+            onChange={setContent}
+            onExpand={() => setWideContentId(step.id)}
           />
         </div>
       )}
 
+      {noteOpen && (
+        <div className="step-note">
+          <NoteEditor value={step.note} onChange={(note) => updateStep(step.id, { note })} />
+        </div>
+      )}
+
       <div className="step-foot">
-        {preferred ? (
+        {isManual ? (
+          <span className="selector-chip manual">
+            {isCapture
+              ? 'captura ajena al visor'
+              : isImage
+                ? 'imagen pegada'
+                : 'bloque de contenido'}
+          </span>
+        ) : preferred ? (
           <span
             className={`selector-chip strategy-${preferred.strategy}`}
             title={step.selectorCandidates

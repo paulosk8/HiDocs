@@ -29,7 +29,37 @@ Flujo de trabajo:
    `Ctrl+Shift+R` pausa y reanuda sin salir del sistema documentado.
 5. Edita títulos y descripciones, reordena arrastrando y elimina lo que sobre. Con **✨** (o
    **Redactar todos**) la IA los propone por ti; hay que configurar la clave en **IA** primero.
-6. Pulsa **■** para detener y guardar.
+6. Completa lo que el motor no puede grabar:
+   - **Agrupa** pasos que son uno solo para quien lee: marca sus casillas y pulsa
+     **⊞ Agrupar**. Lo seguido del mismo tipo ya se funde solo (**agrupar seguidos**):
+     los campos de un formulario, las casillas de una misma columna de la tabla, los
+     controles de una misma fila, varias pestañas o varios botones —abrir un menú y
+     elegir su opción incluido—. Al cambiar de tipo empieza un paso nuevo, así que el
+     «Guardar» conserva su tarjeta y se une al formulario a mano si quieres.
+   - **⌘/Ctrl+V** (con el panel enfocado) crea una tarjeta con lo que tengas copiado:
+     una imagen del portapapeles, o un bloque de contenido si es texto o una tabla.
+     Se coloca justo detrás de la tarjeta en la que estés trabajando. Lo mismo desde
+     **＋ Añadir → 📋 Imagen del portapapeles**, y con **✂ Pegar y ajustar** pasa antes
+     por el recorte.
+   - **＋ Añadir → 📷 Captura de pantalla** documenta lo que está fuera del navegador (otra
+     ventana, el escritorio o una imagen del disco), con recorte y recuadro.
+   - **＋ Añadir → ▦ Bloque de contenido** (o **▦** en cualquier paso) añade una tabla, un
+     bloque de código o pestañas de Docusaurus, con vista previa de lo que se publicará.
+     Pegar una tabla copiada del sistema la convierte sola a Markdown.
+   - **＋ Añadir → ▤ Sección** divide la grabación en apartados: los pasos que van debajo
+     cuelgan de ella, se pliegan con un clic y la sección se arrastra **con** ellos. En el
+     manual sale como encabezado `##`, con sus pasos por debajo.
+7. Pulsa **■** para detener y guardar.
+
+Todo lo que se añade —y también **lo que graba el motor**— entra justo **detrás de la
+tarjeta activa** (la última que grabaste o la última que tocaste), no al final: volver a
+un paso del medio para completar lo que faltó no obliga a arrastrar nada de vuelta.
+
+Lo ya guardado no queda cerrado: la franja de estado avisa de la documentación que Git no
+tiene registrada (**⚠ N sin registrar**) y desde ahí se **registra** o se **descarta** (a
+la papelera del sistema, recuperable); y en **Proyectos… → rama → commit** se previsualiza
+lo publicado y se **vuelve a editar**, reescribiendo la misma carpeta con un commit encima —o se
+**descarta la edición** desde la franja del panel, sin registrar nada, si al final no querías tocarla—.
 
 Salida:
 
@@ -59,6 +89,7 @@ src/
       prompt.ts    prompt y esquema comunes a los dos proveedores
       anthropic.ts llamada a Claude
       gemini.ts    llamada a Gemini
+    capture.ts     capturas ajenas al visor e imágenes del portapapeles
     engine/
       cdp.ts       conexión Playwright ↔ viewport por CDP
       observer.ts  script inyectado en la página documentada
@@ -109,7 +140,7 @@ Como escribe en un repositorio ajeno, las salvaguardas son parte del contrato:
 
 - **Solo se indexan las rutas que escribe DocRecorder.** Nunca `git add -A`, que barrería trabajo en curso hacia nuestro commit.
 - **Se aborta si hay cambios ajenos ya indexados**, porque acabarían dentro del commit.
-- **No se cambia de rama si hay archivos seguidos modificados**, que viajarían a la rama nueva. Los archivos sin seguimiento no bloquean: Git los conserva intactos al hacer checkout.
+- **No se cambia de rama si hay archivos seguidos modificados**, que viajarían a la rama nueva. Los archivos sin seguimiento ajenos tampoco bloquean: Git los conserva intactos al hacer checkout. La excepción son los archivos **propios** que la rama de destino ya tiene (reescribir una funcionalidad ya documentada desde otra rama): ahí Git aborta el checkout, así que se apartan a un temporal, se cambia de rama y se reponen encima. Solo los que ese guardado acaba de escribir; uno ajeno sigue abortando el cambio, que es lo correcto.
 - **El push nunca es automático** y jamás usa `--force`.
 - **Si el commit falla, el paquete en disco se conserva.** Perder una grabación por un problema del repositorio sería mucho peor que quedarse sin commit; el error se muestra y la grabación sigue ahí.
 
@@ -122,7 +153,7 @@ Tres detalles de implementación que costaron encontrar y que conviene no revert
 
 ```bash
 npm run build
-node scripts/smoke.mjs        # 92 comprobaciones de extremo a extremo
+node scripts/smoke.mjs        # 193 comprobaciones de extremo a extremo
 node scripts/smoke-next.mjs   # contra un Next.js real (por defecto nextjs.org)
 ```
 
@@ -132,6 +163,15 @@ navegación cliente sin cambio de URL, campo de contraseña), arranca la app, la
 por CDP como lo haría una persona y comprueba el paquete escrito en disco. La carpeta
 de salida es un repositorio Git real, así que también ejercita la integración completa
 y sus salvaguardas.
+
+Tres variables de entorno sustituyen lo que una prueba no puede controlar, y solo se
+activan al pedirlas: `DOCRECORDER_AI_FAKE` (respuesta determinista del proveedor de IA,
+sin red ni clave), `DOCRECORDER_CAPTURE_FAKE` (pantalla sintética en vez de
+`desktopCapturer`, que depende de qué ventanas haya abiertas y de un permiso del
+sistema) y `DOCRECORDER_NO_TRASH` (descartar documentación borra directamente en vez de
+mandar a la papelera, para no ir dejando carpetas temporales en la de quien ejecuta la
+prueba). `DOCRECORDER_USER_DATA` aísla el estado persistente para no tocar el del
+usuario.
 
 ## Decisiones que se apartan de SPEC.md
 

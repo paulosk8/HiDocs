@@ -137,6 +137,30 @@ export async function regenerateSession(
   await waitForStability(page).catch(() => undefined)
 
   for (const step of session.steps) {
+    // Nada de lo que añade el usuario a mano —una captura externa, una imagen
+    // pegada, un bloque de contenido, un separador— ocurrió dentro de la página: no hay nada
+    // que re-ejecutar y su imagen (si la tiene) no la produce el navegador. Se
+    // dejan intactas y se informa de que se saltaron, para que el informe no las
+    // cuente como fallo.
+    if (step.kind && step.kind !== 'interaction') {
+      const skipped: RegenStepResult = {
+        order: step.order,
+        title: step.title,
+        status: 'skipped',
+        detail:
+          step.kind === 'capture'
+            ? 'Captura externa: se conserva tal cual.'
+            : step.kind === 'image'
+              ? 'Imagen pegada: se conserva tal cual.'
+              : step.kind === 'section'
+                ? 'Separador de sección: no hay nada que reproducir.'
+                : 'Bloque de contenido: no tiene captura que regenerar.'
+      }
+      results.push(skipped)
+      onProgress?.(skipped)
+      continue
+    }
+
     const actions = stepActions(step)
     let lastLoc: Locator | null = null
     let failure = ''

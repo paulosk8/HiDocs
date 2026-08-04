@@ -16,10 +16,16 @@ const SECTIONS = [
   { id: 'barra', label: 'Barra superior' },
   { id: 'grabar', label: 'Grabar pasos' },
   { id: 'pasos', label: 'Panel de pasos' },
+  { id: 'agrupar', label: 'Agrupar pasos' },
+  { id: 'secciones', label: 'Secciones' },
+  { id: 'captura', label: 'Capturas externas' },
+  { id: 'pegar', label: 'Pegar imágenes y tablas' },
+  { id: 'contenido', label: 'Bloques de contenido' },
   { id: 'notas', label: 'Notas destacadas' },
   { id: 'estado', label: 'Estado del proyecto' },
   { id: 'rama', label: 'Rama de trabajo' },
   { id: 'git', label: 'Integración con Git' },
+  { id: 'pendiente', label: 'Documentación sin registrar' },
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
   { id: 'regenerar', label: 'Regenerar capturas' },
@@ -102,10 +108,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 registra en Git como una rama lista para abrir un Pull Request.
               </p>
               <p>
-                Dos ayudas más, una vez grabado: la{' '}
-                <a onClick={() => go('ia')}>redacción con IA</a> propone el título y la descripción
-                de cada paso, y el <a onClick={() => go('regenerar')}>runner de regeneración</a>{' '}
-                actualiza las capturas cuando el sistema documentado cambia de interfaz.
+                Dos ayudas más, una vez grabado: la <a onClick={() => go('ia')}>redacción con IA</a>{' '}
+                propone el título y la descripción de cada paso, y el{' '}
+                <a onClick={() => go('regenerar')}>runner de regeneración</a> actualiza las capturas
+                cuando el sistema documentado cambia de interfaz.
               </p>
             </section>
 
@@ -223,11 +229,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>
                 Durante la grabación, cada clic, escritura, selección o envío relevante genera un
                 paso. La app espera a que la página se estabilice, resalta el elemento y toma la
-                captura. Si para entonces algo ha quedado encima —el fondo oscuro de un modal
-                recién abierto, típicamente— el recuadro le devuelve el brillo, para que el
-                elemento que el paso señala se siga viendo. Y si el clic <b>cambia de pantalla</b>{' '}
-                (cerrar sesión, un enlace), se conserva la captura tomada justo antes, que sí
-                muestra dónde pulsaste, en vez de la pantalla siguiente. Lo mismo con los{' '}
+                captura. Si para entonces algo ha quedado encima —el fondo oscuro de un modal recién
+                abierto, típicamente— el recuadro le devuelve el brillo, para que el elemento que el
+                paso señala se siga viendo. Y si el clic <b>cambia de pantalla</b> (cerrar sesión,
+                un enlace), se conserva la captura tomada justo antes, que sí muestra dónde
+                pulsaste, en vez de la pantalla siguiente. Lo mismo con los{' '}
                 <b>menús que se cierran</b> al elegir una opción: como se desvanecen poco a poco, se
                 documenta la captura previa, con el menú aún legible, en vez de una medio borrada.
                 Los campos de texto se consolidan en <b>un solo paso</b> (el valor final), y las{' '}
@@ -260,18 +266,20 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   documenta solo el que pulsaste y se descartan los reenvíos.
                 </li>
                 <li>
-                  <b>Qué lo cierra</b> · un clic en un botón, un envío o una navegación. Lo que
-                  venga después empieza un grupo nuevo, aunque sea del mismo formulario.
+                  <b>Qué lo cierra</b> · cambiar de tipo de control (un botón, una pestaña), un
+                  envío, una tecla o una navegación. Lo que venga después empieza un paso nuevo,
+                  aunque sea del mismo formulario.
                 </li>
                 <li>
-                  <b>Las tablas no se agrupan</b> · marcar la casilla o el interruptor de{' '}
-                  <b>dos filas</b> son dos acciones sobre dos registros, no un formulario que se
-                  rellena, así que cada una es su propio paso. Dentro de una misma fila sí se
-                  agrupan (edición en línea).
+                  <b>En una tabla manda dónde está</b> · se funden los controles de una{' '}
+                  <b>misma fila</b> (edición en línea) y los de una <b>misma columna</b> en varias
+                  filas (marcar la casilla de cinco alumnos es un paso). Dos controles distintos de
+                  filas distintas no: ni son la misma acción ni el mismo registro. Ver{' '}
+                  <a onClick={() => go('agrupar')}>Agrupar pasos</a>.
                 </li>
                 <li>
-                  <b>La captura</b> · resalta en rojo <b>todos</b> los campos del grupo, y se
-                  rehace cada vez que el grupo cambia.
+                  <b>La captura</b> · resalta en rojo <b>todos</b> los campos del grupo, y se rehace
+                  cada vez que el grupo cambia.
                 </li>
                 <li>
                   <b>Revisar y depurar</b> · la tarjeta lista los campos con su valor; el <b>✕</b>{' '}
@@ -279,6 +287,13 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   grupo entero: para eso está eliminar el paso.
                 </li>
               </ul>
+              <p>
+                <b>Dónde aparece cada paso:</b> detrás de la tarjeta en la que estés trabajando (la
+                última que grabaste, o la última que tocaste). Grabando de corrido eso es el final
+                de la lista, como siempre; pero si vuelves a un paso del medio porque te faltó algo,
+                lo que grabes entra <b>ahí</b> y no al final. Es la misma regla que sigue{' '}
+                <b>+ Añadir</b> y el pegado.
+              </p>
               <p>
                 <b>Continuar otro día:</b> la grabación en curso se <b>autoguarda</b> como borrador.
                 Puedes cerrar la app y, al volver a abrirla, te ofrecerá{' '}
@@ -305,8 +320,21 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <a onClick={() => go('ia')}>Redactar con IA</a>).
                 </li>
                 <li>
+                  <b>✂</b> · en las tarjetas cuya imagen es tuya (una captura externa o una imagen
+                  pegada), recorta esa imagen o señala algo en ella (ver{' '}
+                  <a onClick={() => go('pegar')}>Pegar imágenes y tablas</a>).
+                </li>
+                <li>
+                  <b>▦</b> · añade un <b>bloque de contenido</b> (tabla, código, pestañas…) al paso
+                  (ver <a onClick={() => go('contenido')}>Bloques de contenido</a>).
+                </li>
+                <li>
                   <b>📝</b> · añade una <b>nota destacada</b> al paso (ver{' '}
                   <a onClick={() => go('notas')}>Notas destacadas</a>).
+                </li>
+                <li>
+                  <b>Casilla</b> · marca el paso para <b>agruparlo</b> con otros (ver{' '}
+                  <a onClick={() => go('agrupar')}>Agrupar pasos</a>).
                 </li>
                 <li>
                   <b>Selector</b> · la estrategia detectada (test-id, rol, texto…) para reproducir
@@ -327,35 +355,309 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 opción de <b>añadirla al diccionario</b> (útil con nombres propios y siglas del
                 sistema que documentas) y cortar, copiar, pegar y seleccionar todo.
               </p>
-              <p>En el encabezado del panel:</p>
+              <p>
+                El encabezado tiene <b>dos filas</b>: arriba, la identidad del panel y los controles
+                de grabación <b>● ⏸ ■</b> (grabar, pausar/reanudar y detener para guardar); debajo,
+                lo que se hace con los pasos ya capturados:
+              </p>
               <ul className="help-defs">
                 <li>
-                  <b>agrupar campos</b> · une los campos seguidos de un mismo formulario (escribir,
-                  elegir, marcar un interruptor) en un solo paso, con una sola captura en la que se
-                  resaltan <b>todos</b> los campos del grupo. Un clic en un botón, un envío o una
-                  navegación cierran el grupo. Cada campo se lista en la tarjeta y puedes{' '}
-                  <b>quitarlo</b> con su ✕ si no quieres documentarlo.
+                  <b>+ Añadir</b> · incorpora algo que no se graba: una{' '}
+                  <a onClick={() => go('pegar')}>imagen del portapapeles</a>, una{' '}
+                  <a onClick={() => go('captura')}>captura de pantalla externa</a>, un{' '}
+                  <a onClick={() => go('contenido')}>bloque de contenido</a> o una{' '}
+                  <a onClick={() => go('secciones')}>sección</a>. Lo añadido se coloca detrás de la
+                  tarjeta en la que estés trabajando.
                 </li>
                 <li>
                   <b>✨ Redactar todos</b> · redacta de una vez todos los pasos marcados como
                   <b> incluir en docs</b>.
                 </li>
                 <li>
-                  <b>● ⏸ ■</b> · grabar, pausar/reanudar y detener para guardar.
+                  <b>agrupar seguidos</b> · une automáticamente los controles seguidos del mismo
+                  tipo (los campos de un formulario, las casillas de una columna, las pestañas, los
+                  botones). Ver <a onClick={() => go('agrupar')}>Agrupar pasos</a>.
                 </li>
               </ul>
+              <p>
+                Al marcar la casilla de una tarjeta, esa segunda fila se convierte en la{' '}
+                <b>barra de selección</b> (agrupar, eliminar y cancelar).
+              </p>
               <p>
                 El panel se puede <b>colapsar</b> (ver{' '}
                 <a onClick={() => go('interfaz')}>Panel y tema</a>) para dar todo el ancho al visor.
               </p>
             </section>
 
+            <section id="agrupar" data-help-section>
+              <h3>Agrupar pasos</h3>
+              <p>
+                Un paso del manual no siempre es un clic. Rellenar un formulario, elegir una opción
+                de un desplegable o marcar tres filas de una tabla son, para quien lee, <b>una</b>{' '}
+                sola cosa. Agrupar une varios pasos grabados en uno solo: una captura, un título y
+                la lista de lo que se hizo dentro.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Automático, por tipo de control</b> · con <b>agrupar seguidos</b> marcado, se
+                  funden en un paso los controles <b>seguidos del mismo tipo</b>: los{' '}
+                  <b>campos</b> de un formulario (escribir, elegir en un desplegable o una lista,
+                  marcar una casilla o un interruptor), varias <b>pestañas</b>, o varios{' '}
+                  <b>botones</b> —incluido abrir un menú y elegir su opción, que es un solo paso
+                  para quien lee—.
+                </li>
+                <li>
+                  <b>Al cambiar de tipo empieza un paso nuevo</b> · es lo que conserva el corte
+                  natural del flujo: el <b>Guardar</b> de un formulario sigue teniendo su tarjeta, y
+                  se une al formulario a mano si quieres. Un envío, una tecla y una navegación no se
+                  funden nunca, y tampoco se funde nada a través de una recarga de la página.
+                </li>
+                <li>
+                  <b>Dentro de una tabla</b> · manda dónde está el control. Se funden los de una{' '}
+                  <b>misma fila</b> —un registro que se edita en línea— y los de una{' '}
+                  <b>misma columna</b> en varias filas —marcar la casilla de cinco alumnos es un
+                  paso, no cinco—, y el paso se titula con el encabezado de esa columna. No se
+                  funden dos controles <b>distintos</b> de <b>filas distintas</b>: no son ni la
+                  misma acción ni el mismo registro.
+                </li>
+                <li>
+                  <b>A mano</b> · marca la <b>casilla</b> de cada tarjeta que quieras unir y pulsa{' '}
+                  <b>⊞ Agrupar</b> en la barra de selección. Así se agrupa lo que el automático no
+                  puede adivinar: botones, un selector con su opción, varias filas de una tabla o
+                  una mezcla de todo.
+                </li>
+                <li>
+                  <b>Deben ir seguidos</b> · el grupo se reproduce como una secuencia, así que solo
+                  se agrupan pasos consecutivos. Si no lo están, arrástralos primero para ponerlos
+                  juntos; la barra te dice el motivo cuando el botón no está disponible.
+                </li>
+                <li>
+                  <b>El botón que cierra el formulario</b> · un botón no es un campo, así que
+                  «Guardar» siempre da su propia tarjeta. Márcala junto a la del formulario y
+                  agrúpalas: el paso queda como <i>Rellenar el formulario y pulsar «Guardar»</i>, y
+                  la captura marca el botón y los campos. Igual funciona una fila de una tabla con
+                  un botón de fuera de ella.
+                </li>
+                <li>
+                  <b>La captura</b> · se vuelve a tomar señalando <b>todos</b> los elementos del
+                  grupo a la vez, para que la imagen muestre lo que el paso describe. Los campos que
+                  la aplicación haya vuelto a dibujar (al guardar, al recargar una tabla) se
+                  localizan otra vez por su selector, así que siguen marcados. Si la pantalla ya es
+                  otra, no se rehace: se conserva la captura que el paso traía, que sí muestra lo
+                  que pasó.
+                </li>
+                <li>
+                  <b>Si algo tapa un elemento</b> · con un desplegable o un menú abierto encima, el
+                  motor espera un momento y vuelve a intentarlo, para no documentar campos que no se
+                  ven. Bajo el fondo translúcido de un modal el recuadro le devuelve el brillo; bajo
+                  un panel opaco no lo toca (aclararlo solo lavaba la imagen).
+                </li>
+                <li>
+                  <b>⊟ Deshacer</b> · devuelve cada paso a su sitio con su captura original,
+                  también en las fusiones automáticas. Si antes quitaste algún elemento del grupo
+                  con su ✕, deja de ofrecerse.
+                </li>
+                <li>
+                  <b>El título del grupo</b> · lo pone la app por lo que es («Rellenar el
+                  formulario», «Marcar «Estado» en 3 filas», «Pulsar «Guardar» y «Cerrar»») y deja
+                  de tocarlo en cuanto escribes el tuyo, aunque sigas grabando dentro de ese mismo
+                  paso.
+                </li>
+              </ul>
+              <p>
+                Las <b>capturas externas</b>, las <b>imágenes pegadas</b>, los{' '}
+                <b>bloques de contenido</b> y las <a onClick={() => go('secciones')}>secciones</a> no
+                se agrupan: no son acciones del flujo y no hay nada que reproducir en ellos.
+              </p>
+            </section>
+
+            <section id="secciones" data-help-section>
+              <h3>Secciones</h3>
+              <p>
+                Agrupar une pasos en <b>uno</b>. Una <b>sección</b> hace lo contrario: los deja como
+                están y les pone un <b>apartado</b> encima. Es lo que hace manejable una grabación
+                de treinta pasos, que casi siempre tiene fases («preparación», «registro»,
+                «cierre»).
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Crearla</b> · <b>+ Añadir → ▤ Sección</b>. Se coloca detrás de la tarjeta en la
+                  que estés trabajando, así que marca antes el <b>último paso del apartado
+                  anterior</b>: la sección encabeza lo que viene <i>después</i> de ella. También
+                  puedes arrastrarla a su sitio.
+                </li>
+                <li>
+                  <b>Qué contiene</b> · todos los pasos que van debajo hasta la sección siguiente. El
+                  número junto al título dice cuántos son.
+                </li>
+                <li>
+                  <b>▾ / ▸ Plegar</b> · oculta sus pasos en el panel para trabajar con la lista
+                  completa a la vista. Es solo la vista: lo plegado se guarda y se publica igual, y
+                  si grabas algo que cae dentro, la sección se abre sola.
+                </li>
+                <li>
+                  <b>Arrastrarla</b> · la sección se mueve <b>con sus pasos</b>. Reordenar un
+                  apartado entero es un solo arrastre.
+                </li>
+                <li>
+                  <b>¶ Entradilla</b> · un párrafo opcional que presenta el apartado; se publica
+                  justo debajo de su título.
+                </li>
+                <li>
+                  <b>✕ Quitarla</b> · elimina <b>solo el título</b>: sus pasos se conservan y pasan
+                  al apartado anterior.
+                </li>
+              </ul>
+              <p>
+                <b>En el manual</b> · cada sección sale como encabezado de nivel <code>##</code> y
+                los pasos bajan a <code>###</code>, de modo que el índice lateral de Docusaurus
+                muestra la página por apartados en vez de como una lista plana. La{' '}
+                <b>numeración de los pasos sigue corrida</b> entre apartados (1, 2 · apartado · 3,
+                4…), porque quien ejecuta el proceso cuenta pasos, no capítulos. Una página sin
+                secciones se publica exactamente igual que antes.
+              </p>
+              <p>
+                Las secciones no se numeran, no llevan captura, no entran en{' '}
+                <code>flow.json</code> y <a onClick={() => go('regenerar')}>regenerar capturas</a>{' '}
+                las salta: no hay nada que reproducir en ellas.
+              </p>
+            </section>
+
+            <section id="captura" data-help-section>
+              <h3>Capturas externas</h3>
+              <p>
+                Parte de lo que hay que documentar no está en el navegador: una plantilla de Excel,
+                un PDF, un correo o una ventana de otra aplicación. Con{' '}
+                <b>+ Añadir → 📷 Captura de pantalla</b> se incorpora esa imagen como un paso más
+                del manual.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Elegir la fuente</b> · se listan las <b>pantallas</b> y las <b>ventanas</b>{' '}
+                  abiertas, con su miniatura. También puedes usar una <b>imagen del disco</b> que ya
+                  tuvieras guardada.
+                </li>
+                <li>
+                  <b>ocultar HiDocs</b> · al capturar una pantalla completa la app se aparta para no
+                  salir en la imagen, y vuelve sola.
+                </li>
+                <li>
+                  <b>✂ Recortar</b> · arrastra sobre la imagen la zona que quieres conservar y pulsa{' '}
+                  <b>Aplicar</b>. Casi nunca se documenta la pantalla entera.
+                </li>
+                <li>
+                  <b>▭ Señalar</b> · dibuja un recuadro naranja sobre lo que hay que mirar, el mismo
+                  que la app pone sobre los elementos de la página.
+                </li>
+              </ul>
+              <p>
+                El paso resultante se comporta como cualquier otro: título, descripción, nota,
+                bloque de contenido, orden y publicación. La única diferencia es que{' '}
+                <a onClick={() => go('regenerar')}>regenerar capturas</a> no lo toca: esa imagen no
+                la produce el navegador, así que se conserva tal cual.
+              </p>
+              <p>
+                En <b>macOS</b>, la primera vez hay que autorizar la <b>grabación de pantalla</b> en
+                Ajustes del sistema → Privacidad y seguridad, y reabrir HiDocs.
+              </p>
+              <p>
+                Si la imagen ya la tienes copiada, no hace falta pasar por aquí: ver{' '}
+                <a onClick={() => go('pegar')}>Pegar imágenes y tablas</a>.
+              </p>
+            </section>
+
+            <section id="pegar" data-help-section>
+              <h3>Pegar imágenes y tablas</h3>
+              <p>
+                Documentando, buena parte de lo que hay que dejar dicho <b>ya está copiado</b>: el
+                recorte que acabas de hacer con las teclas del sistema, un diagrama de otra
+                herramienta, la tabla de un correo. Con el panel de pasos enfocado, pulsa <b>⌘V</b>{' '}
+                (Ctrl+V en Windows) y aparece una tarjeta nueva con eso dentro,{' '}
+                <b>justo debajo de la tarjeta en la que estabas trabajando</b>: es el gesto pensado
+                para el flujo real, grabar un paso y pegar acto seguido lo que lo acompaña.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Una imagen</b> · se crea un paso <b>imagen</b> (borde verde). Se comporta como
+                  cualquier otro paso: título, descripción, <a onClick={() => go('notas')}>nota</a>,{' '}
+                  <a onClick={() => go('contenido')}>bloque de contenido</a>, orden y publicación.
+                </li>
+                <li>
+                  <b>Texto o una tabla</b> · se crea un <b>bloque de contenido</b> con el texto ya
+                  convertido a Markdown (las tablas conservan sus columnas).
+                </li>
+                <li>
+                  <b>✂ en la tarjeta</b> · recorta la imagen o señala algo en ella con el recuadro
+                  naranja, cuando haga falta. También puedes pegar y ajustar de una vez con{' '}
+                  <b>+ Añadir → ✂ Pegar y ajustar</b>.
+                </li>
+                <li>
+                  <b>+ Añadir → 📋 Imagen del portapapeles</b> · lo mismo que ⌘V, para cuando
+                  prefieras el ratón.
+                </li>
+              </ul>
+              <p>
+                Dentro de un campo de texto —un título, una descripción, un bloque de contenido— ⌘V
+                sigue pegando texto ahí, como siempre. La tarjeta solo se crea cuando el pegado no
+                tiene otro destino. Y si acabas de usar el visor, haz clic en el panel antes de
+                pegar: el sistema documentado y HiDocs son dos ventanas distintas para el teclado.
+              </p>
+              <p>
+                Las imágenes pegadas <b>no se regeneran</b> (
+                <a onClick={() => go('regenerar')}>Regenerar capturas</a>): no las produce el
+                navegador, así que se conservan tal cual.
+              </p>
+            </section>
+
+            <section id="contenido" data-help-section>
+              <h3>Bloques de contenido</h3>
+              <p>
+                Un manual no son solo capturas: a veces hace falta una <b>tabla</b> con los valores
+                admitidos de un campo, un <b>fragmento de código</b> o una explicación por{' '}
+                <b>pestañas</b> según el rol. El bloque de contenido es donde se escribe eso con la
+                misma sintaxis que entiende Docusaurus, y se ve el resultado al momento.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Dónde</b> · el botón <b>▦</b> de cualquier paso le añade un bloque (se publica
+                  entre la descripción y la captura), y <b>+ Añadir → ▦ Bloque de contenido</b> crea
+                  un paso que es <i>solo</i> contenido, para material que no pertenece a ninguna
+                  acción concreta. Ese paso no consume número de paso en el manual.
+                </li>
+                <li>
+                  <b>Pegar una tabla</b> · copia una tabla del sistema que estás documentando y
+                  pégala en el bloque: se convierte sola a tabla Markdown, con sus columnas.
+                </li>
+                <li>
+                  <b>Barra</b> · inserta tablas, bloques de código con título, pestañas,
+                  desplegables, encabezados, listas, citas, enlaces y formato en línea (incluidas
+                  teclas con <code>&lt;kbd&gt;</code>).
+                </li>
+                <li>
+                  <b>Vista previa</b> · muestra <b>exactamente</b> lo que se va a publicar. Con{' '}
+                  <b>⤢</b> se abre a pantalla completa, con el código y el resultado lado a lado.
+                </li>
+                <li>
+                  <b>Pestañas</b> · si usas <code>&lt;Tabs&gt;</code>, los <code>import</code> que
+                  Docusaurus necesita se añaden solos a la página al guardar.
+                </li>
+              </ul>
+              <p>
+                <b>Nada puede romper el sitio del mantenedor.</b> El texto se sanea antes de
+                publicarse: el Markdown y las etiquetas conocidas y bien cerradas funcionan, y
+                cualquier otra cosa —un <code>&lt;</code> suelto, una etiqueta desconocida o sin
+                cerrar— se publica como texto visible en vez de tumbar la compilación. Cuando eso
+                ocurre, el editor lo avisa debajo de la barra.
+              </p>
+            </section>
+
             <section id="notas" data-help-section>
               <h3>Notas destacadas</h3>
               <p>
-                El botón <b>📝</b> de cada paso abre un recuadro para <b>recalcar algo importante</b>
-                {' '}de ese paso o del grupo. Se publica como un <b>admonition de Docusaurus</b>, el
-                mismo bloque coloreado con icono que ves en la documentación.
+                El botón <b>📝</b> de cada paso abre un recuadro para{' '}
+                <b>recalcar algo importante</b> de ese paso o del grupo. Se publica como un{' '}
+                <b>admonition de Docusaurus</b>, el mismo bloque coloreado con icono que ves en la
+                documentación.
               </p>
               <ul className="help-defs">
                 <li>
@@ -377,8 +679,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 </li>
               </ul>
               <p>
-                La nota aparece en el manual entre la descripción del paso y su captura. Si vacías su
-                contenido, deja de publicarse.
+                La nota aparece en el manual entre la descripción del paso y su captura. Si vacías
+                su contenido, deja de publicarse.
               </p>
             </section>
 
@@ -399,14 +701,14 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>
                 La rama de trabajo es <b>dónde se registrará lo que grabes</b>. Se muestra en la
                 franja de estado y al pulsarla se despliega el selector, que sirve para las dos
-                cosas del día a día: <b>seguir en una rama que ya empezaste</b> o <b>estrenar una</b>
-                .
+                cosas del día a día: <b>seguir en una rama que ya empezaste</b> o{' '}
+                <b>estrenar una</b>.
               </p>
               <ul className="help-defs">
                 <li>
                   <b>Continuar en una rama</b> · elígela de la lista. La app lee la documentación
-                  que esa rama ya tiene commiteada y <b>rellena por ti</b> el módulo, el rol y la URL
-                  base con los que se venía trabajando: no hay que volver a escribir la cabecera
+                  que esa rama ya tiene commiteada y <b>rellena por ti</b> el módulo, el rol y la
+                  URL base con los que se venía trabajando: no hay que volver a escribir la cabecera
                   para acabar donde ya estabas. Solo se rellena lo que esté vacío; lo que tú
                   escribas manda siempre.
                 </li>
@@ -417,9 +719,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   carpeta).
                 </li>
                 <li>
-                  <b>Rama nueva</b> · escribe el nombre (se propone <code>docs/&lt;módulo&gt;</code>)
-                  y elige de qué rama <b>nace</b>. Si el nombre ya existe, se te avisa: el commit se
-                  añadirá encima en vez de crear nada.
+                  <b>Rama nueva</b> · escribe el nombre (se propone <code>docs/&lt;módulo&gt;</code>
+                  ) y elige de qué rama <b>nace</b>. Si el nombre ya existe, se te avisa: el commit
+                  se añadirá encima en vez de crear nada.
                 </li>
               </ul>
               <p>
@@ -430,8 +732,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>
                 Al <b>abrir la app</b>, si el repositorio quedó en una rama de documentación, se
                 retoma sola con sus metadatos (sin activar el registro en Git: eso lo decides tú).
-                La misma rama se puede elegir desde el campo <b>Rama</b> de la sección Git y desde el
-                explorador de <a onClick={() => go('proyectos')}>Proyectos</a>: los tres sitios
+                La misma rama se puede elegir desde el campo <b>Rama</b> de la sección Git y desde
+                el explorador de <a onClick={() => go('proyectos')}>Proyectos</a>: los tres sitios
                 escriben la misma rama de trabajo.
               </p>
             </section>
@@ -471,6 +773,48 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 indexan los archivos que escribe DocRecorder (nunca <code>git add -A</code>), no se
                 cambia de rama arrastrando cambios ajenos, y todo ocurre en local (sin clonar ni
                 crear repositorios).
+              </p>
+            </section>
+
+            <section id="pendiente" data-help-section>
+              <h3>Documentación sin registrar</h3>
+              <p>
+                Guardar escribe el paquete en el disco y, después, hace el commit. Son dos pasos a
+                propósito: si el commit falla —cambios ajenos en el repositorio, una rama que no se
+                puede cambiar— la grabación no se pierde. También puedes guardar con la casilla de
+                Git desmarcada, o cerrar la aplicación antes de commitear.
+              </p>
+              <p>
+                En todos esos casos el proceso queda entero en el disco pero fuera del historial, y
+                el árbol de la rama no lo muestra (solo lee lo commiteado). La franja de estado lo
+                avisa con <b>⚠ N sin registrar</b>: al pulsarlo se listan esos paquetes con su
+                módulo, sus pasos y su carpeta, y de cada uno puedes:
+              </p>
+              <ul className="help-list">
+                <li>
+                  <b>Registrar en docs/&lt;módulo&gt;</b> · comitea la carpeta entera tal como está
+                  (con su <code>img/</code> y los <code>_category_.json</code> que le falten) en la
+                  rama de su módulo. Nunca sube nada a <code>origin</code>.
+                </li>
+                <li>
+                  <b>Retomar sus datos</b> · recupera su módulo, subcategoría, rol y URL base para
+                  seguir documentando ese proceso.
+                </li>
+                <li>
+                  <b>Abrir carpeta</b> · para revisar el paquete en el explorador de archivos.
+                </li>
+                <li>
+                  <b>Descartar</b> · lo contrario de registrar, para lo que no merece entrar en el
+                  historial (una grabación de prueba, un proceso documentado dos veces, un intento a
+                  medias). Lo que Git no conoce se manda a la <b>papelera del sistema</b> —se puede
+                  recuperar desde el escritorio— y lo que ya estaba commiteado <b>vuelve a su
+                  versión del último commit</b>. Se avisa antes de tocar nada y nunca sale de la
+                  carpeta de ese paquete: el historial y el resto del repositorio no se tocan.
+                </li>
+              </ul>
+              <p>
+                También aparece un paquete <b>ya commiteado y cambiado después</b> en el disco: es la
+                señal de que hay una regeneración de capturas o una edición a mano sin registrar.
               </p>
             </section>
 
@@ -541,6 +885,22 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   checkout. Útil para revisar hasta dónde llegaste en una rama.
                 </li>
                 <li>
+                  <b>✎ Editar esta documentación</b>, en esa misma vista previa: trae los pasos y
+                  sus capturas al panel para corregirlos como una grabación normal (reordenar,
+                  redactar con IA, añadir pasos o secciones). Al guardar se reescribe{' '}
+                  <b>la misma carpeta</b> y el commit nuevo se apila <b>en la rama del commit</b>: el
+                  original no se toca, el historial sigue contando lo que pasó. Si tienes una
+                  grabación a medias, se avisa antes de sustituirla.
+                </li>
+                <li>
+                  <b>Y se puede cancelar.</b> Mientras editas, el panel lleva arriba una franja que
+                  dice <b>qué</b> estás editando, de qué commit salió y <b>dónde</b> se registrará,
+                  con el botón <b>Descartar la edición</b>: vacía el panel y deja lo publicado como
+                  está, sin registrar nada (cargarlo solo leyó de Git). Es la salida cuando abres
+                  algo para mirarlo y decides no tocarlo: sin ella, la única a la vista sería ■, que
+                  guarda y comitea.
+                </li>
+                <li>
                   «Quitar de la lista» olvida la entrada del registro, sin tocar el repositorio en
                   disco.
                 </li>
@@ -570,9 +930,12 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </ol>
               <p>
                 Si un paso ya no encuentra su elemento, se <b>marca como fallido</b> (conserva su
-                captura anterior) y el runner sigue con el resto. Al final, un informe indica qué
-                pasos se actualizaron y cuáles hay que revisar. Las capturas se sobrescriben en
-                disco; tú revisas y comiteas con el flujo de Git normal.
+                captura anterior) y el runner sigue con el resto. Las{' '}
+                <a onClick={() => go('captura')}>capturas externas</a> y los{' '}
+                <a onClick={() => go('contenido')}>bloques de contenido</a> se <b>saltan</b>: no
+                salen del navegador y no hay nada que reproducir en ellos. Al final, un informe
+                indica qué pasos se actualizaron y cuáles hay que revisar. Las capturas se
+                sobrescriben en disco; tú revisas y comiteas con el flujo de Git normal.
               </p>
             </section>
 
@@ -598,6 +961,20 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   guarda en la documentación hasta que pulsas <b>Detener y guardar</b>.
                 </li>
               </ol>
+              <p>
+                <b>Contexto (▢ Contexto)</b> · la IA ve la captura, pero no sabe cómo se llaman de
+                verdad los campos, qué valida cada uno ni qué significa un código de la tabla. Pega
+                ahí ese material —la tabla de campos, el texto de la especificación, un fragmento de
+                código o SQL— y viajará como referencia con cada redacción. No se publica en el
+                manual ni se guarda en el paquete: se conserva con el borrador y sigue puesto en la
+                grabación siguiente, que es lo normal cuando documentas varios procesos del mismo
+                módulo.
+              </p>
+              <p>
+                <b>Si la clave da un error raro</b> · el campo de la clave está enmascarado, así que
+                un pegado equivocado no se ve. La aplicación rechaza lo que no puede ser una clave
+                (espacios, acentos, emojis o un texto larguísimo) en el momento de guardarla.
+              </p>
               <p>
                 <b>Dónde va la clave</b> · se guarda cifrada por el sistema operativo en la carpeta
                 de datos de la aplicación, nunca en el repositorio de documentación, y no sale del
@@ -636,6 +1013,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <ul className="help-defs">
                 <li>
                   <b>Ctrl/Cmd + Shift + R</b> · pausar o reanudar la grabación sin volver al panel.
+                </li>
+                <li>
+                  <b>Ctrl/Cmd + V</b> · con el panel de pasos enfocado, crea una tarjeta con lo que
+                  tengas copiado (ver <a onClick={() => go('pegar')}>Pegar imágenes y tablas</a>).
                 </li>
                 <li>
                   <b>Esc</b> · cerrar esta ayuda, el explorador o un diálogo abierto.
