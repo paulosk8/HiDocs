@@ -186,13 +186,24 @@ export function GroupCard({
             value={step.content ?? ''}
             onChange={(content) => updateStep(step.id, { content })}
             onExpand={() => setWideContentId(step.id)}
+            onRemove={() => {
+              updateStep(step.id, { content: '' })
+              setContentOpen(false)
+            }}
           />
         </div>
       )}
 
       {noteOpen && (
         <div className="step-note">
-          <NoteEditor value={step.note} onChange={(note) => updateStep(step.id, { note })} />
+          <NoteEditor
+            value={step.note}
+            onChange={(note) => updateStep(step.id, { note })}
+            onRemove={() => {
+              updateStep(step.id, { note: undefined })
+              setNoteOpen(false)
+            }}
+          />
         </div>
       )}
 

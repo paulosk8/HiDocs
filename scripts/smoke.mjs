@@ -2810,6 +2810,44 @@ try {
   )
   check(true, 'Pegar: «+ Añadir → Imagen del portapapeles» lee el portapapeles del sistema')
 
+  // --- Quitar la nota y el bloque de contenido de un paso ---
+  //
+  // ▦ y 📝 solo abren y cierran su editor: sin un «quitar» de verdad, lo escrito
+  // por error se seguía publicando y la única salida era vaciar el texto a mano.
+  // Se comprueba en la tarjeta y, más abajo, en el manual publicado.
+  const removable = gui
+    .locator('.step-card:not(.kind-content):not(.kind-image):not(.kind-capture)')
+    .first()
+  await removable.locator('.note-btn').click()
+  await removable.locator('.note-body').fill('Nota que se va a quitar.')
+  await removable.locator('.content-btn').click()
+  await removable.locator('.content-body').fill('Bloque que se va a quitar.')
+  await removable.locator('.note-btn.has-note').waitFor({ timeout: 5000 })
+  await removable.locator('.content-btn.has-content').waitFor({ timeout: 5000 })
+  check(true, 'Quitar: un paso admite a la vez nota y bloque de contenido')
+
+  // Con texto escrito, el 🗑 pregunta antes: la confirmación es EN LÍNEA porque
+  // el visor nativo taparía cualquier diálogo que no lance el panel.
+  await removable.locator('.step-note .editor-remove').click()
+  await removable.locator('.step-note .editor-remove-confirm button.danger').click()
+  await removable.locator('.step-content .editor-remove').click()
+  await removable.locator('.step-content .editor-remove-confirm button.danger').click()
+  const cleaned = await gui.evaluate(() => {
+    const card = document.querySelector(
+      '.step-card:not(.kind-content):not(.kind-image):not(.kind-capture)'
+    )
+    return {
+      note: !!card.querySelector('.note-editor'),
+      content: !!card.querySelector('.content-editor'),
+      marked: !!card.querySelector('.has-note, .has-content')
+    }
+  })
+  check(
+    !cleaned.note && !cleaned.content && !cleaned.marked,
+    'Quitar: 🗑 quita la nota y el bloque, cierra su editor y apaga su marca en la cabecera',
+    JSON.stringify(cleaned)
+  )
+
   // Guardado: el MDX debe llevar tabla, código, pestañas (con sus imports), la
   // captura externa y las imágenes pegadas, y NO numerar el bloque de contenido
   // como un paso más.
@@ -2857,6 +2895,10 @@ try {
   const extrasSession = JSON.parse(readFileSync(join(extrasDir, 'session.json'), 'utf8'))
   const extrasFlow = JSON.parse(readFileSync(join(extrasDir, 'flow.json'), 'utf8'))
 
+  check(
+    !/se va a quitar/i.test(extrasMdx) && !JSON.stringify(extrasSession).includes('se va a quitar'),
+    'Quitar: lo quitado no llega al manual ni al paquete'
+  )
   check(
     /\| Estado \| Significado \| Editable \|/.test(extrasMdx) &&
       /\| Activa \| La matrícula está vigente \| Sí \|/.test(extrasMdx),

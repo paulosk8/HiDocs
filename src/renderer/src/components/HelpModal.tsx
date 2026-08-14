@@ -699,6 +699,13 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>Pestañas</b> · si usas <code>&lt;Tabs&gt;</code>, los <code>import</code> que
                   Docusaurus necesita se añaden solos a la página al guardar.
                 </li>
+                <li>
+                  <b>🗑 Quitarlo</b> · el <b>▦</b> de la cabecera solo <i>abre y cierra</i> el
+                  editor: lo escrito sigue ahí (y se publica) aunque lo cierres. Para deshacerte del
+                  bloque usa el <b>🗑</b> del final de su barra, que pregunta antes si tiene texto.
+                  En un paso que <i>es</i> el bloque, quitarlo sería eliminar el paso: para eso está
+                  su <b>✕</b>.
+                </li>
               </ul>
               <p>
                 <b>Nada puede romper el sitio del mantenedor.</b> El texto se sanea antes de
@@ -734,6 +741,12 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 </li>
                 <li>
                   <b>Vista previa</b> · muestra en vivo cómo quedará el recuadro.
+                </li>
+                <li>
+                  <b>🗑 Quitarla</b> · el <b>📝</b> de la cabecera solo <i>abre y cierra</i> el
+                  editor: la nota sigue ahí (y se publica) aunque lo cierres. Para deshacerte de
+                  ella usa el <b>🗑</b> de la fila de tipos, que pregunta antes si ya has escrito
+                  algo.
                 </li>
               </ul>
               <p>

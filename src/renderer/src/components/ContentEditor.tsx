@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { analyzeContent } from '../../../shared/mdx-content'
 import { htmlToMarkdown } from '../html-to-markdown'
 import { renderMarkdown } from '../markdown'
@@ -25,6 +25,15 @@ interface Props {
   wide?: boolean
   /** abre el editor a pantalla completa; ausente si ya lo está */
   onExpand?: () => void
+  /**
+   * Quita el bloque del paso (no solo cierra el editor). Ausente cuando el paso
+   * ES el bloque: ahí quitarlo sería eliminar el paso, y para eso está su ✕.
+   *
+   * Existe porque ▦ solo abre y cierra: cerrarlo dejaba el bloque escrito —y
+   * publicándose en el manual— sin ninguna forma visible de deshacerse de él que
+   * no fuera seleccionar todo el texto y borrarlo a mano.
+   */
+  onRemove?: () => void
   autoFocus?: boolean
 }
 
@@ -64,9 +73,14 @@ export function ContentEditor({
   onChange,
   wide = false,
   onExpand,
+  onRemove,
   autoFocus = false
 }: Props): React.JSX.Element {
   const bodyRef = useRef<HTMLTextAreaElement>(null)
+  // La confirmación es EN LÍNEA, no un diálogo: el visor nativo se pinta por
+  // encima del HTML y una superposición lanzada desde una tarjeta quedaría
+  // tapada (el panel solo sabe ocultarlo para sus propios diálogos).
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   const { issues } = useMemo(() => analyzeContent(value), [value])
   const previewHtml = useMemo(
@@ -193,6 +207,37 @@ export function ContentEditor({
           ⤢
         </button>
       )}
+      {onRemove &&
+        (confirmRemove ? (
+          <span className="editor-remove-confirm">
+            ¿Quitar el bloque?
+            <button
+              type="button"
+              className="danger"
+              onClick={() => {
+                setConfirmRemove(false)
+                onRemove()
+              }}
+            >
+              Quitar
+            </button>
+            <button type="button" onClick={() => setConfirmRemove(false)}>
+              Cancelar
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            className="editor-remove"
+            title="Quitar el bloque de contenido de este paso"
+            aria-label="Quitar el bloque de contenido"
+            // Vacío no hay nada que perder, así que no se pregunta: preguntar por
+            // todo enseña a decir que sí sin leer.
+            onClick={() => (value.trim() ? setConfirmRemove(true) : onRemove())}
+          >
+            🗑
+          </button>
+        ))}
     </div>
   )
 

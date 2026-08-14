@@ -294,13 +294,30 @@ export function StepCard({
             value={step.content ?? ''}
             onChange={setContent}
             onExpand={() => setWideContentId(step.id)}
+            // En un paso que ES el bloque, quitarlo sería eliminar el paso: para
+            // eso está su ✕, y ofrecer las dos cosas solo confundiría.
+            onRemove={
+              isContent
+                ? undefined
+                : () => {
+                    updateStep(step.id, { content: '' })
+                    setContentOpen(false)
+                  }
+            }
           />
         </div>
       )}
 
       {noteOpen && (
         <div className="step-note">
-          <NoteEditor value={step.note} onChange={(note) => updateStep(step.id, { note })} />
+          <NoteEditor
+            value={step.note}
+            onChange={(note) => updateStep(step.id, { note })}
+            onRemove={() => {
+              updateStep(step.id, { note: undefined })
+              setNoteOpen(false)
+            }}
+          />
         </div>
       )}
 

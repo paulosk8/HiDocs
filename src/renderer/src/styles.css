@@ -2473,6 +2473,63 @@ select {
   margin: 0 2px;
 }
 
+/* ─── Quitar el bloque de contenido o la nota ────────────────────────────── */
+
+/* ▦ y 📝 solo abren y cierran, así que quitar de verdad lo escrito vive DENTRO
+   del editor, a la derecha de su barra. La confirmación es en línea: el visor
+   nativo se pinta sobre el HTML y taparía cualquier diálogo que no lance el
+   panel. */
+.editor-remove {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 4px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.editor-remove:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+/* Con el botón de «editar en grande» delante, es él quien se lleva el hueco. */
+.content-toolbar .content-expand ~ .editor-remove,
+.content-toolbar .content-expand ~ .editor-remove-confirm {
+  margin-left: 0;
+}
+
+.editor-remove-confirm {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.editor-remove-confirm button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 4px;
+  height: 22px;
+  padding: 0 8px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.editor-remove-confirm button.danger {
+  color: var(--danger);
+  border-color: var(--danger-border);
+  background: var(--danger-bg);
+}
+
 .content-body {
   width: 100%;
   resize: vertical;

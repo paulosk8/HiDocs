@@ -12,12 +12,15 @@ export function ContentModal({
   title,
   value,
   onChange,
-  onClose
+  onClose,
+  onRemove
 }: {
   title: string
   value: string
   onChange: (value: string) => void
   onClose: () => void
+  /** quita el bloque del paso y cierra; ausente si el paso ES el bloque */
+  onRemove?: () => void
 }): React.JSX.Element {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -31,7 +34,7 @@ export function ContentModal({
     <div className="overlay" onClick={onClose}>
       <div className="dialog content-dialog" onClick={(e) => e.stopPropagation()}>
         <h3>Bloque de contenido{title ? ` · ${title}` : ''}</h3>
-        <ContentEditor value={value} onChange={onChange} wide autoFocus />
+        <ContentEditor value={value} onChange={onChange} wide autoFocus onRemove={onRemove} />
         <div className="dialog-actions">
           <button className="btn primary" onClick={onClose}>
             Listo

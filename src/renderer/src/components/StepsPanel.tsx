@@ -546,6 +546,15 @@ export function StepsPanel(): React.JSX.Element {
           value={wideStep.content ?? ''}
           onChange={(content) => updateStep(wideStep.id, { content })}
           onClose={() => setWideContentId(null)}
+          // En un paso que ES el bloque, quitarlo sería eliminar el paso.
+          onRemove={
+            wideStep.kind === 'content'
+              ? undefined
+              : () => {
+                  updateStep(wideStep.id, { content: '' })
+                  setWideContentId(null)
+                }
+          }
         />
       )}
 
