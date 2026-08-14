@@ -13,8 +13,7 @@ import type { AiStepDraft } from '../../shared/types'
  * propia forma (bloques de contenido en Claude, `parts` en Gemini).
  */
 export type PromptPart =
-  | { kind: 'text'; text: string }
-  | { kind: 'image'; base64: string; mediaType: string }
+  { kind: 'text'; text: string } | { kind: 'image'; base64: string; mediaType: string }
 
 export const SYSTEM_PROMPT = `Eres redactor técnico de manuales de usuario. Documentas, paso a paso, cómo se
 usa un sistema web interno. Otra persona ha grabado su propia interacción con el
@@ -44,7 +43,9 @@ const ACTION_LABEL: Record<string, string> = {
   navigate: 'navegar a otra pantalla',
   capture: 'captura de una pantalla ajena al navegador',
   image: 'imagen traída de fuera (pegada del portapapeles)',
-  content: 'bloque de contenido escrito a mano'
+  content: 'bloque de contenido escrito a mano',
+  section: 'título de un apartado del manual',
+  group: 'carpeta que reúne varias capturas en un solo paso'
 }
 
 /**
@@ -133,6 +134,13 @@ export function stepText(step: AiStepInput): string {
       'verbos en imperativo) y usa la descripción para presentar en una frase qué',
       'se consigue en ese apartado.'
     )
+  } else if (step.kind === 'group') {
+    lines.push(
+      'Este paso reúne VARIAS capturas que cuentan una sola cosa (las pantallas de',
+      'un asistente, la misma acción en dos sitios, lo que se ve antes y después).',
+      'Titúlalo por lo que se consigue en conjunto, no por una de las capturas, y',
+      'usa la descripción para decir qué se hace a lo largo de ellas.'
+    )
   } else if (step.kind === 'content') {
     lines.push(
       'Este paso NO es una interacción: es material de apoyo del manual (una tabla,',
@@ -204,11 +212,12 @@ export function parseDrafts(raw: string, allowedIds: string[]): AiStepDraft[] {
   const allowed = new Set(allowedIds)
   // La salida estructurada ya viene en JSON puro, pero un modelo puede envolverla
   // en un bloque de código; quitarlo sale gratis y evita un fallo tonto.
-  const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/```$/, '')
+  const text = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```$/, '')
   const parsed: unknown = JSON.parse(text)
-  const list = Array.isArray(parsed)
-    ? parsed
-    : ((parsed as { steps?: unknown })?.steps ?? [])
+  const list = Array.isArray(parsed) ? parsed : ((parsed as { steps?: unknown })?.steps ?? [])
   if (!Array.isArray(list)) return []
 
   const seen = new Set<string>()

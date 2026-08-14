@@ -154,7 +154,9 @@ export async function regenerateSession(
               ? 'Imagen pegada: se conserva tal cual.'
               : step.kind === 'section'
                 ? 'Separador de sección: no hay nada que reproducir.'
-                : 'Bloque de contenido: no tiene captura que regenerar.'
+                : step.kind === 'group'
+                  ? 'Carpeta de capturas: sus imágenes son las de los pasos que contiene.'
+                  : 'Bloque de contenido: no tiene captura que regenerar.'
       }
       results.push(skipped)
       onProgress?.(skipped)

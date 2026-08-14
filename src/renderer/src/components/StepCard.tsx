@@ -32,12 +32,27 @@ interface Props {
   step: RecordedStep
   /** el paso cuelga de una sección: se sangra para que se vea de quién es */
   nested?: boolean
+  /**
+   * Lo que se muestra en la chapa del paso. Normalmente su número; dentro de una
+   * carpeta, «5·2», porque el paso del manual es la carpeta y esta captura es la
+   * segunda de las suyas.
+   */
+  badge?: string
+  /** el paso está dentro de una carpeta de capturas */
+  inGroup?: boolean
   onOpenShot: (step: RecordedStep) => void
   /** abre el editor de recorte y resaltado sobre la imagen que ya tiene el paso */
   onAdjustImage: (step: RecordedStep) => void
 }
 
-export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): React.JSX.Element {
+export function StepCard({
+  step,
+  nested,
+  badge,
+  inGroup,
+  onOpenShot,
+  onAdjustImage
+}: Props): React.JSX.Element {
   const updateStep = useSession((s) => s.updateStep)
   const removeStep = useSession((s) => s.removeStep)
   const focusStepId = useSession((s) => s.focusStepId)
@@ -49,8 +64,12 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
   const selected = useSession((s) => s.selectedIds.includes(step.id))
   const toggleSelect = useSession((s) => s.toggleSelect)
   const setWideContentId = useSession((s) => s.setWideContentId)
+  const removeFromGroup = useSession((s) => s.removeFromGroup)
   const { draft } = useAiDraft()
   const recaptureGroup = useGroupCapture()
+
+  /** Cómo se nombra este paso en los textos de ayuda y en las etiquetas ARIA. */
+  const label = badge ?? String(step.order)
 
   const titleRef = useRef<HTMLInputElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
@@ -107,7 +126,7 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
       className={
         `step-card kind-${step.kind ?? 'interaction'}` +
         `${isDragging ? ' dragging' : ''}${step.includeInDocs ? '' : ' excluded'}` +
-        `${selected ? ' selected' : ''}${nested ? ' nested' : ''}`
+        `${selected ? ' selected' : ''}${nested ? ' nested' : ''}${inGroup ? ' in-group' : ''}`
       }
       style={{ transform: CSS.Transform.toString(transform), transition }}
       // Tocar una tarjeta la convierte en el punto de trabajo: lo siguiente que se
@@ -121,7 +140,7 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
           className="step-select"
           checked={selected}
           title="Marcar para agrupar con otros pasos"
-          aria-label={`Marcar el paso ${step.order}`}
+          aria-label={`Marcar el paso ${label}`}
           onChange={() => toggleSelect(step.id)}
         />
         <button
@@ -132,13 +151,13 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
         >
           ⠿
         </button>
-        <span className="step-badge">{step.order}</span>
+        <span className="step-badge">{label}</span>
         <span className="action-chip">{ACTION_LABEL[step.action] ?? step.action}</span>
         <button
           className="icon-btn ai-btn"
           disabled={aiBusy}
           title="Redactar el título y la descripción de este paso con IA"
-          aria-label={`Redactar el paso ${step.order} con IA`}
+          aria-label={`Redactar el paso ${label} con IA`}
           onClick={() => void draft([step.id])}
         >
           {aiBusy ? '⋯' : '✨'}
@@ -150,7 +169,7 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
           <button
             className="icon-btn"
             title="Recortar la imagen o señalar algo en ella"
-            aria-label={`Ajustar la imagen del paso ${step.order}`}
+            aria-label={`Ajustar la imagen del paso ${label}`}
             onClick={() => onAdjustImage(step)}
           >
             ✂
@@ -160,7 +179,7 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
           <button
             className={`icon-btn content-btn${step.content?.trim() ? ' has-content' : ''}`}
             title="Añadir una tabla, un bloque de código u otro contenido de Docusaurus"
-            aria-label={`Bloque de contenido del paso ${step.order}`}
+            aria-label={`Bloque de contenido del paso ${label}`}
             aria-pressed={contentOpen}
             onClick={() => setContentOpen((v) => !v)}
           >
@@ -170,17 +189,27 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
         <button
           className={`icon-btn note-btn${step.note?.body.trim() ? ' has-note' : ''}`}
           title="Añadir una nota destacada (admonition de Docusaurus)"
-          aria-label={`Nota del paso ${step.order}`}
+          aria-label={`Nota del paso ${label}`}
           aria-pressed={noteOpen}
           onClick={() => setNoteOpen((v) => !v)}
         >
           📝
         </button>
+        {inGroup && (
+          <button
+            className="icon-btn"
+            title="Sacar esta captura de la carpeta (vuelve a ser un paso suelto)"
+            aria-label={`Sacar el paso ${label} de la carpeta`}
+            onClick={() => removeFromGroup(step.id)}
+          >
+            ⤴
+          </button>
+        )}
         {step.groupSources?.length ? (
           <button
             className="icon-btn"
             title="Deshacer la agrupación y devolver cada paso a su sitio"
-            aria-label={`Deshacer la agrupación del paso ${step.order}`}
+            aria-label={`Deshacer la agrupación del paso ${label}`}
             onClick={() => ungroupStep(step.id)}
           >
             ⊟
@@ -203,7 +232,7 @@ export function StepCard({ step, nested, onOpenShot, onAdjustImage }: Props): Re
               title="Ver la captura a tamaño real"
               onClick={() => onOpenShot(step)}
             >
-              <img src={shotUrl(step.tempFile)} alt={`Captura del paso ${step.order}`} />
+              <img src={shotUrl(step.tempFile)} alt={`Captura del paso ${label}`} />
             </button>
           ) : (
             <span className="thumb empty">sin captura</span>

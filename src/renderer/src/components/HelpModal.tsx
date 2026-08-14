@@ -17,6 +17,7 @@ const SECTIONS = [
   { id: 'grabar', label: 'Grabar pasos' },
   { id: 'pasos', label: 'Panel de pasos' },
   { id: 'agrupar', label: 'Agrupar pasos' },
+  { id: 'carpetas', label: 'Carpetas de capturas' },
   { id: 'secciones', label: 'Secciones' },
   { id: 'captura', label: 'Capturas externas' },
   { id: 'pegar', label: 'Pegar imágenes y tablas' },
@@ -400,11 +401,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <ul className="help-defs">
                 <li>
                   <b>Automático, por tipo de control</b> · con <b>agrupar seguidos</b> marcado, se
-                  funden en un paso los controles <b>seguidos del mismo tipo</b>: los{' '}
-                  <b>campos</b> de un formulario (escribir, elegir en un desplegable o una lista,
-                  marcar una casilla o un interruptor), varias <b>pestañas</b>, o varios{' '}
-                  <b>botones</b> —incluido abrir un menú y elegir su opción, que es un solo paso
-                  para quien lee—.
+                  funden en un paso los controles <b>seguidos del mismo tipo</b>: los <b>campos</b>{' '}
+                  de un formulario (escribir, elegir en un desplegable o una lista, marcar una
+                  casilla o un interruptor), varias <b>pestañas</b>, o varios <b>botones</b>{' '}
+                  —incluido abrir un menú y elegir su opción, que es un solo paso para quien lee—.
                 </li>
                 <li>
                   <b>Al cambiar de tipo empieza un paso nuevo</b> · es lo que conserva el corte
@@ -453,9 +453,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   un panel opaco no lo toca (aclararlo solo lavaba la imagen).
                 </li>
                 <li>
-                  <b>⊟ Deshacer</b> · devuelve cada paso a su sitio con su captura original,
-                  también en las fusiones automáticas. Si antes quitaste algún elemento del grupo
-                  con su ✕, deja de ofrecerse.
+                  <b>⊟ Deshacer</b> · devuelve cada paso a su sitio con su captura original, también
+                  en las fusiones automáticas. Si antes quitaste algún elemento del grupo con su ✕,
+                  deja de ofrecerse.
                 </li>
                 <li>
                   <b>El título del grupo</b> · lo pone la app por lo que es («Rellenar el
@@ -466,8 +466,66 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </ul>
               <p>
                 Las <b>capturas externas</b>, las <b>imágenes pegadas</b>, los{' '}
-                <b>bloques de contenido</b> y las <a onClick={() => go('secciones')}>secciones</a> no
-                se agrupan: no son acciones del flujo y no hay nada que reproducir en ellos.
+                <b>bloques de contenido</b> y las <a onClick={() => go('secciones')}>secciones</a>{' '}
+                no se agrupan: no son acciones del flujo y no hay nada que reproducir en ellos. Para
+                juntar <i>capturas</i> —y no acciones— están las{' '}
+                <a onClick={() => go('carpetas')}>carpetas de capturas</a>.
+              </p>
+            </section>
+
+            <section id="carpetas" data-help-section>
+              <h3>Carpetas de capturas</h3>
+              <p>
+                A veces un paso del manual necesita <b>varias imágenes</b>: las tres pantallas de un
+                asistente, lo que se ve antes y después de guardar, o la pantalla del sistema junto
+                al correo que llega. <a onClick={() => go('agrupar')}>Agrupar</a> no sirve para eso
+                —funde acciones y deja <b>una</b> captura, y además exige pasos seguidos del flujo—.
+                Una <b>carpeta</b> sí: es un paso del manual con todas sus capturas dentro.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Crearla</b> · <b>+ Añadir → 📁 Carpeta de capturas</b>. Aparece vacía, con su
+                  título y una zona donde soltar tarjetas.
+                </li>
+                <li>
+                  <b>Llenarla</b> · <b>arrastra la tarjeta</b> por su asa (⠿) y suéltala{' '}
+                  <b>dentro de la zona</b> de la carpeta. Vale cualquier tarjeta: un paso grabado,
+                  una captura externa, una imagen pegada o un bloque de contenido, esté donde esté
+                  de la lista. Lo que añadas mientras trabajas dentro de la carpeta (pegar una
+                  imagen, capturar una ventana) entra directamente en ella.
+                </li>
+                <li>
+                  <b>Sacarla</b> · el botón <b>⤴</b> de la tarjeta la deja suelta detrás de la
+                  carpeta; arrastrarla fuera del bloque hace lo mismo.
+                </li>
+                <li>
+                  <b>Dentro se sigue trabajando igual</b> · cada captura conserva su título (que se
+                  publica como <b>pie</b> de la imagen), su descripción, su ✂ recorte, su nota y su
+                  bloque de contenido. Se numeran <code>5·1</code>, <code>5·2</code>… porque el paso
+                  del manual es la carpeta.
+                </li>
+                <li>
+                  <b>▾ / ▸ Plegar</b> · la carpeta plegada enseña sus capturas en miniatura, en una
+                  fila. Es solo la vista.
+                </li>
+                <li>
+                  <b>Arrastrarla</b> · la carpeta se mueve <b>con sus capturas</b>.
+                </li>
+                <li>
+                  <b>✕ Quitarla</b> · elimina <b>solo la carpeta</b>: sus capturas se conservan y
+                  vuelven a ser pasos sueltos.
+                </li>
+              </ul>
+              <p>
+                <b>En el manual</b> · la carpeta es un paso numerado con su título y su descripción,
+                y debajo van sus imágenes en orden, cada una con su pie. Las capturas no se numeran
+                por separado: dirían que hay que hacer cuatro cosas donde solo se describe una.
+              </p>
+              <p>
+                La carpeta no tiene captura propia ni entra en <code>flow.json</code>, pero{' '}
+                <b>lo que hay dentro sí conserva lo suyo</b>: un paso grabado metido en una carpeta
+                se sigue reproduciendo y <a onClick={() => go('regenerar')}>regenerando</a> como
+                cualquier otro.
               </p>
             </section>
 
@@ -482,13 +540,13 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <ul className="help-defs">
                 <li>
                   <b>Crearla</b> · <b>+ Añadir → ▤ Sección</b>. Se coloca detrás de la tarjeta en la
-                  que estés trabajando, así que marca antes el <b>último paso del apartado
-                  anterior</b>: la sección encabeza lo que viene <i>después</i> de ella. También
-                  puedes arrastrarla a su sitio.
+                  que estés trabajando, así que marca antes el{' '}
+                  <b>último paso del apartado anterior</b>: la sección encabeza lo que viene{' '}
+                  <i>después</i> de ella. También puedes arrastrarla a su sitio.
                 </li>
                 <li>
-                  <b>Qué contiene</b> · todos los pasos que van debajo hasta la sección siguiente. El
-                  número junto al título dice cuántos son.
+                  <b>Qué contiene</b> · todos los pasos que van debajo hasta la sección siguiente.
+                  El número junto al título dice cuántos son.
                 </li>
                 <li>
                   <b>▾ / ▸ Plegar</b> · oculta sus pasos en el panel para trabajar con la lista
@@ -517,9 +575,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 secciones se publica exactamente igual que antes.
               </p>
               <p>
-                Las secciones no se numeran, no llevan captura, no entran en{' '}
-                <code>flow.json</code> y <a onClick={() => go('regenerar')}>regenerar capturas</a>{' '}
-                las salta: no hay nada que reproducir en ellas.
+                Las secciones no se numeran, no llevan captura, no entran en <code>flow.json</code>{' '}
+                y <a onClick={() => go('regenerar')}>regenerar capturas</a> las salta: no hay nada
+                que reproducir en ellas.
               </p>
             </section>
 
@@ -807,14 +865,15 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>Descartar</b> · lo contrario de registrar, para lo que no merece entrar en el
                   historial (una grabación de prueba, un proceso documentado dos veces, un intento a
                   medias). Lo que Git no conoce se manda a la <b>papelera del sistema</b> —se puede
-                  recuperar desde el escritorio— y lo que ya estaba commiteado <b>vuelve a su
-                  versión del último commit</b>. Se avisa antes de tocar nada y nunca sale de la
-                  carpeta de ese paquete: el historial y el resto del repositorio no se tocan.
+                  recuperar desde el escritorio— y lo que ya estaba commiteado{' '}
+                  <b>vuelve a su versión del último commit</b>. Se avisa antes de tocar nada y nunca
+                  sale de la carpeta de ese paquete: el historial y el resto del repositorio no se
+                  tocan.
                 </li>
               </ul>
               <p>
-                También aparece un paquete <b>ya commiteado y cambiado después</b> en el disco: es la
-                señal de que hay una regeneración de capturas o una edición a mano sin registrar.
+                También aparece un paquete <b>ya commiteado y cambiado después</b> en el disco: es
+                la señal de que hay una regeneración de capturas o una edición a mano sin registrar.
               </p>
             </section>
 
@@ -888,8 +947,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>✎ Editar esta documentación</b>, en esa misma vista previa: trae los pasos y
                   sus capturas al panel para corregirlos como una grabación normal (reordenar,
                   redactar con IA, añadir pasos o secciones). Al guardar se reescribe{' '}
-                  <b>la misma carpeta</b> y el commit nuevo se apila <b>en la rama del commit</b>: el
-                  original no se toca, el historial sigue contando lo que pasó. Si tienes una
+                  <b>la misma carpeta</b> y el commit nuevo se apila <b>en la rama del commit</b>:
+                  el original no se toca, el historial sigue contando lo que pasó. Si tienes una
                   grabación a medias, se avisa antes de sustituirla.
                 </li>
                 <li>
@@ -966,9 +1025,15 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 verdad los campos, qué valida cada uno ni qué significa un código de la tabla. Pega
                 ahí ese material —la tabla de campos, el texto de la especificación, un fragmento de
                 código o SQL— y viajará como referencia con cada redacción. No se publica en el
-                manual ni se guarda en el paquete: se conserva con el borrador y sigue puesto en la
-                grabación siguiente, que es lo normal cuando documentas varios procesos del mismo
-                módulo.
+                manual ni se guarda en el paquete: se conserva con el borrador, así que sobrevive a
+                cerrar la aplicación.
+              </p>
+              <p>
+                <b>Al terminar una guía se te pregunta qué hacer con él</b> · conservarlo es lo
+                normal cuando documentas varios procesos del <b>mismo módulo</b>; vacíalo si el
+                siguiente es de otra cosa, porque si no la IA redactaría la guía nueva con los
+                nombres y las reglas de la anterior sin que se note. También puedes vaciarlo cuando
+                quieras con <b>Quitar el contexto</b>, dentro de <b>▢ Contexto</b>.
               </p>
               <p>
                 <b>Si la clave da un error raro</b> · el campo de la clave está enmascarado, así que

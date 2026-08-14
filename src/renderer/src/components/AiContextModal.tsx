@@ -11,9 +11,10 @@ import { useSession } from '../store'
  * petición de redacción.
  *
  * No se publica en el manual ni entra en `session.json`: es contexto para
- * redactar. Se guarda con el borrador, así que sobrevive a cerrar la app y sigue
- * puesto en la grabación siguiente, que es lo normal cuando se documentan varios
- * procesos del mismo módulo.
+ * redactar. Se guarda con el borrador, así que sobrevive a cerrar la app. Al
+ * terminar una guía la app pregunta si sigue valiendo: conservarlo es lo normal
+ * documentando varios procesos del mismo módulo, y un estorbo si el siguiente es
+ * de otra cosa (la IA redactaría con los nombres del anterior sin que se note).
  */
 
 /** Mismo tope que aplica el proceso principal al armar el prompt. */
@@ -52,8 +53,8 @@ export function AiContextModal({ onClose }: { onClose: () => void }): React.JSX.
         <div className="ai-body">
           <p className="ai-intro">
             Pega aquí lo que la IA no puede deducir de la captura: los nombres oficiales de los
-            campos, las reglas del proceso, un fragmento de código o el texto de la
-            especificación. Se envía como referencia con cada redacción, junto a los pasos.
+            campos, las reglas del proceso, un fragmento de código o el texto de la especificación.
+            Se envía como referencia con cada redacción, junto a los pasos.
           </p>
 
           <textarea
@@ -79,7 +80,8 @@ export function AiContextModal({ onClose }: { onClose: () => void }): React.JSX.
           </p>
           <p className="ai-hint">
             No se publica en el manual ni se guarda en el paquete: solo se usa para redactar. Se
-            conserva con el borrador y sigue puesto en la grabación siguiente.
+            conserva con el borrador, y al terminar la guía se te pregunta si vaciarlo o conservarlo
+            para la siguiente.
           </p>
         </div>
 

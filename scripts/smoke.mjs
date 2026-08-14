@@ -286,7 +286,6 @@ try {
     await gui.waitForFunction(predicate, null, { timeout: ms }).catch(() => {})
   }
 
-
   // Clic sobre el botón con data-testid; el modal aparece 250 ms después, así
   // que también comprueba la espera de estabilidad del DOM.
   await target.click('[data-testid="nueva-matricula"]')
@@ -1561,7 +1560,10 @@ try {
   const aiBadKey = await gui.evaluate(() =>
     window.docrecorder
       .invoke('ai:set-key', { provider: 'anthropic', key: 'no es una clave 🫠' })
-      .then(() => null, (err) => String(err?.message ?? err))
+      .then(
+        () => null,
+        (err) => String(err?.message ?? err)
+      )
   )
   check(
     typeof aiBadKey === 'string' && /clave/i.test(aiBadKey),
@@ -1984,9 +1986,7 @@ try {
     }
   })
   check(
-    column.total === beforeTable + 1 &&
-      /2 filas/.test(column.title) &&
-      column.items.length === 2,
+    column.total === beforeTable + 1 && /2 filas/.test(column.title) && column.items.length === 2,
     'Tabla: la misma columna en dos filas se funde en un paso',
     `${column.title} · ${column.items.join(' · ')}`
   )
@@ -2216,8 +2216,14 @@ try {
   // --- El botón se agrupa a mano con el formulario ---
   const mixedCards = gui.locator('.step-card')
   const mixedTotal = await mixedCards.count()
-  await mixedCards.nth(mixedTotal - 2).locator('.step-select').check()
-  await mixedCards.nth(mixedTotal - 1).locator('.step-select').check()
+  await mixedCards
+    .nth(mixedTotal - 2)
+    .locator('.step-select')
+    .check()
+  await mixedCards
+    .nth(mixedTotal - 1)
+    .locator('.step-select')
+    .check()
   await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
   await gui.waitForFunction(
     (n) => document.querySelectorAll('.step-card').length === n - 1,
@@ -2257,8 +2263,14 @@ try {
   await waitSteps(beforeRowBtn + 2, 'fila+botón: botón de la barra')
   const rowCards = gui.locator('.step-card')
   const rowTotal = await rowCards.count()
-  await rowCards.nth(rowTotal - 2).locator('.step-select').check()
-  await rowCards.nth(rowTotal - 1).locator('.step-select').check()
+  await rowCards
+    .nth(rowTotal - 2)
+    .locator('.step-select')
+    .check()
+  await rowCards
+    .nth(rowTotal - 1)
+    .locator('.step-select')
+    .check()
   await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
   await gui.waitForFunction(
     (n) => document.querySelectorAll('.step-card').length === n - 1,
@@ -2303,7 +2315,9 @@ try {
   // control, así que se funden en un paso, que es como lo cuenta un manual.
   await target.click('#ver-editar')
   await settle(() =>
-    /«Ver».*«Editar»/.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+    /«Ver».*«Editar»/.test(
+      [...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? ''
+    )
   )
   const menuGroup = await gui.evaluate(() => ({
     total: document.querySelectorAll('.step-card').length,
@@ -2824,6 +2838,20 @@ try {
   )
   await gui.getByRole('button', { name: 'Cerrar' }).click()
 
+  // Al estrenar sesión con material de referencia puesto, la app PREGUNTA qué
+  // hacer con él. Sin esto se arrastraba en silencio a la guía siguiente y la IA
+  // redactaba con los nombres y las reglas de la anterior sin que se notara.
+  await gui.waitForSelector('.dialog', { timeout: 5000 })
+  const contextAsk = await gui.locator('.dialog h3').textContent()
+  await gui.getByRole('button', { name: 'Vaciar el contexto' }).click()
+  await gui.waitForSelector('.dialog', { state: 'detached', timeout: 5000 })
+  check(
+    /contexto para la IA/i.test(contextAsk ?? '') &&
+      (await gui.locator('.btn-context.set').count()) === 0,
+    'Contexto IA: al estrenar sesión se pregunta, y «Vaciar» lo quita de verdad',
+    contextAsk ?? '(no se preguntó)'
+  )
+
   const extrasDir = join(outDir, 'matriculas', 'extras-de-matricula')
   const extrasMdx = readFileSync(join(extrasDir, 'index.mdx'), 'utf8')
   const extrasSession = JSON.parse(readFileSync(join(extrasDir, 'session.json'), 'utf8'))
@@ -2858,7 +2886,9 @@ try {
 
   // Un grupo cuyo título ya enumera sus elementos («Pulsar «Ver» y «Editar»») no
   // los repite debajo en una lista: sería decir dos veces lo mismo.
-  const enumerated = extrasMdx.match(/^#{2,3} \d+\. (?:Pulsar|Ir a las pestañas) «([^»]+)» y «([^»]+)»/m)
+  const enumerated = extrasMdx.match(
+    /^#{2,3} \d+\. (?:Pulsar|Ir a las pestañas) «([^»]+)» y «([^»]+)»/m
+  )
   check(
     !!enumerated && !extrasMdx.includes(`- **${enumerated[1]}**`),
     'Agrupar seguidos: el manual no repite en una lista lo que el título ya enumera',
@@ -3107,11 +3137,9 @@ try {
     discardBody.split('\n')[2] ?? discardBody
   )
   await gui.locator('.dialog .btn.danger').click()
-  await gui.waitForFunction(
-    () => !!document.querySelector('.pending-modal .ai-saved'),
-    null,
-    { timeout: 10000 }
-  )
+  await gui.waitForFunction(() => !!document.querySelector('.pending-modal .ai-saved'), null, {
+    timeout: 10000
+  })
   check(
     !existsSync(sectionsDir),
     'Descartar: la carpeta del paquete sale del disco (a la papelera del sistema)'
@@ -3167,10 +3195,7 @@ try {
     'Editar un commit: el commit que documentó la funcionalidad está en el historial',
     `busco ${firstCommit.slice(0, 8)} en «${historyOf}» entre [${uiHashes.join(' ')}]`
   )
-  await gui
-    .locator('.projects-col:nth-child(3) .commits li .row')
-    .nth(Math.max(wanted, 0))
-    .click()
+  await gui.locator('.projects-col:nth-child(3) .commits li .row').nth(Math.max(wanted, 0)).click()
   await gui.waitForSelector('.preview-modal', { timeout: 5000 })
   await gui.waitForSelector('.preview-feature-head .btn', { timeout: 5000 })
   await gui.locator('.preview-feature-head .btn').first().click()
@@ -3240,10 +3265,7 @@ try {
   await gui.waitForSelector('.projects-modal', { timeout: 5000 })
   await gui.locator('.projects-col:nth-child(2) .row[data-branch="docs/matriculas"]').click()
   await gui.waitForSelector('.projects-col:nth-child(3) .commits li', { timeout: 5000 })
-  await gui
-    .locator('.projects-col:nth-child(3) .commits li .row')
-    .nth(Math.max(wanted, 0))
-    .click()
+  await gui.locator('.projects-col:nth-child(3) .commits li .row').nth(Math.max(wanted, 0)).click()
   await gui.waitForSelector('.preview-feature-head .btn', { timeout: 5000 })
   await gui.locator('.preview-feature-head .btn').first().click()
   if (await gui.locator('.dialog .btn.danger').count()) {
@@ -3278,6 +3300,169 @@ try {
       /Paso corregido tras revisar el commit/.test(reeditedMdx),
     'Editar un commit: la corrección se registra encima, en la misma carpeta y rama',
     `${commitsBefore} → ${g('rev-list --count docs/matriculas')} commits · ${reeditReport.replace(/\n/g, ' ')}`
+  )
+
+  // --- Carpetas de capturas (§17) ---
+  //
+  // Un paso del manual que necesita VARIAS imágenes: las pantallas de un
+  // asistente, lo que se ve antes y después. Se comprueba el circuito entero:
+  // crear la carpeta vacía, meterle una tarjeta arrastrándola, que lo añadido con
+  // la carpeta activa entre dentro, sacar algo con ⤴ y publicarlo como un solo
+  // paso numerado con sus capturas debajo.
+  const gitBoxFolder = gui.locator('.git-section input[type="checkbox"]').first()
+  if (await gitBoxFolder.isChecked()) await gitBoxFolder.uncheck()
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  // Dos pasos sueltos: con «agrupar seguidos» dos clics del mismo tipo se
+  // fundirían en uno y no habría nada que arrastrar.
+  if (await gui.locator('.group-toggle input').isChecked()) {
+    await gui.locator('.group-toggle input').uncheck()
+  }
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#nav-alumnos')
+  await waitSteps(1, 'carpetas: paso A')
+  await target.click('#nav-matriculas')
+  await waitSteps(2, 'carpetas: paso B')
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+  await gui.locator('.group-toggle input').check()
+
+  // La carpeta se crea detrás de la tarjeta activa, como todo lo que se añade.
+  await gui.locator('.step-card').first().locator('.step-badge').click()
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Carpeta de capturas")').click()
+  await gui.waitForSelector('.group-card', { timeout: 5000 })
+  await gui.locator('.group-title').fill('Revisar el listado en las dos pantallas')
+  check(
+    (await gui.locator('.group-drop').count()) === 1 &&
+      /Arrastra aquí/.test((await gui.locator('.group-drop').textContent()) ?? ''),
+    'Carpetas: la carpeta nace vacía y dice dónde hay que soltar las tarjetas'
+  )
+
+  // Arrastrar una tarjeta hasta la zona de la carpeta la mete dentro. Las
+  // posiciones se miden ANTES de empezar: dnd-kit resuelve la colisión contra los
+  // rectángulos medidos al arrancar el arrastre, no contra los que se ven mientras
+  // la lista se reacomoda.
+  await gui.locator('.group-card').scrollIntoViewIfNeeded()
+  const dropBox = await gui.locator('.group-drop').boundingBox()
+  const dragged = await gui.locator('.step-card').nth(1).locator('.drag-handle').boundingBox()
+  const fromX = dragged.x + dragged.width / 2
+  const fromY = dragged.y + dragged.height / 2
+  const toX = dropBox.x + dropBox.width / 2
+  const toY = dropBox.y + dropBox.height / 2
+  await gui.mouse.move(fromX, fromY)
+  await gui.mouse.down()
+  for (let i = 1; i <= 12; i++) {
+    await gui.mouse.move(fromX + ((toX - fromX) * i) / 12, fromY + ((toY - fromY) * i) / 12)
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  await gui.mouse.up()
+  await gui.waitForFunction(
+    () => document.querySelectorAll('.step-card.in-group').length === 1,
+    null,
+    {
+      timeout: 5000
+    }
+  )
+  const inFolder = await gui.evaluate(() => ({
+    badge: document.querySelector('.step-card.in-group .step-badge')?.textContent ?? '',
+    count: document.querySelector('.group-card .section-count')?.textContent ?? '',
+    // El recuento del encabezado cuenta pasos del manual: la carpeta es uno y sus
+    // capturas no cuentan aparte.
+    header: document.querySelector('.panel-header .count')?.textContent ?? ''
+  }))
+  check(
+    inFolder.badge === '2·1' && inFolder.count === '1' && inFolder.header === '2',
+    'Carpetas: arrastrar una tarjeta a la zona la mete dentro y la renumera como captura',
+    `chapa ${inFolder.badge}, ${inFolder.count} dentro, encabezado ${inFolder.header}`
+  )
+
+  // Trabajando dentro de la carpeta, lo que se añade entra DENTRO: es lo que se
+  // estaba haciendo, y obligar a arrastrarlo después sería absurdo.
+  await gui.locator('.group-card .group-title').click()
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  await gui.waitForFunction(
+    () => document.querySelectorAll('.step-card.in-group').length === 2,
+    null,
+    {
+      timeout: 5000
+    }
+  )
+  check(true, 'Carpetas: lo que se añade con la carpeta activa entra dentro de ella')
+
+  // Y ⤴ lo saca, dejándolo suelto justo detrás de la carpeta.
+  await gui
+    .locator('.step-card.in-group')
+    .last()
+    .locator('.icon-btn[title^="Sacar esta captura"]')
+    .click()
+  await gui.waitForFunction(
+    () => document.querySelectorAll('.step-card.in-group').length === 1,
+    null,
+    {
+      timeout: 5000
+    }
+  )
+  const afterOut = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card, .group-card')].map((n) =>
+      n.classList.contains('group-card')
+        ? '📁'
+        : n.classList.contains('in-group')
+          ? '·'
+          : n.querySelector('.step-badge')?.textContent
+    )
+  )
+  check(
+    afterOut.join('') === '1📁·3',
+    'Carpetas: ⤴ saca la tarjeta de la carpeta y la deja justo detrás',
+    afterOut.join(' ')
+  )
+
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
+  await gui.fill('.topbar input[placeholder="institucion"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', 'con-carpeta')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', 'Matrícula con carpeta')
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 10000 })
+  if (await gui.getByRole('button', { name: 'Guardar de todos modos' }).count()) {
+    await gui.getByRole('button', { name: 'Guardar de todos modos' }).click()
+  }
+  await gui.waitForFunction(
+    () => /Documentación guardada/.test(document.querySelector('.dialog h3')?.textContent ?? ''),
+    null,
+    { timeout: 15000 }
+  )
+  await gui.getByRole('button', { name: 'Cerrar' }).click()
+
+  const folderDir = join(outDir, 'matriculas', 'con-carpeta')
+  const folderMdx = readFileSync(join(folderDir, 'index.mdx'), 'utf8')
+  const folderSession = JSON.parse(readFileSync(join(folderDir, 'session.json'), 'utf8'))
+  const folderFlow = JSON.parse(readFileSync(join(folderDir, 'flow.json'), 'utf8'))
+  const folderStep = folderSession.steps.find((s) => s.kind === 'group')
+  const member = folderSession.steps.find((s) => s.groupId === folderStep?.id)
+  check(
+    !!folderStep && folderStep.screenshot === '' && !!member && !!member.screenshot,
+    'Carpetas: la carpeta se guarda sin captura propia y sus pasos conservan la suya',
+    `${folderStep?.title} · captura del miembro: ${member?.screenshot ?? '(ninguna)'}`
+  )
+  // La carpeta es UN paso numerado (aquí el 2) y su captura va debajo, sin número
+  // propio: numerarla diría que hay que hacer dos cosas donde el manual describe
+  // una. Por eso la página tiene dos pasos numerados y no tres.
+  check(
+    /^## 2\. Revisar el listado en las dos pantallas$/m.test(folderMdx) &&
+      (folderMdx.match(/^## \d+\./gm) ?? []).length === 2 &&
+      folderMdx.indexOf('## 2. Revisar') < folderMdx.indexOf(`(./${member?.screenshot})`),
+    'Carpetas: la carpeta sale como UN paso numerado y su captura se publica dentro',
+    (folderMdx.match(/^## .*/gm) ?? []).join(' / ')
+  )
+  check(
+    !folderFlow.actions.some((a) => a.action === 'group') &&
+      folderFlow.actions.some((a) => a.url && a.action === 'click'),
+    'Carpetas: la carpeta no entra en flow.json, pero el paso que contiene sí',
+    `${folderFlow.actions.length} acción(es)`
   )
 
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))

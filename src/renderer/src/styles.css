@@ -25,6 +25,9 @@
   --primary-hover: #1a58bd;
   --green: #12855a;
   --amber: #b7791f;
+  /* Carpetas de capturas: un color propio para que su bloque no se confunda con
+     el naranja de las secciones ni con los tipos de paso. */
+  --folder: #7b52c9;
   --danger: #c02626;
   --danger-bg: #fdecec;
   --danger-border: #f0b4b4;
@@ -71,6 +74,7 @@
   --primary-hover: #3f7ce6;
   --green: #46c78c;
   --amber: #e0a94a;
+  --folder: #a583e8;
   --danger: #ff6b6b;
   --danger-bg: #3a1f1f;
   --danger-border: #5e3232;
@@ -2932,6 +2936,160 @@ select {
 .section-intro:focus {
   border-color: var(--blue);
   box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* ─── Carpetas de capturas ───────────────────────────────────────────────── */
+
+/* La carpeta es un paso del manual, no un separador: se lee como una tarjeta,
+   pero con el borde de color que también recorre sus capturas, para que el
+   bloque se vea de un vistazo como una sola cosa. */
+.group-card {
+  margin: 12px 0 4px;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--folder);
+  border-radius: var(--radius);
+  background: var(--tint);
+}
+
+.group-card:first-child {
+  margin-top: 0;
+}
+
+.group-card.dragging {
+  opacity: 0.85;
+  box-shadow: var(--shadow-card);
+  z-index: 2;
+  position: relative;
+}
+
+.group-card.nested {
+  margin-left: 12px;
+}
+
+.group-card.excluded {
+  opacity: 0.6;
+}
+
+.group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.group-icon {
+  font-size: 13px;
+}
+
+.group-title {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 6px;
+  background: transparent;
+  color: inherit;
+  font-weight: 700;
+  font-size: 13px;
+  outline: none;
+}
+
+.group-title:hover {
+  border-color: var(--border);
+}
+
+.group-title:focus {
+  background: var(--surface);
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.group-card .icon-btn {
+  margin-left: 0;
+}
+
+.group-desc {
+  margin-top: 6px;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 7px;
+  resize: none;
+  overflow: hidden;
+  line-height: 1.4;
+  background: var(--surface);
+  color: inherit;
+  outline: none;
+}
+
+.group-desc:focus {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* La zona de soltar dice a la vez qué hace la carpeta y dónde hay que apuntar.
+   Vacía ocupa lo suyo (es la única pista de que ahí se arrastra); con capturas
+   dentro se encoge a una línea, que ya no hace falta explicar nada. */
+.group-drop {
+  margin-top: 8px;
+  padding: 14px 8px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.group-drop.compact {
+  padding: 5px 8px;
+}
+
+.group-drop.over {
+  border-color: var(--primary);
+  border-style: solid;
+  color: var(--primary);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+/* Plegada, la carpeta enseña lo que guarda en miniatura: es lo que permite
+   trabajar con una lista larga sin abrirla para recordar qué había dentro. */
+.group-strip {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  overflow-x: auto;
+}
+
+.group-strip img {
+  height: 34px;
+  width: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.group-strip-empty {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 34px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Una captura dentro de una carpeta: sangrada y con el mismo borde de color que
+   la carpeta, para que se lea como parte de ella y no como un paso suelto. */
+.step-card.in-group {
+  margin-left: 16px;
+  border-left: 3px solid var(--folder);
+}
+
+.step-card.in-group .step-badge {
+  background: var(--chip);
+  color: var(--muted);
 }
 
 /* ─── Editar una funcionalidad ya commiteada ─────────────────────────────── */

@@ -196,6 +196,17 @@ function StepPreview({
     void ipc.invoke('git:doc-image', { repoRoot, commit, imagePath }).then(setImg)
   }, [repoRoot, commit, sessionPath, step.screenshot])
 
+  // Una carpeta no tiene captura propia: las suyas son las de los pasos que
+  // vienen detrás, que se leen como cualquier otro paso de la lista.
+  if (step.kind === 'group') {
+    return (
+      <li className="preview-step preview-section">
+        <b>📁 {step.title || 'Carpeta de capturas'}</b>
+        {step.description && <p>{step.description}</p>}
+      </li>
+    )
+  }
+
   // Una sección no es un paso: encabeza los siguientes, y así se lee también aquí.
   if (step.kind === 'section') {
     return (

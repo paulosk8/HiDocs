@@ -7,8 +7,9 @@
 /**
  * Lo que ocurrió en el paso. Las seis primeras son interacciones con la página
  * (las únicas que el runner puede reproducir y las únicas que aparecen en
- * `flow.json`); `capture`, `image`, `content` y `section` solo salen en los pasos
- * que añade el usuario a mano, donde no hay ninguna interacción que describir.
+ * `flow.json`); `capture`, `image`, `content`, `section` y `group` solo salen en
+ * los pasos que añade el usuario a mano, donde no hay ninguna interacción que
+ * describir.
  */
 export type StepAction =
   | 'click'
@@ -21,6 +22,7 @@ export type StepAction =
   | 'image'
   | 'content'
   | 'section'
+  | 'group'
 
 /**
  * De dónde sale un paso y, por tanto, qué se puede hacer con él.
@@ -41,10 +43,16 @@ export type StepAction =
  *   los pasos que van DEBAJO de él hasta la sección siguiente, para poder
  *   plegarlos, moverlos en bloque y publicar el manual por apartados. Es el único
  *   paso que no se numera.
+ * - `group`: una **carpeta de capturas**. Es UN paso del manual —se numera, se
+ *   titula y se describe— cuyas ilustraciones son las de los pasos que se han
+ *   metido dentro (`groupId`). Sirve para lo que el motor no puede adivinar: que
+ *   cuatro pantallazos sueltos cuentan una sola cosa. A diferencia de agrupar
+ *   pasos (⊞), que funde acciones y deja UNA captura, aquí se conservan todas las
+ *   imágenes y cada una puede llevar su pie. La carpeta no tiene captura propia.
  *
  * Ausente en las sesiones anteriores a esta función: se lee como `interaction`.
  */
-export type StepKind = 'interaction' | 'capture' | 'image' | 'content' | 'section'
+export type StepKind = 'interaction' | 'capture' | 'image' | 'content' | 'section' | 'group'
 
 export type SelectorStrategy = 'testid' | 'id' | 'role' | 'text' | 'css'
 
@@ -101,6 +109,16 @@ export interface DocStep {
    * (se sanea con `sanitizeContent`, §10). Ausente si el paso no lleva bloque.
    */
   content?: string
+  /**
+   * Carpeta de capturas (paso `kind: 'group'`) a la que pertenece este paso.
+   *
+   * La pertenencia es explícita y no posicional —al revés que en las secciones—
+   * porque una carpeta es un bloque cerrado: si dependiera de la posición, el
+   * paso siguiente que se grabara entraría dentro sin que nadie lo pidiera. En la
+   * lista, los miembros van siempre seguidos y justo detrás de su carpeta; en el
+   * manual no se numeran: son las ilustraciones del paso que es la carpeta.
+   */
+  groupId?: string
   /** metadato: URL en el momento de la interacción */
   url: string
   /** ruta relativa dentro del paquete exportado (`img/paso-03.png`); '' si el paso no lleva imagen */

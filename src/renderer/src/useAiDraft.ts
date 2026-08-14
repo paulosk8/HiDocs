@@ -49,7 +49,18 @@ export function useAiDraft(): { draft: (ids: string[]) => Promise<void> } {
       const result = await ipc.invoke('ai:draft', {
         meta: s.meta,
         outline: s.steps.map((step) => ({ order: step.order, title: step.title })),
-        steps: targets.map(toInput),
+        steps: targets.map((step) => {
+          const input = toInput(step)
+          // Una carpeta de capturas no tiene imagen propia: se le manda la
+          // primera de las suyas, que es lo único visual con lo que se puede
+          // titular el conjunto.
+          if (step.kind === 'group' && !input.screenshot) {
+            input.screenshot =
+              s.steps.find((member) => member.groupId === step.id && member.tempFile)?.tempFile ||
+              undefined
+          }
+          return input
+        }),
         // Material pegado por quien documenta; el main lo delimita en el prompt.
         context: s.meta.aiContext?.trim() || undefined
       })
