@@ -12,8 +12,11 @@ import {
   type AiStatus,
   type AiStepDraft,
   type BranchDocInfo,
+  type CheckProgress,
+  type ChecksResult,
   type FlowAction,
   type GitRepoInfo,
+  type ProjectChecks,
   type EngineState,
   type RecorderStatus,
   type RegenReport,
@@ -89,6 +92,35 @@ interface SessionState {
   gitRepo: GitRepoInfo | null
   gitEnabled: boolean
   gitPush: boolean
+  /**
+   * Comprobar el sitio antes de registrar en Git (§18). Preferencia del usuario,
+   * persistida: compilar tarda, y hay tandas en las que se prefiere registrar y
+   * revisar después.
+   */
+  gitVerify: boolean
+
+  /**
+   * Comandos que el proyecto de destino ofrece, o `null` si la carpeta de salida
+   * no está dentro de un proyecto Docusaurus (entonces no hay nada que ejecutar
+   * y guardar no se detiene a comprobar nada).
+   */
+  docsChecks: ProjectChecks | null
+  /** tanda en marcha: qué comando va y qué lleva escrito */
+  checksRun: {
+    purpose: ChecksPurpose
+    label: string
+    index: number
+    total: number
+    lines: string[]
+  } | null
+  /** lo que hay que leer cuando termina mal (o cuando la vista previa no sale) */
+  checksReport: {
+    purpose: ChecksPurpose
+    result?: ChecksResult
+    error?: string
+  } | null
+  /** vista previa servida en marcha, con su dirección */
+  previewUrl: string | null
   /**
    * Rama de trabajo: donde se registrará esta grabación. `null` = todavía no se
    * ha elegido ninguna, y entonces se usa la sugerida a partir del módulo
@@ -252,7 +284,7 @@ interface SessionState {
   startFreshSession: () => void
 
   setGitRepo: (repo: GitRepoInfo | null) => void
-  setGit: (patch: Partial<Pick<SessionState, 'gitEnabled' | 'gitPush'>>) => void
+  setGit: (patch: Partial<Pick<SessionState, 'gitEnabled' | 'gitPush' | 'gitVerify'>>) => void
   setGitBranch: (value: string | null) => void
   setGitMessage: (value: string | null) => void
   setGitBaseBranch: (value: string | null) => void
@@ -286,6 +318,16 @@ interface SessionState {
   runnerFinish: (report: RegenReport) => void
   runnerClose: () => void
 
+  setDocsChecks: (checks: ProjectChecks | null) => void
+  /** empieza una tanda: el diálogo aparece antes de que llegue la primera línea */
+  checksStart: (purpose: ChecksPurpose) => void
+  checksProgress: (progress: CheckProgress) => void
+  /** termina la tanda: sin argumentos, salió bien y no hay nada que mostrar */
+  checksFinish: (report?: { result?: ChecksResult; error?: string }) => void
+  /** cierra el informe (el usuario ya lo leyó) */
+  checksClose: () => void
+  setPreviewUrl: (url: string | null) => void
+
   setAiStatus: (status: AiStatus) => void
   setAiOpen: (open: boolean) => void
   setAiContextOpen: (open: boolean) => void
@@ -298,11 +340,31 @@ interface SessionState {
 }
 
 const GROUP_KEY = 'docrecorder.groupConsecutive'
+const VERIFY_KEY = 'docrecorder.verifyBeforeCommit'
+
+/** Líneas de salida que se guardan del comando en marcha, para enseñar el final. */
+const CHECK_LINES = 60
+
+/** Para qué se está comprobando: cambia lo que se ofrece al terminar. */
+export type ChecksPurpose = 'commit' | 'preview'
 
 /** Agrupar seguidos está activado salvo que el usuario lo haya desactivado. */
 function initialGroupConsecutive(): boolean {
   try {
     return localStorage.getItem(GROUP_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Comprobar antes de registrar viene activado: publicar un MDX que no compila es
+ * justo lo que esta comprobación existe para evitar, y en un proyecto sin los
+ * comandos no cuesta nada porque no hay nada que ejecutar.
+ */
+function initialVerify(): boolean {
+  try {
+    return localStorage.getItem(VERIFY_KEY) !== '0'
   } catch {
     return true
   }
@@ -731,6 +793,11 @@ export const useSession = create<SessionState>((set) => ({
   gitRepo: null,
   gitEnabled: false,
   gitPush: false,
+  gitVerify: initialVerify(),
+  docsChecks: null,
+  checksRun: null,
+  checksReport: null,
+  previewUrl: null,
   gitBranchOverride: null,
   gitMessageOverride: null,
   branchDocs: [],
@@ -1244,7 +1311,16 @@ export const useSession = create<SessionState>((set) => ({
         gitBranchOverride: movedToAnother ? null : s.gitBranchOverride
       }
     }),
-  setGit: (patch) => set(patch),
+  setGit: (patch) => {
+    if (patch.gitVerify !== undefined) {
+      try {
+        localStorage.setItem(VERIFY_KEY, patch.gitVerify ? '1' : '0')
+      } catch {
+        // sin persistencia vale para esta sesión
+      }
+    }
+    set(patch)
+  },
   setGitBranch: (gitBranchOverride) => set({ gitBranchOverride }),
   setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
@@ -1345,6 +1421,48 @@ export const useSession = create<SessionState>((set) => ({
   runnerProgressAdd: (result) => set((s) => ({ runnerProgress: [...s.runnerProgress, result] })),
   runnerFinish: (report) => set({ runnerPhase: 'done', runnerReport: report }),
   runnerClose: () => set({ runnerPhase: 'idle', runnerProgress: [], runnerReport: null }),
+
+  setDocsChecks: (docsChecks) => set({ docsChecks }),
+
+  checksStart: (purpose) =>
+    set((s) => ({
+      checksReport: null,
+      checksRun: {
+        purpose,
+        label: 'Preparando…',
+        index: 0,
+        total: s.docsChecks?.checks.length ?? 1,
+        lines: []
+      }
+    })),
+
+  // Solo se conservan las últimas líneas: la salida de una compilación son miles
+  // y el diálogo enseña el final, que es donde está el error.
+  checksProgress: (progress) =>
+    set((s) => {
+      if (!s.checksRun) return {}
+      const lines = progress.line
+        ? [...s.checksRun.lines, progress.line].slice(-CHECK_LINES)
+        : s.checksRun.lines
+      return {
+        checksRun: {
+          ...s.checksRun,
+          label: progress.label,
+          index: progress.index,
+          total: progress.total,
+          lines
+        }
+      }
+    }),
+
+  checksFinish: (report) =>
+    set((s) => ({
+      checksRun: null,
+      checksReport: report && s.checksRun ? { purpose: s.checksRun.purpose, ...report } : null
+    })),
+
+  checksClose: () => set({ checksReport: null }),
+  setPreviewUrl: (previewUrl) => set({ previewUrl }),
 
   setAiStatus: (aiStatus) => set({ aiStatus }),
   setAiOpen: (aiOpen) => set({ aiOpen }),

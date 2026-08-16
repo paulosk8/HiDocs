@@ -1165,6 +1165,49 @@ select {
   padding: 5px 7px;
 }
 
+/* ---------- comprobación del sitio y vista previa (§18) ---------- */
+
+.git-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.git-preview .link {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* Más ancho que un aviso normal: lo que se lee aquí es la salida de un comando,
+   y partirla en líneas de 40 caracteres la vuelve ilegible. */
+.checks-dialog {
+  max-width: 720px;
+  width: min(720px, 90vw);
+}
+
+.checks-step {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.checks-log {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--chip);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
 /* ---------- explorador de repositorios ---------- */
 
 .projects-modal {

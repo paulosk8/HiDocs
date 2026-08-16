@@ -3,9 +3,18 @@ import { join } from 'node:path'
 import type { SavePayload } from '../shared/ipc-contract'
 import { commitDocs } from './git'
 import { rememberProject } from './projects'
-import { slug } from '../shared/naming'
+import { kebab } from '../shared/naming'
 import { categoryJson, renderFeatureMdx, titleCase } from './mdx'
-import type { DocSession, DocStep, Flow, FlowAction, SaveResult, Viewport } from '../shared/types'
+import { detectChecks, runChecks } from './checks'
+import type {
+  CheckProgress,
+  DocSession,
+  DocStep,
+  Flow,
+  FlowAction,
+  SaveResult,
+  Viewport
+} from '../shared/types'
 
 /**
  * Escritura del paquete en disco (§7). Además del paquete reproducible en JSON,
@@ -27,11 +36,6 @@ async function exists(path: string): Promise<boolean> {
     .catch(() => false)
 }
 
-/** kebab-case para nombres de carpeta; nunca vacío, para no generar rutas rotas. */
-export function kebab(value: string): string {
-  return slug(value) || 'sin-nombre'
-}
-
 /** `paso-01.png`, con cero a la izquierda hasta 99 pasos. */
 export function imageName(order: number): string {
   return `paso-${String(order).padStart(2, '0')}.png`
@@ -39,7 +43,8 @@ export function imageName(order: number): string {
 
 export async function saveSession(
   payload: SavePayload,
-  actualViewport: Viewport
+  actualViewport: Viewport,
+  onCheckProgress: (progress: CheckProgress) => void = () => {}
 ): Promise<SaveResult> {
   const moduleDir = kebab(payload.meta.module)
   const featureDir = kebab(payload.meta.feature)
@@ -199,6 +204,20 @@ export async function saveSession(
   }
 
   const result: SaveResult = { path: targetDir, stepsWritten: steps.length, imagesWritten }
+
+  // Comprobación del sitio ANTES del commit (§18). El orden es deliberado: los
+  // comandos se ejecutan sobre el paquete ya escrito —es lo que van a compilar—,
+  // y si algo no pasa, el commit no llega a hacerse. Lo escrito se queda en
+  // disco: se corrige y se vuelve a guardar, o se registra igualmente desde el
+  // aviso. Sin proyecto Docusaurus alrededor no hay nada que ejecutar y guardar
+  // sigue siendo lo de siempre.
+  if (payload.git?.enabled && payload.git.verify !== false) {
+    const project = await detectChecks(payload.outputDir).catch(() => null)
+    if (project && project.checks.length) {
+      result.checks = await runChecks(project.projectRoot, project.checks, onCheckProgress)
+      if (!result.checks.ok) return result
+    }
+  }
 
   if (payload.git?.enabled) {
     // El paquete en disco ya está escrito y es válido por sí solo. Si el commit

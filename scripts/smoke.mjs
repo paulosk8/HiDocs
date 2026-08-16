@@ -175,7 +175,10 @@ const child = spawn(electronPath, ['.'], {
     // Descartar documentación manda los archivos a la papelera del sistema, que
     // es lo correcto para una persona y una guarrada para una prueba: iría
     // dejando carpetas temporales en la papelera de quien la ejecuta.
-    DOCRECORDER_NO_TRASH: '1'
+    DOCRECORDER_NO_TRASH: '1',
+    // La vista previa abre el sitio en el navegador del usuario. Se comprueba
+    // que la dirección responde, pero sin abrirle nada a quien ejecuta esto.
+    DOCRECORDER_NO_OPEN: '1'
   }
 })
 child.stdout.on('data', (d) => process.stdout.write(`[main] ${d}`))
@@ -3508,6 +3511,236 @@ try {
   )
 
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
+
+  // --- Etapa 12: comprobar el sitio antes de registrar y vista previa (§18) ---
+  //
+  // El repositorio de la prueba no es un proyecto npm, así que hasta aquí no
+  // había nada que comprobar (y guardar no se detenía). Se monta uno con la
+  // misma forma que el Docusaurus de destino: `docusaurus.config.js`,
+  // `package.json` con sus scripts y `docs/` como carpeta de salida. Los
+  // comandos son de verdad —los ejecuta npm, en su propio proceso— pero rápidos:
+  // «compilar» copia las páginas a `build/` y falla si alguna trae ROMPEME, que
+  // es lo que aquí hace de MDX que Docusaurus no puede compilar.
+  const site = mkdtempSync(join(tmpdir(), 'docrecorder-sitio-'))
+  const siteDocs = join(site, 'docs')
+  mkdirSync(join(site, 'scripts'), { recursive: true })
+  mkdirSync(siteDocs, { recursive: true })
+  writeFileSync(join(site, 'docusaurus.config.js'), 'module.exports = {}\n')
+  writeFileSync(
+    join(site, 'scripts', 'compilar.mjs'),
+    [
+      "import { readdirSync, readFileSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'",
+      "import { join } from 'node:path'",
+      'const walk = (dir) =>',
+      '  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>',
+      "    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]",
+      '  )',
+      "const pages = existsSync('docs') ? walk('docs').filter((f) => f.endsWith('.mdx')) : []",
+      "const roto = pages.find((f) => readFileSync(f, 'utf8').includes('ROMPEME'))",
+      'if (roto) {',
+      '  console.error(`Error: no se pudo compilar ${roto}`)',
+      "  console.error('Unexpected token ROMPEME')",
+      '  process.exit(1)',
+      '}',
+      "rmSync('build', { recursive: true, force: true })",
+      'for (const page of pages) {',
+      "  const out = join('build', page.replace(/^docs\\//, '').replace(/\\/index\\.mdx$/, ''))",
+      '  mkdirSync(out, { recursive: true })',
+      "  writeFileSync(join(out, 'index.html'), `<!doctype html><title>${page}</title>`)",
+      '}',
+      'console.log(`Compiladas ${pages.length} páginas`)'
+    ].join('\n')
+  )
+  writeFileSync(
+    join(site, 'scripts', 'servir.mjs'),
+    [
+      "import { createServer } from 'node:http'",
+      "import { existsSync, readFileSync, statSync } from 'node:fs'",
+      "import { join } from 'node:path'",
+      "const port = Number(process.argv[process.argv.indexOf('--port') + 1] || 3000)",
+      'createServer((req, res) => {',
+      "  const path = decodeURIComponent(req.url.split('?')[0])",
+      "  const file = join('build', path, 'index.html')",
+      '  if (existsSync(file) && statSync(file).isFile()) {',
+      "    res.writeHead(200, { 'content-type': 'text/html' })",
+      '    res.end(readFileSync(file))',
+      '  } else {',
+      '    res.writeHead(404)',
+      "    res.end('no')",
+      '  }',
+      "}).listen(port, '127.0.0.1', () => console.log(`sirviendo en ${port}`))"
+    ].join('\n')
+  )
+  writeFileSync(
+    join(site, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'sitio-de-prueba',
+        version: '0.0.0',
+        private: true,
+        scripts: {
+          typecheck: 'node -e "process.exit(0)"',
+          'lint:docs': 'node -e "process.exit(0)"',
+          build: 'node scripts/compilar.mjs',
+          serve: 'node scripts/servir.mjs'
+        }
+      },
+      null,
+      2
+    )
+  )
+  const gs = (args) => execSync(`git ${args}`, { cwd: site, encoding: 'utf8' }).trim()
+  execSync('git init -q -b main', { cwd: site })
+  gs('config user.email prueba@ejemplo.com')
+  gs('config user.name Prueba')
+  gs('add -A')
+  gs('commit -q -m "chore: sitio de prueba"')
+
+  const comandos = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('checks:detect', dir),
+    siteDocs
+  )
+  check(
+    comandos !== null &&
+      comandos.checks.map((c) => c.script).join(',') === 'typecheck,lint:docs,build' &&
+      comandos.canServe === true &&
+      comandos.projectRoot.endsWith(site.split('/').pop()),
+    'Comprobación: se detectan los comandos del proyecto de destino, del más barato al más caro',
+    comandos ? comandos.checks.map((c) => c.script).join(' → ') : '(ninguno)'
+  )
+  const sinProyecto = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('checks:detect', dir),
+    outDir
+  )
+  check(
+    sinProyecto === null,
+    'Comprobación: un repositorio que no es un proyecto Docusaurus no ofrece nada que ejecutar',
+    String(sinProyecto)
+  )
+
+  /** Guarda una guía en el sitio de prueba, con el título (y el commit) que se pidan. */
+  const saveToSite = (feature, title, verify) =>
+    gui.evaluate(
+      ([dir, feature, title, verify]) =>
+        window.docrecorder.invoke('session:save', {
+          meta: {
+            module: 'publicacion',
+            feature,
+            title,
+            role: 'admin',
+            baseUrl: 'http://x'
+          },
+          viewport: { width: 800, height: 600 },
+          sessionId: `chk-${feature}`,
+          createdAt: new Date().toISOString(),
+          outputDir: dir,
+          steps: [
+            {
+              id: 's1',
+              order: 1,
+              action: 'click',
+              title,
+              description: '',
+              selectorCandidates: [],
+              url: 'http://x',
+              screenshot: '',
+              boundingRect: { x: 0, y: 0, width: 1, height: 1 },
+              includeInDocs: true,
+              timestamp: 't',
+              tempFile: ''
+            }
+          ],
+          git: {
+            enabled: true,
+            branch: 'docs/publicacion',
+            message: `docs(publicacion): ${feature}`,
+            push: false,
+            verify
+          }
+        }),
+      [siteDocs, feature, title, verify]
+    )
+
+  const okSave = await saveToSite('guia-buena', 'Abrir el listado', true)
+  check(
+    okSave.checks?.ok === true &&
+      okSave.checks.runs.map((r) => r.script).join(',') === 'typecheck,lint:docs,build' &&
+      !!okSave.git,
+    'Comprobación: si los tres comandos pasan, el commit se hace como siempre',
+    okSave.checks ? okSave.checks.runs.map((r) => `${r.script} ${r.ms}ms`).join(' · ') : '(sin datos)'
+  )
+
+  // Vista previa: compila y sirve el sitio, y devuelve la dirección de ESTA guía
+  // (no la portada). Se comprueba pidiéndola de verdad por HTTP.
+  const vistaPrevia = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('preview:start', {
+        outputDir: dir,
+        segments: ['publicacion', 'guia-buena']
+      }),
+    siteDocs
+  )
+  const served = vistaPrevia.url ? await fetch(vistaPrevia.url).catch(() => null) : null
+  check(
+    !!vistaPrevia.url &&
+      vistaPrevia.url.endsWith('/publicacion/guia-buena/') &&
+      served !== null &&
+      served.status === 200,
+    'Vista previa: el sitio se compila, se sirve y la dirección abre la guía recién guardada',
+    vistaPrevia.url ?? vistaPrevia.error ?? '(sin dirección)'
+  )
+  const previewRunning = await gui.evaluate(() => window.docrecorder.invoke('preview:status'))
+  await gui.evaluate(() => window.docrecorder.invoke('preview:stop'))
+  const previewStopped = await gui.evaluate(() => window.docrecorder.invoke('preview:status'))
+  const afterStop = vistaPrevia.url ? await fetch(vistaPrevia.url).catch(() => null) : 'nada'
+  check(
+    previewRunning.running === true && previewStopped.running === false && afterStop === null,
+    'Vista previa: detenerla mata el servidor y libera el puerto',
+    `en marcha ${previewRunning.running} → ${previewStopped.running}`
+  )
+
+  // Y el caso que justifica todo esto: una guía que el sitio no puede compilar.
+  const commitsAntes = gs('rev-list --count --all')
+  const badSave = await saveToSite('guia-rota', 'Paso ROMPEME', true)
+  const commitsDespues = gs('rev-list --count --all')
+  const fallo = badSave.checks?.runs.find((r) => !r.ok)
+  check(
+    badSave.checks?.ok === false &&
+      fallo?.script === 'build' &&
+      /ROMPEME/.test(fallo?.output ?? '') &&
+      !badSave.git &&
+      commitsAntes === commitsDespues,
+    'Comprobación: si el sitio no compila NO se comitea, y el error del comando llega entero',
+    `${fallo?.script ?? '(ninguno)'} · ${commitsAntes} commits antes y después`
+  )
+  check(
+    existsSync(join(siteDocs, 'publicacion', 'guia-rota', 'index.mdx')),
+    'Comprobación: el paquete sí queda escrito en disco, para poder corregirlo y reintentar'
+  )
+  // Las comprobaciones se saltan antes de fallar la primera: es lo que hace
+  // «Registrar de todos modos» desde el aviso.
+  const forzado = await saveToSite('guia-rota', 'Paso ROMPEME', false)
+  check(
+    !forzado.checks && !!forzado.git && Number(gs('rev-list --count --all')) > Number(commitsAntes),
+    'Comprobación: «Registrar de todos modos» comitea sin ejecutar nada',
+    forzado.git?.message ?? forzado.gitError ?? '(sin commit)'
+  )
+
+  // Y la sección del panel, que es donde se ve y se desactiva.
+  await gui.fill('.topbar input[placeholder="Sin seleccionar"]', siteDocs)
+  await gui.waitForSelector('.git-preview button', { timeout: 15000 })
+  const seccion = await gui.evaluate(() => ({
+    comandos: document.querySelector('.git-preview')?.previousElementSibling
+      ? [...document.querySelectorAll('.git-section .git-toggle em')].map((n) => n.textContent)
+      : [],
+    previa: document.querySelector('.git-preview button')?.textContent ?? ''
+  }))
+  check(
+    seccion.comandos.some((t) => t.includes('npm run build')) &&
+      seccion.previa === 'Vista previa del sitio',
+    'Comprobación: el panel enumera los comandos del proyecto y ofrece la vista previa',
+    seccion.comandos.join(' | ')
+  )
 
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
   await gui.evaluate(() => localStorage.removeItem('docrecorder.groupConsecutive')).catch(() => {})

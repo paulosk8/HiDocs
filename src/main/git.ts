@@ -107,9 +107,20 @@ interface WorkingTreeStatus {
  *    espacio, que es justo lo que indica que el cambio está sin indexar.
  */
 async function readStatus(root: string): Promise<WorkingTreeStatus> {
-  const raw = await gitRaw(root, ['status', '--porcelain', '-z', '--untracked-files=all']).catch(
-    () => ''
-  )
+  // `--no-optional-locks`: `git status` refresca el índice y para eso toma
+  // `.git/index.lock`. Aquí se está MIRANDO un repositorio ajeno por detrás (la
+  // franja de estado lo relee sola), así que tomar ese cerrojo hace fallar el
+  // `git add` que el usuario esté ejecutando en su terminal en ese instante. Es
+  // la misma bandera que usan los editores para inspeccionar sin estorbar, y va
+  // en la línea del principio de §10: no tocamos su repositorio salvo al
+  // commitear lo que ha pedido.
+  const raw = await gitRaw(root, [
+    '--no-optional-locks',
+    'status',
+    '--porcelain',
+    '-z',
+    '--untracked-files=all'
+  ]).catch(() => '')
   const tokens = raw.split('\0')
   const status: WorkingTreeStatus = { staged: [], modified: [], untracked: [] }
 

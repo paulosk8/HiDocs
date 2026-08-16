@@ -28,6 +28,7 @@ const SECTIONS = [
   { id: 'git', label: 'Integración con Git' },
   { id: 'pendiente', label: 'Documentación sin registrar' },
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
+  { id: 'comprobar', label: 'Comprobar el sitio' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
   { id: 'regenerar', label: 'Regenerar capturas' },
   { id: 'ia', label: 'Redactar con IA' },
@@ -917,10 +918,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 Flujo completo: el repositorio de documentación <b>ya existe</b> y lo mantiene otra
                 persona. Lo <b>clonas</b>, eliges como carpeta de salida la carpeta{' '}
                 <code>docs/</code> (o una subcarpeta) de ese clon, y al guardar se crea una rama con
-                el manual. Para <b>ver cómo va quedando</b>, arranca Docusaurus en el repositorio (
-                <code>npm run start</code>) y navega a la página; o abre un Pull Request para que
-                esa persona lo integre. DocRecorder no crea ni clona repositorios: solo detecta el
-                que ya contiene la carpeta.
+                el manual. Para <b>ver cómo va quedando</b>, usa{' '}
+                <a onClick={() => go('comprobar')}>Vista previa del sitio</a>; o abre un Pull
+                Request para que esa persona lo integre. DocRecorder no crea ni clona repositorios:
+                solo detecta el que ya contiene la carpeta.
               </p>
               <p>
                 <a
@@ -931,6 +932,50 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 >
                   Volver a ver el aviso de inicio
                 </a>
+              </p>
+            </section>
+
+            <section id="comprobar" data-help-section>
+              <h3>Comprobar el sitio y vista previa</h3>
+              <p>
+                La vista previa de una tarjeta te enseña cómo <b>queda</b> el texto, pero no si
+                Docusaurus lo puede <b>compilar</b>. Antes de registrar en Git, DocRecorder ejecuta
+                en tu proyecto de documentación los comandos que ese proyecto tenga, en este orden:
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <code>npm run typecheck</code> — los tipos del proyecto.
+                </li>
+                <li>
+                  <code>npm run lint:docs</code> — las reglas de redacción del propio repositorio,
+                  si las tiene.
+                </li>
+                <li>
+                  <code>npm run build</code> — la que de verdad importa: compila el sitio y falla si
+                  una etiqueta, un enlace o un componente rompen el MDX.
+                </li>
+              </ul>
+              <p>
+                Se paran en el primero que falle. Si alguno falla, <b>no se comitea nada</b>, pero
+                el paquete <b>sí queda escrito</b> en el repositorio: el aviso te enseña el error
+                del comando —con su archivo y su línea—, y puedes corregir y volver a pulsar ■, o{' '}
+                <b>Registrar de todos modos</b> y arreglarlo después. Lo que quede sin registrar lo
+                verás en <a onClick={() => go('pendiente')}>⚠ N sin registrar</a>.
+              </p>
+              <p>
+                Compilar tarda: el aviso enseña la salida del comando según sale y se puede
+                cancelar. Si prefieres no esperar, desactiva{' '}
+                <b>Comprobar el sitio antes de registrar en Git</b> al final del panel; la
+                preferencia se recuerda. Si tu carpeta de salida no está dentro de un proyecto
+                Docusaurus con <code>package.json</code>, no hay nada que ejecutar y guardar no se
+                detiene.
+              </p>
+              <p>
+                <b>Vista previa del sitio</b> compila y sirve el manual (
+                <code>npm run build &amp;&amp; npm run serve</code>) y lo abre en tu navegador por
+                la página que estás documentando. No usa <code>npm run start</code> a propósito: si
+                el sitio lleva buscador local, el modo de desarrollo <b>no lo indexa</b> y la lupa
+                no encuentra nada. Recuerda detenerla cuando termines.
               </p>
             </section>
 

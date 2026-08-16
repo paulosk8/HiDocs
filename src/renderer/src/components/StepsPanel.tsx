@@ -28,7 +28,9 @@ import { ShotModal } from './ShotModal'
 import { CaptureModal } from './CaptureModal'
 import { ContentModal } from './ContentModal'
 import { ConfirmDialog } from './ConfirmDialog'
+import { ChecksModal } from './ChecksModal'
 import { GitSection } from './GitSection'
+import { DocsChecksSection } from './DocsChecksSection'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
 import { useAiDraft } from '../useAiDraft'
 import { useGroupCapture } from '../useGroupCapture'
@@ -81,6 +83,8 @@ export function StepsPanel(): React.JSX.Element {
   const collapsedSections = useSession((s) => s.collapsedSections)
   const editing = useSession((s) => s.editing)
   const discardEditing = useSession((s) => s.discardEditing)
+  const checksRun = useSession((s) => s.checksRun)
+  const checksReport = useSession((s) => s.checksReport)
   const { draft } = useAiDraft()
   const recaptureGroup = useGroupCapture()
   const {
@@ -237,56 +241,80 @@ export function StepsPanel(): React.JSX.Element {
   // Los manejadores asíncronos leen el estado con `getState()`: detener la
   // grabación puede emitir todavía un último paso, y una copia capturada en el
   // render lo perdería.
-  const write = useCallback(async (): Promise<void> => {
-    const s = useSession.getState()
-    setBusy(true)
-    try {
-      const saved = await ipc.invoke('session:save', {
-        meta: s.meta,
-        viewport: s.viewport,
-        sessionId: s.sessionId,
-        createdAt: s.createdAt,
-        outputDir: s.outputDir,
-        steps: s.steps,
-        git: s.gitEnabled
-          ? {
-              enabled: true,
-              branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
-              message:
-                s.gitMessageOverride ??
-                suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
-              push: s.gitPush,
-              // Sin elección explícita se omite, y el main resuelve la rama por
-              // defecto del repositorio.
-              baseBranch: s.gitBaseBranch ?? undefined
-            }
-          : undefined
-      })
-      setResult(saved)
-      // Guardar es lo único que mueve el repositorio desde dentro de la app: el
-      // commit cambia de rama, puede crear una y deja el árbol limpio. Sin releer
-      // aquí, la franja de estado y el selector seguirían describiendo el
-      // repositorio de antes del commit hasta el próximo cambio de carpeta.
-      void ipc.invoke('git:inspect', s.outputDir).then(useSession.getState().setGitRepo)
-      invalidateBranches()
-      // Guardado con éxito: se descarta el borrador y se estrena sesión para la
-      // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
-      // un autoguardado pendiente no vuelva a crear el borrador.
-      startFreshSession()
-      // El material de referencia describe el proceso que se acaba de terminar.
-      // Conservarlo es lo correcto documentando varios procesos del mismo módulo,
-      // y un estorbo cuando la siguiente guía es de otra cosa: la IA redactaría
-      // con los nombres de la anterior sin que nadie lo note. Se pregunta al
-      // estrenar sesión, que es cuando la respuesta se conoce.
-      if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
-      void ipc.invoke('draft:clear')
-    } catch (err) {
-      setProblem(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-      setPendingSave(null)
-    }
-  }, [startFreshSession])
+  const write = useCallback(
+    async (options?: { skipVerify?: boolean }): Promise<void> => {
+      const s = useSession.getState()
+      setBusy(true)
+      // El diálogo de la comprobación se abre ANTES de invocar el guardado: los
+      // comandos tardan y el progreso llega por eventos, así que sin abrirlo aquí
+      // la app pasaría un minuto larga sin decir qué está haciendo. Solo si de
+      // verdad hay algo que ejecutar en el proyecto de destino.
+      const verifying =
+        s.gitEnabled &&
+        s.gitVerify &&
+        !options?.skipVerify &&
+        (s.docsChecks?.checks.length ?? 0) > 0
+      if (verifying) s.checksStart('commit')
+      try {
+        const saved = await ipc.invoke('session:save', {
+          meta: s.meta,
+          viewport: s.viewport,
+          sessionId: s.sessionId,
+          createdAt: s.createdAt,
+          outputDir: s.outputDir,
+          steps: s.steps,
+          git: s.gitEnabled
+            ? {
+                enabled: true,
+                branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
+                message:
+                  s.gitMessageOverride ??
+                  suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
+                push: s.gitPush,
+                // Sin elección explícita se omite, y el main resuelve la rama por
+                // defecto del repositorio.
+                baseBranch: s.gitBaseBranch ?? undefined,
+                verify: verifying
+              }
+            : undefined
+        })
+        // La comprobación falló: NO hay commit. El paquete sí está escrito, así
+        // que la sesión se conserva tal cual —con sus pasos y su borrador— para
+        // poder corregir y volver a pulsar ■. Estrenar sesión aquí sería tirar el
+        // trabajo justo cuando hace falta.
+        if (saved.checks && !saved.checks.ok) {
+          useSession.getState().checksFinish({ result: saved.checks })
+          return
+        }
+        useSession.getState().checksFinish()
+        setResult(saved)
+        // Guardar es lo único que mueve el repositorio desde dentro de la app: el
+        // commit cambia de rama, puede crear una y deja el árbol limpio. Sin releer
+        // aquí, la franja de estado y el selector seguirían describiendo el
+        // repositorio de antes del commit hasta el próximo cambio de carpeta.
+        void ipc.invoke('git:inspect', s.outputDir).then(useSession.getState().setGitRepo)
+        invalidateBranches()
+        // Guardado con éxito: se descarta el borrador y se estrena sesión para la
+        // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
+        // un autoguardado pendiente no vuelva a crear el borrador.
+        startFreshSession()
+        // El material de referencia describe el proceso que se acaba de terminar.
+        // Conservarlo es lo correcto documentando varios procesos del mismo módulo,
+        // y un estorbo cuando la siguiente guía es de otra cosa: la IA redactaría
+        // con los nombres de la anterior sin que nadie lo note. Se pregunta al
+        // estrenar sesión, que es cuando la respuesta se conoce.
+        if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
+        void ipc.invoke('draft:clear')
+      } catch (err) {
+        useSession.getState().checksFinish()
+        setProblem(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+        setPendingSave(null)
+      }
+    },
+    [startFreshSession]
+  )
 
   /**
    * Detiene la grabación de verdad y termina de guardar. Se llama al confirmar
@@ -413,6 +441,8 @@ export function StepsPanel(): React.JSX.Element {
     pasteProblem !== null ||
     discardEdit ||
     askContext ||
+    checksRun !== null ||
+    checksReport !== null ||
     aiError !== null
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
@@ -503,6 +533,10 @@ export function StepsPanel(): React.JSX.Element {
   // avisos) debe funcionar también con el panel colapsado.
   const dialogs = (
     <>
+      {/* La comprobación del sitio: mientras corre y cuando termina mal. Va
+          primero porque puede aparecer sobre cualquier otra cosa del panel. */}
+      <ChecksModal onCommitAnyway={() => void write({ skipVerify: true })} />
+
       {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
 
       {capture && (
@@ -948,6 +982,7 @@ export function StepsPanel(): React.JSX.Element {
       </div>
 
       <GitSection />
+      <DocsChecksSection />
 
       {dialogs}
     </aside>

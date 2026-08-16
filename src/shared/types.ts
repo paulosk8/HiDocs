@@ -230,6 +230,77 @@ export interface SaveResult {
   git?: GitCommitResult
   /** el commit se pidió pero falló; el paquete en disco sí se escribió */
   gitError?: string
+  /**
+   * Comprobación del sitio antes de commitear (§18). Si falló, el commit NO se
+   * hizo: el paquete está en disco y se puede corregir y volver a guardar.
+   */
+  checks?: ChecksResult
+}
+
+/* --- Comprobación del sitio de destino (§18) --- */
+
+/** Un comando del proyecto de destino que sabemos interpretar. */
+export interface DocCheck {
+  /** nombre del script en su `package.json` */
+  script: string
+  /** cómo se nombra en la GUI */
+  label: string
+  /** qué comprueba, en una línea */
+  detail: string
+}
+
+/** Qué se puede ejecutar en el proyecto que contiene la carpeta de salida. */
+export interface ProjectChecks {
+  /** raíz del proyecto Docusaurus: donde están `package.json` y la configuración */
+  projectRoot: string
+  /** los comandos conocidos que ese proyecto tiene, en orden de ejecución */
+  checks: DocCheck[]
+  /** tiene `build` y `serve`: se puede levantar la vista previa compilada */
+  canServe: boolean
+}
+
+export interface CheckRun {
+  script: string
+  label: string
+  ok: boolean
+  /** lo que tardó, para poder decir por qué guardar tardó tanto */
+  ms: number
+  /** últimas líneas de su salida (ahí está el error) */
+  output: string
+}
+
+export interface ChecksResult {
+  projectRoot: string
+  /** todo pasó; con `false` no se ha commiteado nada */
+  ok: boolean
+  runs: CheckRun[]
+  /** lo paró el usuario: no es un fallo del sitio */
+  canceled?: boolean
+}
+
+/** Progreso de la tanda, un comando (y una línea de su salida) a la vez. */
+export interface CheckProgress {
+  script: string
+  label: string
+  index: number
+  total: number
+  /** una línea recién escrita por el comando; ausente al empezar cada uno */
+  line?: string
+}
+
+/** Resultado de levantar la vista previa compilada. */
+export interface PreviewResult {
+  /** dirección servida, ya abierta en el navegador */
+  url?: string
+  /** no se pudo ni intentar (sin proyecto, sin `serve`, el servidor no respondió) */
+  error?: string
+  /** el `build` previo falló: aquí está el motivo */
+  checks?: ChecksResult
+}
+
+export interface PreviewStatus {
+  running: boolean
+  url?: string
 }
 
 /**
@@ -494,6 +565,11 @@ export interface GitSaveOptions {
   push: boolean
   /** elegida en el explorador de repositorios; sin ella se usa la por defecto */
   baseBranch?: string
+  /**
+   * Comprobar el sitio antes de commitear (§18). Con `false` se comitea sin
+   * ejecutar nada: es lo que hace «Registrar de todos modos» tras un fallo.
+   */
+  verify?: boolean
 }
 
 /**

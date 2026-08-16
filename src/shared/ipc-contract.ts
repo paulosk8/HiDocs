@@ -12,6 +12,8 @@ import type {
   AiSettings,
   AiStatus,
   BranchDocInfo,
+  CheckProgress,
+  ChecksResult,
   CommitDocs,
   DiscardResult,
   DocSession,
@@ -24,6 +26,9 @@ import type {
   GitSaveOptions,
   FlowAction,
   PendingDocInfo,
+  PreviewResult,
+  PreviewStatus,
+  ProjectChecks,
   ProjectEntry,
   RegenReport,
   RegenStepResult,
@@ -392,6 +397,25 @@ export interface IpcInvokeMap {
    * `docs/` (donde la documentación sí se renderiza); si no, `null`.
    */
   'docusaurus:suggest-docs': (dir: string) => string | null
+  /**
+   * Qué comandos del proyecto de destino se pueden ejecutar para comprobar el
+   * sitio (§18), o `null` si la carpeta de salida no está en uno.
+   */
+  'checks:detect': (outputDir: string) => ProjectChecks | null
+  /**
+   * Ejecuta las comprobaciones a petición (guardar las lanza por su cuenta).
+   * El progreso llega por el evento `checks:progress`.
+   */
+  'checks:run': (outputDir: string) => ChecksResult | null
+  /** corta la tanda en marcha (la de guardar incluida) */
+  'checks:cancel': () => void
+  /**
+   * Compila el sitio y lo sirve, y abre en el navegador la guía indicada.
+   * `segments` son las carpetas de la guía (módulo/subcategoría/funcionalidad).
+   */
+  'preview:start': (args: { outputDir: string; segments?: string[] }) => PreviewResult
+  'preview:stop': () => void
+  'preview:status': () => PreviewStatus
   /** guarda el borrador de la grabación en curso (autoguardado) */
   'draft:save': (draft: DraftPayload) => void
   /** carga el borrador guardado, o null si no hay */
@@ -424,6 +448,8 @@ export interface IpcEventMap {
   'runner:progress': RegenStepResult
   /** progreso de la redacción con IA, tras cada lote */
   'ai:progress': { done: number; total: number }
+  /** progreso de la comprobación del sitio: qué comando y qué va escribiendo */
+  'checks:progress': CheckProgress
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -464,6 +490,12 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'projects:list',
   'projects:forget',
   'docusaurus:suggest-docs',
+  'checks:detect',
+  'checks:run',
+  'checks:cancel',
+  'preview:start',
+  'preview:stop',
+  'preview:status',
   'draft:save',
   'draft:load',
   'draft:clear',
@@ -480,7 +512,8 @@ export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'recorder:toggle-shortcut',
   'engine:log',
   'runner:progress',
-  'ai:progress'
+  'ai:progress',
+  'checks:progress'
 ]
 
 /** Protocolo custom que sirve las capturas temporales al renderer. */
