@@ -26,6 +26,26 @@ export function slug(value: string): string {
   return normalized
 }
 
+/** kebab-case para nombres de carpeta; nunca vacío, para no generar rutas rotas. */
+export function kebab(value: string): string {
+  return slug(value) || 'sin-nombre'
+}
+
+/**
+ * Carpetas del paquete de una funcionalidad, tal como se escriben en disco: la
+ * subcategoría solo aparece si el usuario la ha puesto.
+ *
+ * Lo usan el guardado (para escribir) y la vista previa (para encontrar la
+ * página ya compilada y abrirla): la ruta debe ser la misma o la vista previa
+ * abriría la portada del sitio en vez de la guía.
+ */
+export function featureSegments(module: string, subcategory: string, feature: string): string[] {
+  const segments = [kebab(module)]
+  if (subcategory.trim()) segments.push(kebab(subcategory))
+  segments.push(kebab(feature))
+  return segments
+}
+
 /**
  * Rama sugerida: `docs/<modulo>`, una por módulo.
  *

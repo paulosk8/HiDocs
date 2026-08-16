@@ -48,7 +48,8 @@ const ACTION_LABEL: Record<string, string> = {
   capture: 'Captura',
   image: 'Imagen',
   content: 'Contenido',
-  section: 'Sección'
+  section: 'Sección',
+  group: 'Capturas'
 }
 
 /**
@@ -96,9 +97,26 @@ export function renderFeatureMdx(
   hasImage: (relativePath: string) => boolean,
   subLabel = ''
 ): string {
+  // Las carpetas de capturas (§17) y lo que contiene cada una. Un paso metido en
+  // una carpeta no se publica por su cuenta: es una de las ilustraciones del
+  // paso que ES la carpeta, y se imprime dentro de ella. Si la carpeta se excluye
+  // del manual, se van con ella: sacarlas sueltas convertiría un paso en cuatro.
+  const folders = new Map(session.steps.filter((s) => s.kind === 'group').map((s) => [s.id, s]))
+  const owner = (step: DocStep): DocStep | undefined =>
+    step.groupId ? folders.get(step.groupId) : undefined
+
   // Los pasos marcados como «no incluir en docs» son de navegación: se omiten
   // del manual pero la numeración visible sigue siendo correlativa.
-  const included = session.steps.filter((s) => s.includeInDocs !== false)
+  const included = session.steps.filter(
+    (s) => s.includeInDocs !== false && owner(s)?.includeInDocs !== false
+  )
+  const members = new Map<string, DocStep[]>()
+  for (const step of included) {
+    if (!owner(step)) continue
+    const list = members.get(step.groupId as string) ?? []
+    list.push(step)
+    members.set(step.groupId as string, list)
+  }
   const out: string[] = []
 
   const title = session.title.trim() || titleCase(session.feature)
@@ -162,6 +180,42 @@ export function renderFeatureMdx(
       if (step.description.trim()) {
         out.push(mdxSafe(step.description.trim()))
         out.push('')
+      }
+      continue
+    }
+    // Lo que está dentro de una carpeta lo publica la carpeta, más abajo.
+    if (owner(step)) continue
+    // Una carpeta de capturas es UN paso del manual con varias ilustraciones:
+    // se numera y se titula como cualquier otro, y debajo van sus capturas en
+    // orden, cada una con su pie (el título de la tarjeta) si lo tiene. Las
+    // capturas no se numeran: numerarlas diría que hay que hacer cuatro cosas
+    // donde el manual describe una.
+    if (step.kind === 'group') {
+      n++
+      out.push(`${stepLevel} ${n}. ${mdxSafe(step.title.trim() || 'Capturas')}`)
+      out.push('')
+      if (step.description.trim()) {
+        out.push(mdxSafe(step.description.trim()))
+        out.push('')
+      }
+      out.push(...renderContent(step.content))
+      out.push(...renderNote(step.note))
+      for (const member of members.get(step.id) ?? []) {
+        const caption = member.title.trim()
+        if (caption) {
+          out.push(`**${mdxSafe(caption)}**`)
+          out.push('')
+        }
+        if (member.description.trim()) {
+          out.push(mdxSafe(member.description.trim()))
+          out.push('')
+        }
+        out.push(...renderContent(member.content))
+        out.push(...renderNote(member.note))
+        if (member.screenshot && hasImage(member.screenshot)) {
+          out.push(`![${caption ? mdxSafe(caption) : `Paso ${n}`}](./${member.screenshot})`)
+          out.push('')
+        }
       }
       continue
     }

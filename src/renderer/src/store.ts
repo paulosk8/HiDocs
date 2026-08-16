@@ -12,8 +12,11 @@ import {
   type AiStatus,
   type AiStepDraft,
   type BranchDocInfo,
+  type CheckProgress,
+  type ChecksResult,
   type FlowAction,
   type GitRepoInfo,
+  type ProjectChecks,
   type EngineState,
   type RecorderStatus,
   type RegenReport,
@@ -89,6 +92,35 @@ interface SessionState {
   gitRepo: GitRepoInfo | null
   gitEnabled: boolean
   gitPush: boolean
+  /**
+   * Comprobar el sitio antes de registrar en Git (§18). Preferencia del usuario,
+   * persistida: compilar tarda, y hay tandas en las que se prefiere registrar y
+   * revisar después.
+   */
+  gitVerify: boolean
+
+  /**
+   * Comandos que el proyecto de destino ofrece, o `null` si la carpeta de salida
+   * no está dentro de un proyecto Docusaurus (entonces no hay nada que ejecutar
+   * y guardar no se detiene a comprobar nada).
+   */
+  docsChecks: ProjectChecks | null
+  /** tanda en marcha: qué comando va y qué lleva escrito */
+  checksRun: {
+    purpose: ChecksPurpose
+    label: string
+    index: number
+    total: number
+    lines: string[]
+  } | null
+  /** lo que hay que leer cuando termina mal (o cuando la vista previa no sale) */
+  checksReport: {
+    purpose: ChecksPurpose
+    result?: ChecksResult
+    error?: string
+  } | null
+  /** vista previa servida en marcha, con su dirección */
+  previewUrl: string | null
   /**
    * Rama de trabajo: donde se registrará esta grabación. `null` = todavía no se
    * ha elegido ninguna, y entonces se usa la sugerida a partir del módulo
@@ -196,7 +228,7 @@ interface SessionState {
    * está el arrastre, como con cualquier otro paso.
    */
   addManualStep: (step: {
-    kind: 'capture' | 'image' | 'content' | 'section'
+    kind: 'capture' | 'image' | 'content' | 'section' | 'group'
     title: string
     tempFile?: string
     /** cuerpo inicial del bloque, cuando viene pegado del portapapeles */
@@ -205,8 +237,16 @@ interface SessionState {
   updateStep: (id: string, patch: Partial<RecordedStep>) => void
   removeStep: (id: string) => void
 
-  /** pliega o despliega una sección (solo afecta a la vista) */
+  /** pliega o despliega una sección o una carpeta (solo afecta a la vista) */
   toggleSection: (id: string) => void
+  /**
+   * Mete un paso en una carpeta de capturas (§17). Es el gesto de arrastrar una
+   * tarjeta hasta la zona de la carpeta: no exige que el paso esté al lado ni que
+   * sea de ningún tipo concreto, que es justo lo que ⊞ Agrupar no permite.
+   */
+  addToGroup: (stepId: string, groupId: string) => void
+  /** Saca un paso de su carpeta y lo deja suelto justo detrás de ella. */
+  removeFromGroup: (stepId: string) => void
   /** marca o desmarca un paso para agruparlo con otros */
   toggleSelect: (id: string) => void
   clearSelection: () => void
@@ -244,7 +284,7 @@ interface SessionState {
   startFreshSession: () => void
 
   setGitRepo: (repo: GitRepoInfo | null) => void
-  setGit: (patch: Partial<Pick<SessionState, 'gitEnabled' | 'gitPush'>>) => void
+  setGit: (patch: Partial<Pick<SessionState, 'gitEnabled' | 'gitPush' | 'gitVerify'>>) => void
   setGitBranch: (value: string | null) => void
   setGitMessage: (value: string | null) => void
   setGitBaseBranch: (value: string | null) => void
@@ -278,6 +318,16 @@ interface SessionState {
   runnerFinish: (report: RegenReport) => void
   runnerClose: () => void
 
+  setDocsChecks: (checks: ProjectChecks | null) => void
+  /** empieza una tanda: el diálogo aparece antes de que llegue la primera línea */
+  checksStart: (purpose: ChecksPurpose) => void
+  checksProgress: (progress: CheckProgress) => void
+  /** termina la tanda: sin argumentos, salió bien y no hay nada que mostrar */
+  checksFinish: (report?: { result?: ChecksResult; error?: string }) => void
+  /** cierra el informe (el usuario ya lo leyó) */
+  checksClose: () => void
+  setPreviewUrl: (url: string | null) => void
+
   setAiStatus: (status: AiStatus) => void
   setAiOpen: (open: boolean) => void
   setAiContextOpen: (open: boolean) => void
@@ -290,11 +340,31 @@ interface SessionState {
 }
 
 const GROUP_KEY = 'docrecorder.groupConsecutive'
+const VERIFY_KEY = 'docrecorder.verifyBeforeCommit'
+
+/** Líneas de salida que se guardan del comando en marcha, para enseñar el final. */
+const CHECK_LINES = 60
+
+/** Para qué se está comprobando: cambia lo que se ofrece al terminar. */
+export type ChecksPurpose = 'commit' | 'preview'
 
 /** Agrupar seguidos está activado salvo que el usuario lo haya desactivado. */
 function initialGroupConsecutive(): boolean {
   try {
     return localStorage.getItem(GROUP_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Comprobar antes de registrar viene activado: publicar un MDX que no compila es
+ * justo lo que esta comprobación existe para evitar, y en un proyecto sin los
+ * comandos no cuesta nada porque no hay nada que ejecutar.
+ */
+function initialVerify(): boolean {
+  try {
+    return localStorage.getItem(VERIFY_KEY) !== '0'
   } catch {
     return true
   }
@@ -517,7 +587,10 @@ export function selectionProblem(steps: RecordedStep[], selectedIds: string[]): 
   }
   const chosen = indexes.map((index) => steps[index])
   if (chosen.some((step) => step.kind && step.kind !== 'interaction')) {
-    return 'Las capturas, los bloques de contenido y las secciones no se agrupan: no son acciones del flujo.'
+    return 'Las capturas, los bloques de contenido, las secciones y las carpetas no se agrupan: no son acciones del flujo. Para juntar capturas, arrástralas a una carpeta.'
+  }
+  if (chosen.some((step) => step.groupId)) {
+    return 'Hay pasos que están dentro de una carpeta de capturas. Sácalos de ella para poder agruparlos.'
   }
   if (chosen.some((step) => !step.includeInDocs)) {
     return 'Hay pasos excluidos de la documentación entre los marcados.'
@@ -585,15 +658,66 @@ function initialTheme(): 'light' | 'dark' {
   return 'light'
 }
 
+/** El paso es una carpeta de capturas (§17). */
+function isFolder(step: RecordedStep): boolean {
+  return step.kind === 'group'
+}
+
+/** El mismo paso, fuera de la carpeta en la que estuviera. */
+function withoutGroup(step: RecordedStep): RecordedStep {
+  if (step.groupId === undefined) return step
+  const next = { ...step }
+  delete next.groupId
+  return next
+}
+
+/**
+ * Devuelve la lista con la invariante de las carpetas puesta: cada carpeta va
+ * seguida inmediatamente de sus capturas, y nadie apunta a una carpeta que ya no
+ * existe.
+ *
+ * Se aplica en TODA renumeración, que es lo que la convierte en una invariante
+ * de verdad: da igual si los pasos vienen de arrastrar, de grabar en medio, de un
+ * borrador de ayer o de un commit. Así, el resto del código puede dar por hecho
+ * que un bloque es contiguo (dibujarlo, moverlo, publicarlo) sin comprobarlo cada
+ * vez. Quitar la carpeta libera sus pasos en lugar de perderlos, igual que quitar
+ * una sección conserva los suyos.
+ */
+function regroup(steps: RecordedStep[]): RecordedStep[] {
+  const folders = new Set(steps.filter(isFolder).map((step) => step.id))
+  const belongs = (step: RecordedStep): boolean =>
+    !isFolder(step) && !!step.groupId && folders.has(step.groupId)
+
+  const members = new Map<string, RecordedStep[]>()
+  for (const step of steps) {
+    if (!belongs(step)) continue
+    const list = members.get(step.groupId as string) ?? []
+    list.push(step)
+    members.set(step.groupId as string, list)
+  }
+
+  const out: RecordedStep[] = []
+  for (const step of steps) {
+    if (belongs(step)) continue
+    // Lo que queda con `groupId` aquí o es huérfano (su carpeta se borró) o es
+    // una carpeta que alguien intentó meter en otra: en ambos casos, suelto.
+    out.push(step.groupId ? withoutGroup(step) : step)
+    if (isFolder(step)) out.push(...(members.get(step.id) ?? []))
+  }
+  return out
+}
+
 /**
  * Renumera la lista. Los separadores de sección no consumen número: son
  * estructura, no pasos, y si contaran el panel mostraría saltos («1, 2, 4») que
- * no se corresponden con nada del manual.
+ * no se corresponden con nada del manual. Las capturas de una carpeta tampoco:
+ * son las ilustraciones del paso que es la carpeta, y el manual las publica
+ * dentro de él.
  */
 function renumber(steps: RecordedStep[]): RecordedStep[] {
   let n = 0
-  return steps.map((step) =>
-    step.kind === 'section' ? { ...step, order: 0 } : { ...step, order: ++n }
+  return regroup(steps).map((step) =>
+    step.kind === 'section' || step.groupId ? { ...step, order: 0 } : { ...step, order: ++n }
   )
 }
 
@@ -606,6 +730,26 @@ export function sectionSize(steps: RecordedStep[], index: number): number {
   let end = index + 1
   while (end < steps.length && steps[end].kind !== 'section') end++
   return end - index - 1
+}
+
+/** Cuántas capturas contiene la carpeta que empieza en `index`. */
+export function groupSize(steps: RecordedStep[], index: number): number {
+  const id = steps[index]?.id
+  let end = index + 1
+  while (end < steps.length && steps[end].groupId === id) end++
+  return end - index - 1
+}
+
+/**
+ * Cuántos pasos se mueven junto al de `index`: una sección se lleva su apartado y
+ * una carpeta se lleva sus capturas. Cualquier otro paso viaja solo.
+ */
+function blockSize(steps: RecordedStep[], index: number): number {
+  const step = steps[index]
+  if (!step) return 0
+  if (step.kind === 'section') return 1 + sectionSize(steps, index)
+  if (isFolder(step)) return 1 + groupSize(steps, index)
+  return 1
 }
 
 /** Despliega la sección que contiene al paso `index`, si estaba plegada. */
@@ -649,6 +793,11 @@ export const useSession = create<SessionState>((set) => ({
   gitRepo: null,
   gitEnabled: false,
   gitPush: false,
+  gitVerify: initialVerify(),
+  docsChecks: null,
+  checksRun: null,
+  checksReport: null,
+  previewUrl: null,
   gitBranchOverride: null,
   gitMessageOverride: null,
   branchDocs: [],
@@ -823,6 +972,17 @@ export const useSession = create<SessionState>((set) => ({
   // reproducir. La URL se anota igual, porque sitúa dónde estaba el usuario.
   addManualStep: ({ kind, title, tempFile, content }) =>
     set((s) => {
+      // Trabajando dentro de una carpeta —se acaba de crear, o se está mirando
+      // una de sus capturas—, lo que se añade entra DENTRO: es lo que se estaba
+      // haciendo. Una sección o una carpeta nueva no, que son estructura y no
+      // caben ahí (`regroup` las dejaría fuera igualmente).
+      const current = s.steps.find((existing) => existing.id === s.activeStepId)
+      const owner =
+        kind === 'section' || kind === 'group'
+          ? undefined
+          : current && isFolder(current)
+            ? current.id
+            : current?.groupId
       const step: RecordedStep = {
         id: crypto.randomUUID(),
         order: s.steps.length + 1,
@@ -837,6 +997,7 @@ export const useSession = create<SessionState>((set) => ({
         includeInDocs: true,
         timestamp: new Date().toISOString(),
         tempFile: tempFile ?? '',
+        ...(owner ? { groupId: owner } : {}),
         ...(kind === 'content' ? { content: content ?? '' } : {}),
         // Una imagen o una captura también admiten bloque de contenido, pero solo
         // si viene dado: abrir el editor vacío en cada imagen sería estorbo.
@@ -847,7 +1008,14 @@ export const useSession = create<SessionState>((set) => ({
       // secciones: el título de un apartado se pone delante de los pasos que
       // encabeza, así que se marca el paso ANTERIOR al apartado nuevo y se añade.
       const active = s.steps.findIndex((existing) => existing.id === s.activeStepId)
-      const at = active >= 0 ? active + 1 : s.steps.length
+      // Con la carpeta seleccionada, lo añadido va al FINAL de lo que ya guarda:
+      // se la está llenando, y colar la captura nueva delante de la primera sería
+      // lo contrario de lo que se pidió. Marcando una captura concreta, en cambio,
+      // lo nuevo va justo detrás de ella, como en el resto del panel.
+      const at =
+        active < 0
+          ? s.steps.length
+          : active + 1 + (isFolder(s.steps[active]) ? groupSize(s.steps, active) : 0)
       const next = [...s.steps]
       next.splice(at, 0, step)
       return {
@@ -960,20 +1128,62 @@ export const useSession = create<SessionState>((set) => ({
 
   // Arrastrar una sección la mueve CON sus pasos: es la razón de existir de las
   // secciones —reordenar un apartado entero de doce pasos sin arrastrarlos uno a
-  // uno—, y dejar el título viajando solo sería justo lo contrario.
+  // uno—, y dejar el título viajando solo sería justo lo contrario. Una carpeta
+  // de capturas viaja igual, con las suyas dentro.
   reorderSteps: (fromIndex, toIndex) =>
     set((s) => {
       const moved = s.steps[fromIndex]
       if (!moved) return {}
-      const size = moved.kind === 'section' ? 1 + sectionSize(s.steps, fromIndex) : 1
+      const size = blockSize(s.steps, fromIndex)
       const block = s.steps.slice(fromIndex, fromIndex + size)
       const rest = [...s.steps.slice(0, fromIndex), ...s.steps.slice(fromIndex + size)]
       // `toIndex` viene referido a la lista ORIGINAL (el paso sobre el que se
       // soltó); al quitar el bloque, todo lo que había detrás se ha corrido.
       const at = toIndex > fromIndex ? Math.max(0, toIndex - size + 1) : toIndex
       rest.splice(at, 0, ...block)
+      // Sacar una captura de su carpeta se hace arrastrándola fuera: si al
+      // soltarla ya no tiene delante ni su carpeta ni una compañera, deja de
+      // pertenecer a ella. Meterla NO se hace así —para eso está la zona de la
+      // carpeta—, porque entonces cualquier paso soltado detrás del bloque
+      // acabaría dentro sin que nadie lo pidiera.
+      if (moved.groupId) {
+        const before = rest[at - 1]
+        const inside = !!before && (before.id === moved.groupId || before.groupId === moved.groupId)
+        if (!inside) rest[at] = withoutGroup(moved)
+      }
       return { steps: renumber(rest) }
     }),
+
+  // Meter una captura en la carpeta: va al final de las que ya tenga (`regroup`
+  // la recoloca detrás de su carpeta), y la carpeta se despliega si estaba
+  // plegada, porque soltar algo que no se ve parecería que no ha pasado nada.
+  addToGroup: (stepId, groupId) =>
+    set((s) => {
+      const step = s.steps.find((existing) => existing.id === stepId)
+      const folder = s.steps.find((existing) => existing.id === groupId)
+      if (!step || !folder || !isFolder(folder) || step.groupId === groupId) return {}
+      // Ni una carpeta dentro de otra ni una sección dentro de una carpeta: una
+      // carpeta es un paso del manual, y el manual no numera pasos anidados.
+      if (isFolder(step) || step.kind === 'section') return {}
+      return {
+        steps: renumber(
+          s.steps.map((existing) => (existing.id === stepId ? { ...existing, groupId } : existing))
+        ),
+        activeStepId: stepId,
+        selectedIds: s.selectedIds.filter((selected) => selected !== stepId),
+        collapsedSections: s.collapsedSections.filter((id) => id !== groupId)
+      }
+    }),
+
+  // Sacarla con el botón: se queda justo detrás de la carpeta, que es donde el
+  // usuario la está mirando, en vez de irse al final de la lista.
+  removeFromGroup: (stepId) =>
+    set((s) => ({
+      steps: renumber(
+        s.steps.map((existing) => (existing.id === stepId ? withoutGroup(existing) : existing))
+      ),
+      activeStepId: stepId
+    })),
 
   clearFocus: () => set({ focusStepId: null }),
   setActiveStep: (activeStepId) => set({ activeStepId }),
@@ -1101,7 +1311,16 @@ export const useSession = create<SessionState>((set) => ({
         gitBranchOverride: movedToAnother ? null : s.gitBranchOverride
       }
     }),
-  setGit: (patch) => set(patch),
+  setGit: (patch) => {
+    if (patch.gitVerify !== undefined) {
+      try {
+        localStorage.setItem(VERIFY_KEY, patch.gitVerify ? '1' : '0')
+      } catch {
+        // sin persistencia vale para esta sesión
+      }
+    }
+    set(patch)
+  },
   setGitBranch: (gitBranchOverride) => set({ gitBranchOverride }),
   setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
@@ -1202,6 +1421,48 @@ export const useSession = create<SessionState>((set) => ({
   runnerProgressAdd: (result) => set((s) => ({ runnerProgress: [...s.runnerProgress, result] })),
   runnerFinish: (report) => set({ runnerPhase: 'done', runnerReport: report }),
   runnerClose: () => set({ runnerPhase: 'idle', runnerProgress: [], runnerReport: null }),
+
+  setDocsChecks: (docsChecks) => set({ docsChecks }),
+
+  checksStart: (purpose) =>
+    set((s) => ({
+      checksReport: null,
+      checksRun: {
+        purpose,
+        label: 'Preparando…',
+        index: 0,
+        total: s.docsChecks?.checks.length ?? 1,
+        lines: []
+      }
+    })),
+
+  // Solo se conservan las últimas líneas: la salida de una compilación son miles
+  // y el diálogo enseña el final, que es donde está el error.
+  checksProgress: (progress) =>
+    set((s) => {
+      if (!s.checksRun) return {}
+      const lines = progress.line
+        ? [...s.checksRun.lines, progress.line].slice(-CHECK_LINES)
+        : s.checksRun.lines
+      return {
+        checksRun: {
+          ...s.checksRun,
+          label: progress.label,
+          index: progress.index,
+          total: progress.total,
+          lines
+        }
+      }
+    }),
+
+  checksFinish: (report) =>
+    set((s) => ({
+      checksRun: null,
+      checksReport: report && s.checksRun ? { purpose: s.checksRun.purpose, ...report } : null
+    })),
+
+  checksClose: () => set({ checksReport: null }),
+  setPreviewUrl: (previewUrl) => set({ previewUrl }),
 
   setAiStatus: (aiStatus) => set({ aiStatus }),
   setAiOpen: (aiOpen) => set({ aiOpen }),

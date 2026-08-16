@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { analyzeContent } from '../../../shared/mdx-content'
 import { renderMarkdown } from '../markdown'
 import type { AdmonitionType, StepNote } from '../../../shared/types'
@@ -36,13 +36,22 @@ const EMOJIS = ['✅', '⚠️', '❗', '👉', '🔑', '📌', '🔒', '⏱️'
 interface Props {
   value: StepNote | undefined
   onChange: (note: StepNote | undefined) => void
+  /**
+   * Quita la nota del paso (no solo cierra el editor). 📝 solo abre y cierra, así
+   * que sin esto una nota ya escrita se seguía publicando y la única forma de
+   * deshacerse de ella era vaciar el cuerpo y el título a mano.
+   */
+  onRemove?: () => void
 }
 
 const EMPTY: StepNote = { type: 'note', title: '', body: '' }
 
-export function NoteEditor({ value, onChange }: Props): React.JSX.Element {
+export function NoteEditor({ value, onChange, onRemove }: Props): React.JSX.Element {
   const note = value ?? EMPTY
   const bodyRef = useRef<HTMLTextAreaElement>(null)
+  // En línea y no en un diálogo: el visor nativo tapa cualquier superposición
+  // que no lance el panel (ver `ContentEditor`).
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   const setNote = (patch: Partial<StepNote>): void => {
     const next = { ...note, ...patch }
@@ -105,6 +114,39 @@ export function NoteEditor({ value, onChange }: Props): React.JSX.Element {
             <span aria-hidden>{ADMONITIONS[t].icon}</span> {ADMONITIONS[t].label}
           </button>
         ))}
+        {onRemove &&
+          (confirmRemove ? (
+            <span className="editor-remove-confirm">
+              ¿Quitar la nota?
+              <button
+                type="button"
+                className="danger"
+                onClick={() => {
+                  setConfirmRemove(false)
+                  onRemove()
+                }}
+              >
+                Quitar
+              </button>
+              <button type="button" onClick={() => setConfirmRemove(false)}>
+                Cancelar
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="editor-remove"
+              title="Quitar la nota de este paso"
+              aria-label="Quitar la nota"
+              // Una nota vacía no se ha llegado a escribir: no hay nada que
+              // confirmar.
+              onClick={() =>
+                note.body.trim() || note.title?.trim() ? setConfirmRemove(true) : onRemove()
+              }
+            >
+              🗑
+            </button>
+          ))}
       </div>
 
       <input

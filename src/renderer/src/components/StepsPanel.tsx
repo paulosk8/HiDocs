@@ -4,8 +4,10 @@ import {
   KeyboardSensor,
   PointerSensor,
   closestCenter,
+  pointerWithin,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent
 } from '@dnd-kit/core'
 import { restrictToVerticalAxis, restrictToParentElement } from '@dnd-kit/modifiers'
@@ -17,15 +19,18 @@ import {
 import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
-import { sectionSize, selectionProblem, useSession } from '../store'
+import { groupSize, sectionSize, selectionProblem, useSession } from '../store'
 import { invalidateBranches } from '../useBranches'
+import { GROUP_DROP_PREFIX, GroupCard } from './GroupCard'
 import { SectionCard } from './SectionCard'
 import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
 import { CaptureModal } from './CaptureModal'
 import { ContentModal } from './ContentModal'
 import { ConfirmDialog } from './ConfirmDialog'
+import { ChecksModal } from './ChecksModal'
 import { GitSection } from './GitSection'
+import { DocsChecksSection } from './DocsChecksSection'
 import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
 import { useAiDraft } from '../useAiDraft'
 import { useGroupCapture } from '../useGroupCapture'
@@ -69,6 +74,8 @@ export function StepsPanel(): React.JSX.Element {
   const groupSelected = useSession((s) => s.groupSelected)
   const removeSelected = useSession((s) => s.removeSelected)
   const addManualStep = useSession((s) => s.addManualStep)
+  const addToGroup = useSession((s) => s.addToGroup)
+  const setMeta = useSession((s) => s.setMeta)
   const wideContentId = useSession((s) => s.wideContentId)
   const setWideContentId = useSession((s) => s.setWideContentId)
   const updateStep = useSession((s) => s.updateStep)
@@ -76,6 +83,8 @@ export function StepsPanel(): React.JSX.Element {
   const collapsedSections = useSession((s) => s.collapsedSections)
   const editing = useSession((s) => s.editing)
   const discardEditing = useSession((s) => s.discardEditing)
+  const checksRun = useSession((s) => s.checksRun)
+  const checksReport = useSession((s) => s.checksReport)
   const { draft } = useAiDraft()
   const recaptureGroup = useGroupCapture()
   const {
@@ -113,6 +122,11 @@ export function StepsPanel(): React.JSX.Element {
   } | null>(null)
   /** confirmación de «descartar la edición» (no registra nada) */
   const [discardEdit, setDiscardEdit] = useState(false)
+  /**
+   * Se acaba de estrenar sesión con material de referencia puesto: hay que
+   * preguntar si sigue valiendo. Ver el diálogo, más abajo.
+   */
+  const [askContext, setAskContext] = useState(false)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -131,26 +145,62 @@ export function StepsPanel(): React.JSX.Element {
       : 'Se añadirá al final.'
 
   // El recuento del encabezado cuenta PASOS: una sección es un título, y sumarla
-  // haría que el panel dijera 12 donde el manual numera 10.
-  const stepCount = steps.filter((s) => s.kind !== 'section').length
+  // haría que el panel dijera 12 donde el manual numera 10. Las capturas de una
+  // carpeta tampoco cuentan: son las ilustraciones de un paso, no pasos.
+  const stepCount = steps.filter((s) => s.kind !== 'section' && !s.groupId).length
 
-  // Lo que se pinta: las secciones siempre, y los pasos de las que estén
-  // desplegadas. Plegar es lo que hace manejable una grabación de cuarenta pasos,
-  // y solo afecta a la vista: lo plegado se guarda y se publica igual.
+  // Lo que se pinta: las secciones y las carpetas siempre, y lo que cuelga de las
+  // que estén desplegadas. Plegar es lo que hace manejable una grabación de
+  // cuarenta pasos, y solo afecta a la vista: lo plegado se guarda y se publica
+  // igual.
+  //
+  // Aquí se calcula también la chapa de cada tarjeta: el número del paso, o
+  // «5·2» dentro de una carpeta, donde el paso del manual es la carpeta y la
+  // tarjeta es su segunda captura.
   const visible = useMemo(() => {
-    const rows: { step: RecordedStep; count: number; nested: boolean }[] = []
+    const rows: {
+      step: RecordedStep
+      count: number
+      nested: boolean
+      badge: string
+      inGroup: boolean
+    }[] = []
     let hidden = false
     // `nested` sangra los pasos que cuelgan de una sección: sin ese escalón, una
     // sección parece un separador suelto y no se ve dónde acaba su apartado.
     let nested = false
+    let folder: { badge: string; collapsed: boolean } | null = null
+    let inside = 0
     steps.forEach((step, index) => {
       if (step.kind === 'section') {
         hidden = collapsedSections.includes(step.id)
         nested = true
-        rows.push({ step, count: sectionSize(steps, index), nested: false })
-      } else if (!hidden) {
-        rows.push({ step, count: 0, nested })
+        folder = null
+        rows.push({
+          step,
+          count: sectionSize(steps, index),
+          nested: false,
+          badge: '',
+          inGroup: false
+        })
+        return
       }
+      if (step.groupId) {
+        inside++
+        if (hidden || !folder || folder.collapsed) return
+        rows.push({ step, count: 0, nested, badge: `${folder.badge}·${inside}`, inGroup: true })
+        return
+      }
+      folder = null
+      if (hidden) return
+      const badge = String(step.order)
+      if (step.kind === 'group') {
+        folder = { badge, collapsed: collapsedSections.includes(step.id) }
+        inside = 0
+        rows.push({ step, count: groupSize(steps, index), nested, badge, inGroup: false })
+        return
+      }
+      rows.push({ step, count: 0, nested, badge, inGroup: false })
     })
     return rows
   }, [steps, collapsedSections])
@@ -160,9 +210,29 @@ export function StepsPanel(): React.JSX.Element {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
+  /**
+   * La zona de una carpeta gana cuando el puntero está DENTRO de ella; en
+   * cualquier otro sitio se reordena como siempre.
+   *
+   * Con `closestCenter` a secas no habría forma de distinguir las dos cosas: la
+   * zona vive dentro de la tarjeta de la carpeta, y soltar cerca de ella
+   * significaría a veces «mete esto dentro» y a veces «ponlo antes». Exigir el
+   * puntero encima hace el gesto explícito. Arrastrando con el teclado no hay
+   * puntero: entonces solo se reordena, que es lo que el teclado puede expresar.
+   */
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    const dropZones = pointerWithin(args).filter((c) => String(c.id).startsWith(GROUP_DROP_PREFIX))
+    return dropZones.length ? dropZones : closestCenter(args)
+  }, [])
+
   const onDragEnd = (event: DragEndEvent): void => {
     const { active, over } = event
     if (!over || active.id === over.id) return
+    const overId = String(over.id)
+    if (overId.startsWith(GROUP_DROP_PREFIX)) {
+      addToGroup(String(active.id), overId.slice(GROUP_DROP_PREFIX.length))
+      return
+    }
     const from = steps.findIndex((s) => s.id === active.id)
     const to = steps.findIndex((s) => s.id === over.id)
     if (from >= 0 && to >= 0) reorderSteps(from, to)
@@ -171,50 +241,80 @@ export function StepsPanel(): React.JSX.Element {
   // Los manejadores asíncronos leen el estado con `getState()`: detener la
   // grabación puede emitir todavía un último paso, y una copia capturada en el
   // render lo perdería.
-  const write = useCallback(async (): Promise<void> => {
-    const s = useSession.getState()
-    setBusy(true)
-    try {
-      const saved = await ipc.invoke('session:save', {
-        meta: s.meta,
-        viewport: s.viewport,
-        sessionId: s.sessionId,
-        createdAt: s.createdAt,
-        outputDir: s.outputDir,
-        steps: s.steps,
-        git: s.gitEnabled
-          ? {
-              enabled: true,
-              branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
-              message:
-                s.gitMessageOverride ??
-                suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
-              push: s.gitPush,
-              // Sin elección explícita se omite, y el main resuelve la rama por
-              // defecto del repositorio.
-              baseBranch: s.gitBaseBranch ?? undefined
-            }
-          : undefined
-      })
-      setResult(saved)
-      // Guardar es lo único que mueve el repositorio desde dentro de la app: el
-      // commit cambia de rama, puede crear una y deja el árbol limpio. Sin releer
-      // aquí, la franja de estado y el selector seguirían describiendo el
-      // repositorio de antes del commit hasta el próximo cambio de carpeta.
-      void ipc.invoke('git:inspect', s.outputDir).then(useSession.getState().setGitRepo)
-      invalidateBranches()
-      // Guardado con éxito: se descarta el borrador y se estrena sesión para la
-      // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
-      // un autoguardado pendiente no vuelva a crear el borrador.
-      startFreshSession()
-      void ipc.invoke('draft:clear')
-    } catch (err) {
-      setProblem(err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
-      setPendingSave(null)
-    }
-  }, [startFreshSession])
+  const write = useCallback(
+    async (options?: { skipVerify?: boolean }): Promise<void> => {
+      const s = useSession.getState()
+      setBusy(true)
+      // El diálogo de la comprobación se abre ANTES de invocar el guardado: los
+      // comandos tardan y el progreso llega por eventos, así que sin abrirlo aquí
+      // la app pasaría un minuto larga sin decir qué está haciendo. Solo si de
+      // verdad hay algo que ejecutar en el proyecto de destino.
+      const verifying =
+        s.gitEnabled &&
+        s.gitVerify &&
+        !options?.skipVerify &&
+        (s.docsChecks?.checks.length ?? 0) > 0
+      if (verifying) s.checksStart('commit')
+      try {
+        const saved = await ipc.invoke('session:save', {
+          meta: s.meta,
+          viewport: s.viewport,
+          sessionId: s.sessionId,
+          createdAt: s.createdAt,
+          outputDir: s.outputDir,
+          steps: s.steps,
+          git: s.gitEnabled
+            ? {
+                enabled: true,
+                branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
+                message:
+                  s.gitMessageOverride ??
+                  suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
+                push: s.gitPush,
+                // Sin elección explícita se omite, y el main resuelve la rama por
+                // defecto del repositorio.
+                baseBranch: s.gitBaseBranch ?? undefined,
+                verify: verifying
+              }
+            : undefined
+        })
+        // La comprobación falló: NO hay commit. El paquete sí está escrito, así
+        // que la sesión se conserva tal cual —con sus pasos y su borrador— para
+        // poder corregir y volver a pulsar ■. Estrenar sesión aquí sería tirar el
+        // trabajo justo cuando hace falta.
+        if (saved.checks && !saved.checks.ok) {
+          useSession.getState().checksFinish({ result: saved.checks })
+          return
+        }
+        useSession.getState().checksFinish()
+        setResult(saved)
+        // Guardar es lo único que mueve el repositorio desde dentro de la app: el
+        // commit cambia de rama, puede crear una y deja el árbol limpio. Sin releer
+        // aquí, la franja de estado y el selector seguirían describiendo el
+        // repositorio de antes del commit hasta el próximo cambio de carpeta.
+        void ipc.invoke('git:inspect', s.outputDir).then(useSession.getState().setGitRepo)
+        invalidateBranches()
+        // Guardado con éxito: se descarta el borrador y se estrena sesión para la
+        // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
+        // un autoguardado pendiente no vuelva a crear el borrador.
+        startFreshSession()
+        // El material de referencia describe el proceso que se acaba de terminar.
+        // Conservarlo es lo correcto documentando varios procesos del mismo módulo,
+        // y un estorbo cuando la siguiente guía es de otra cosa: la IA redactaría
+        // con los nombres de la anterior sin que nadie lo note. Se pregunta al
+        // estrenar sesión, que es cuando la respuesta se conoce.
+        if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
+        void ipc.invoke('draft:clear')
+      } catch (err) {
+        useSession.getState().checksFinish()
+        setProblem(err instanceof Error ? err.message : String(err))
+      } finally {
+        setBusy(false)
+        setPendingSave(null)
+      }
+    },
+    [startFreshSession]
+  )
 
   /**
    * Detiene la grabación de verdad y termina de guardar. Se llama al confirmar
@@ -340,6 +440,9 @@ export function StepsPanel(): React.JSX.Element {
     wideContentId !== null ||
     pasteProblem !== null ||
     discardEdit ||
+    askContext ||
+    checksRun !== null ||
+    checksReport !== null ||
     aiError !== null
   useEffect(() => {
     void ipc.invoke('viewport:set-visible', !modalOpen)
@@ -430,6 +533,10 @@ export function StepsPanel(): React.JSX.Element {
   // avisos) debe funcionar también con el panel colapsado.
   const dialogs = (
     <>
+      {/* La comprobación del sitio: mientras corre y cuando termina mal. Va
+          primero porque puede aparecer sobre cualquier otra cosa del panel. */}
+      <ChecksModal onCommitAnyway={() => void write({ skipVerify: true })} />
+
       {shot && <ShotModal step={shot} onClose={() => setShot(null)} />}
 
       {capture && (
@@ -473,6 +580,15 @@ export function StepsPanel(): React.JSX.Element {
           value={wideStep.content ?? ''}
           onChange={(content) => updateStep(wideStep.id, { content })}
           onClose={() => setWideContentId(null)}
+          // En un paso que ES el bloque, quitarlo sería eliminar el paso.
+          onRemove={
+            wideStep.kind === 'content'
+              ? undefined
+              : () => {
+                  updateStep(wideStep.id, { content: '' })
+                  setWideContentId(null)
+                }
+          }
         />
       )}
 
@@ -527,11 +643,35 @@ export function StepsPanel(): React.JSX.Element {
           onConfirm={() => {
             setDiscardEdit(false)
             discardEditing()
+            if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
             // El borrador guardaba esta edición: sin borrarlo, al abrir la app
             // mañana se ofrecería continuar lo que se acaba de descartar.
             void ipc.invoke('draft:clear')
           }}
           onCancel={() => setDiscardEdit(false)}
+        />
+      )}
+
+      {/* Sesión nueva con el contexto de la anterior todavía puesto. Va después
+          del aviso de guardado (`!result`) para no encadenar dos diálogos: se
+          lee uno, se cierra, y entonces aparece este. */}
+      {askContext && !result && (
+        <ConfirmDialog
+          title="¿Sigue valiendo el contexto para la IA?"
+          body={[
+            `Tienes ${aiContext.length.toLocaleString('es')} caracteres de material de referencia,`,
+            'pegados para la guía que acabas de terminar. Se envían con cada redacción.',
+            '',
+            'Si la siguiente guía es de otro proceso, vacíalo: la IA redactaría con los',
+            'nombres y las reglas del anterior. Si sigues en el mismo módulo, consérvalo.'
+          ].join('\n')}
+          confirmLabel="Vaciar el contexto"
+          cancelLabel="Conservarlo"
+          onConfirm={() => {
+            setMeta({ aiContext: '' })
+            setAskContext(false)
+          }}
+          onCancel={() => setAskContext(false)}
         />
       )}
 
@@ -726,6 +866,16 @@ export function StepsPanel(): React.JSX.Element {
                   role="menuitem"
                   onClick={() => {
                     setAddOpen(false)
+                    addManualStep({ kind: 'group', title: '' })
+                  }}
+                >
+                  📁 Carpeta de capturas
+                  <small>Un paso con varias capturas; arrastra dentro las tarjetas</small>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAddOpen(false)
                     addManualStep({ kind: 'section', title: '' })
                   }}
                 >
@@ -795,7 +945,7 @@ export function StepsPanel(): React.JSX.Element {
 
         <DndContext
           sensors={sensors}
-          collisionDetection={closestCenter}
+          collisionDetection={collisionDetection}
           modifiers={[restrictToVerticalAxis, restrictToParentElement]}
           onDragEnd={onDragEnd}
         >
@@ -803,14 +953,18 @@ export function StepsPanel(): React.JSX.Element {
             items={visible.map((row) => row.step.id)}
             strategy={verticalListSortingStrategy}
           >
-            {visible.map(({ step, count, nested }) =>
+            {visible.map(({ step, count, nested, badge, inGroup }) =>
               step.kind === 'section' ? (
                 <SectionCard key={step.id} step={step} count={count} />
+              ) : step.kind === 'group' ? (
+                <GroupCard key={step.id} step={step} count={count} nested={nested} badge={badge} />
               ) : (
                 <StepCard
                   key={step.id}
                   step={step}
                   nested={nested}
+                  badge={badge}
+                  inGroup={inGroup}
                   onOpenShot={setShot}
                   onAdjustImage={(target) =>
                     setCapture({
@@ -828,6 +982,7 @@ export function StepsPanel(): React.JSX.Element {
       </div>
 
       <GitSection />
+      <DocsChecksSection />
 
       {dialogs}
     </aside>

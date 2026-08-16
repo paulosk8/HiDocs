@@ -175,7 +175,10 @@ const child = spawn(electronPath, ['.'], {
     // Descartar documentación manda los archivos a la papelera del sistema, que
     // es lo correcto para una persona y una guarrada para una prueba: iría
     // dejando carpetas temporales en la papelera de quien la ejecuta.
-    DOCRECORDER_NO_TRASH: '1'
+    DOCRECORDER_NO_TRASH: '1',
+    // La vista previa abre el sitio en el navegador del usuario. Se comprueba
+    // que la dirección responde, pero sin abrirle nada a quien ejecuta esto.
+    DOCRECORDER_NO_OPEN: '1'
   }
 })
 child.stdout.on('data', (d) => process.stdout.write(`[main] ${d}`))
@@ -285,7 +288,6 @@ try {
   const settle = async (predicate, ms = 12000) => {
     await gui.waitForFunction(predicate, null, { timeout: ms }).catch(() => {})
   }
-
 
   // Clic sobre el botón con data-testid; el modal aparece 250 ms después, así
   // que también comprueba la espera de estabilidad del DOM.
@@ -1561,7 +1563,10 @@ try {
   const aiBadKey = await gui.evaluate(() =>
     window.docrecorder
       .invoke('ai:set-key', { provider: 'anthropic', key: 'no es una clave 🫠' })
-      .then(() => null, (err) => String(err?.message ?? err))
+      .then(
+        () => null,
+        (err) => String(err?.message ?? err)
+      )
   )
   check(
     typeof aiBadKey === 'string' && /clave/i.test(aiBadKey),
@@ -1984,9 +1989,7 @@ try {
     }
   })
   check(
-    column.total === beforeTable + 1 &&
-      /2 filas/.test(column.title) &&
-      column.items.length === 2,
+    column.total === beforeTable + 1 && /2 filas/.test(column.title) && column.items.length === 2,
     'Tabla: la misma columna en dos filas se funde en un paso',
     `${column.title} · ${column.items.join(' · ')}`
   )
@@ -2216,8 +2219,14 @@ try {
   // --- El botón se agrupa a mano con el formulario ---
   const mixedCards = gui.locator('.step-card')
   const mixedTotal = await mixedCards.count()
-  await mixedCards.nth(mixedTotal - 2).locator('.step-select').check()
-  await mixedCards.nth(mixedTotal - 1).locator('.step-select').check()
+  await mixedCards
+    .nth(mixedTotal - 2)
+    .locator('.step-select')
+    .check()
+  await mixedCards
+    .nth(mixedTotal - 1)
+    .locator('.step-select')
+    .check()
   await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
   await gui.waitForFunction(
     (n) => document.querySelectorAll('.step-card').length === n - 1,
@@ -2257,8 +2266,14 @@ try {
   await waitSteps(beforeRowBtn + 2, 'fila+botón: botón de la barra')
   const rowCards = gui.locator('.step-card')
   const rowTotal = await rowCards.count()
-  await rowCards.nth(rowTotal - 2).locator('.step-select').check()
-  await rowCards.nth(rowTotal - 1).locator('.step-select').check()
+  await rowCards
+    .nth(rowTotal - 2)
+    .locator('.step-select')
+    .check()
+  await rowCards
+    .nth(rowTotal - 1)
+    .locator('.step-select')
+    .check()
   await gui.locator('.panel-toolbar.selection .btn:has-text("Agrupar")').click()
   await gui.waitForFunction(
     (n) => document.querySelectorAll('.step-card').length === n - 1,
@@ -2303,7 +2318,9 @@ try {
   // control, así que se funden en un paso, que es como lo cuenta un manual.
   await target.click('#ver-editar')
   await settle(() =>
-    /«Ver».*«Editar»/.test([...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? '')
+    /«Ver».*«Editar»/.test(
+      [...document.querySelectorAll('.step-card .step-title')].pop()?.value ?? ''
+    )
   )
   const menuGroup = await gui.evaluate(() => ({
     total: document.querySelectorAll('.step-card').length,
@@ -2796,6 +2813,44 @@ try {
   )
   check(true, 'Pegar: «+ Añadir → Imagen del portapapeles» lee el portapapeles del sistema')
 
+  // --- Quitar la nota y el bloque de contenido de un paso ---
+  //
+  // ▦ y 📝 solo abren y cierran su editor: sin un «quitar» de verdad, lo escrito
+  // por error se seguía publicando y la única salida era vaciar el texto a mano.
+  // Se comprueba en la tarjeta y, más abajo, en el manual publicado.
+  const removable = gui
+    .locator('.step-card:not(.kind-content):not(.kind-image):not(.kind-capture)')
+    .first()
+  await removable.locator('.note-btn').click()
+  await removable.locator('.note-body').fill('Nota que se va a quitar.')
+  await removable.locator('.content-btn').click()
+  await removable.locator('.content-body').fill('Bloque que se va a quitar.')
+  await removable.locator('.note-btn.has-note').waitFor({ timeout: 5000 })
+  await removable.locator('.content-btn.has-content').waitFor({ timeout: 5000 })
+  check(true, 'Quitar: un paso admite a la vez nota y bloque de contenido')
+
+  // Con texto escrito, el 🗑 pregunta antes: la confirmación es EN LÍNEA porque
+  // el visor nativo taparía cualquier diálogo que no lance el panel.
+  await removable.locator('.step-note .editor-remove').click()
+  await removable.locator('.step-note .editor-remove-confirm button.danger').click()
+  await removable.locator('.step-content .editor-remove').click()
+  await removable.locator('.step-content .editor-remove-confirm button.danger').click()
+  const cleaned = await gui.evaluate(() => {
+    const card = document.querySelector(
+      '.step-card:not(.kind-content):not(.kind-image):not(.kind-capture)'
+    )
+    return {
+      note: !!card.querySelector('.note-editor'),
+      content: !!card.querySelector('.content-editor'),
+      marked: !!card.querySelector('.has-note, .has-content')
+    }
+  })
+  check(
+    !cleaned.note && !cleaned.content && !cleaned.marked,
+    'Quitar: 🗑 quita la nota y el bloque, cierra su editor y apaga su marca en la cabecera',
+    JSON.stringify(cleaned)
+  )
+
   // Guardado: el MDX debe llevar tabla, código, pestañas (con sus imports), la
   // captura externa y las imágenes pegadas, y NO numerar el bloque de contenido
   // como un paso más.
@@ -2824,11 +2879,29 @@ try {
   )
   await gui.getByRole('button', { name: 'Cerrar' }).click()
 
+  // Al estrenar sesión con material de referencia puesto, la app PREGUNTA qué
+  // hacer con él. Sin esto se arrastraba en silencio a la guía siguiente y la IA
+  // redactaba con los nombres y las reglas de la anterior sin que se notara.
+  await gui.waitForSelector('.dialog', { timeout: 5000 })
+  const contextAsk = await gui.locator('.dialog h3').textContent()
+  await gui.getByRole('button', { name: 'Vaciar el contexto' }).click()
+  await gui.waitForSelector('.dialog', { state: 'detached', timeout: 5000 })
+  check(
+    /contexto para la IA/i.test(contextAsk ?? '') &&
+      (await gui.locator('.btn-context.set').count()) === 0,
+    'Contexto IA: al estrenar sesión se pregunta, y «Vaciar» lo quita de verdad',
+    contextAsk ?? '(no se preguntó)'
+  )
+
   const extrasDir = join(outDir, 'matriculas', 'extras-de-matricula')
   const extrasMdx = readFileSync(join(extrasDir, 'index.mdx'), 'utf8')
   const extrasSession = JSON.parse(readFileSync(join(extrasDir, 'session.json'), 'utf8'))
   const extrasFlow = JSON.parse(readFileSync(join(extrasDir, 'flow.json'), 'utf8'))
 
+  check(
+    !/se va a quitar/i.test(extrasMdx) && !JSON.stringify(extrasSession).includes('se va a quitar'),
+    'Quitar: lo quitado no llega al manual ni al paquete'
+  )
   check(
     /\| Estado \| Significado \| Editable \|/.test(extrasMdx) &&
       /\| Activa \| La matrícula está vigente \| Sí \|/.test(extrasMdx),
@@ -2858,7 +2931,9 @@ try {
 
   // Un grupo cuyo título ya enumera sus elementos («Pulsar «Ver» y «Editar»») no
   // los repite debajo en una lista: sería decir dos veces lo mismo.
-  const enumerated = extrasMdx.match(/^#{2,3} \d+\. (?:Pulsar|Ir a las pestañas) «([^»]+)» y «([^»]+)»/m)
+  const enumerated = extrasMdx.match(
+    /^#{2,3} \d+\. (?:Pulsar|Ir a las pestañas) «([^»]+)» y «([^»]+)»/m
+  )
   check(
     !!enumerated && !extrasMdx.includes(`- **${enumerated[1]}**`),
     'Agrupar seguidos: el manual no repite en una lista lo que el título ya enumera',
@@ -3107,11 +3182,9 @@ try {
     discardBody.split('\n')[2] ?? discardBody
   )
   await gui.locator('.dialog .btn.danger').click()
-  await gui.waitForFunction(
-    () => !!document.querySelector('.pending-modal .ai-saved'),
-    null,
-    { timeout: 10000 }
-  )
+  await gui.waitForFunction(() => !!document.querySelector('.pending-modal .ai-saved'), null, {
+    timeout: 10000
+  })
   check(
     !existsSync(sectionsDir),
     'Descartar: la carpeta del paquete sale del disco (a la papelera del sistema)'
@@ -3167,10 +3240,7 @@ try {
     'Editar un commit: el commit que documentó la funcionalidad está en el historial',
     `busco ${firstCommit.slice(0, 8)} en «${historyOf}» entre [${uiHashes.join(' ')}]`
   )
-  await gui
-    .locator('.projects-col:nth-child(3) .commits li .row')
-    .nth(Math.max(wanted, 0))
-    .click()
+  await gui.locator('.projects-col:nth-child(3) .commits li .row').nth(Math.max(wanted, 0)).click()
   await gui.waitForSelector('.preview-modal', { timeout: 5000 })
   await gui.waitForSelector('.preview-feature-head .btn', { timeout: 5000 })
   await gui.locator('.preview-feature-head .btn').first().click()
@@ -3240,10 +3310,7 @@ try {
   await gui.waitForSelector('.projects-modal', { timeout: 5000 })
   await gui.locator('.projects-col:nth-child(2) .row[data-branch="docs/matriculas"]').click()
   await gui.waitForSelector('.projects-col:nth-child(3) .commits li', { timeout: 5000 })
-  await gui
-    .locator('.projects-col:nth-child(3) .commits li .row')
-    .nth(Math.max(wanted, 0))
-    .click()
+  await gui.locator('.projects-col:nth-child(3) .commits li .row').nth(Math.max(wanted, 0)).click()
   await gui.waitForSelector('.preview-feature-head .btn', { timeout: 5000 })
   await gui.locator('.preview-feature-head .btn').first().click()
   if (await gui.locator('.dialog .btn.danger').count()) {
@@ -3280,7 +3347,400 @@ try {
     `${commitsBefore} → ${g('rev-list --count docs/matriculas')} commits · ${reeditReport.replace(/\n/g, ' ')}`
   )
 
+  // --- Carpetas de capturas (§17) ---
+  //
+  // Un paso del manual que necesita VARIAS imágenes: las pantallas de un
+  // asistente, lo que se ve antes y después. Se comprueba el circuito entero:
+  // crear la carpeta vacía, meterle una tarjeta arrastrándola, que lo añadido con
+  // la carpeta activa entre dentro, sacar algo con ⤴ y publicarlo como un solo
+  // paso numerado con sus capturas debajo.
+  const gitBoxFolder = gui.locator('.git-section input[type="checkbox"]').first()
+  if (await gitBoxFolder.isChecked()) await gitBoxFolder.uncheck()
+  await target.goto(fixture.url)
+  await target.waitForLoadState('domcontentloaded')
+  // Dos pasos sueltos: con «agrupar seguidos» dos clics del mismo tipo se
+  // fundirían en uno y no habría nada que arrastrar.
+  if (await gui.locator('.group-toggle input').isChecked()) {
+    await gui.locator('.group-toggle input').uncheck()
+  }
+  await gui.click('.ctrl-record')
+  await gui.waitForFunction(() =>
+    document.querySelector('.status')?.textContent?.includes('Grabando')
+  )
+  await target.click('#nav-alumnos')
+  await waitSteps(1, 'carpetas: paso A')
+  await target.click('#nav-matriculas')
+  await waitSteps(2, 'carpetas: paso B')
+  await gui.evaluate(() => window.docrecorder.invoke('recorder:stop'))
+  await gui.locator('.group-toggle input').check()
+
+  // La carpeta se crea detrás de la tarjeta activa, como todo lo que se añade.
+  await gui.locator('.step-card').first().locator('.step-badge').click()
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Carpeta de capturas")').click()
+  await gui.waitForSelector('.group-card', { timeout: 5000 })
+  await gui.locator('.group-title').fill('Revisar el listado en las dos pantallas')
+  check(
+    (await gui.locator('.group-drop').count()) === 1 &&
+      /Arrastra aquí/.test((await gui.locator('.group-drop').textContent()) ?? ''),
+    'Carpetas: la carpeta nace vacía y dice dónde hay que soltar las tarjetas'
+  )
+
+  // Arrastrar una tarjeta hasta la zona de la carpeta la mete dentro. Las
+  // posiciones se miden ANTES de empezar: dnd-kit resuelve la colisión contra los
+  // rectángulos medidos al arrancar el arrastre, no contra los que se ven mientras
+  // la lista se reacomoda.
+  await gui.locator('.group-card').scrollIntoViewIfNeeded()
+  const dropBox = await gui.locator('.group-drop').boundingBox()
+  const dragged = await gui.locator('.step-card').nth(1).locator('.drag-handle').boundingBox()
+  const fromX = dragged.x + dragged.width / 2
+  const fromY = dragged.y + dragged.height / 2
+  const toX = dropBox.x + dropBox.width / 2
+  const toY = dropBox.y + dropBox.height / 2
+  await gui.mouse.move(fromX, fromY)
+  await gui.mouse.down()
+  for (let i = 1; i <= 12; i++) {
+    await gui.mouse.move(fromX + ((toX - fromX) * i) / 12, fromY + ((toY - fromY) * i) / 12)
+    await new Promise((r) => setTimeout(r, 25))
+  }
+  await gui.mouse.up()
+  await gui.waitForFunction(
+    () => document.querySelectorAll('.step-card.in-group').length === 1,
+    null,
+    {
+      timeout: 5000
+    }
+  )
+  const inFolder = await gui.evaluate(() => ({
+    badge: document.querySelector('.step-card.in-group .step-badge')?.textContent ?? '',
+    count: document.querySelector('.group-card .section-count')?.textContent ?? '',
+    // El recuento del encabezado cuenta pasos del manual: la carpeta es uno y sus
+    // capturas no cuentan aparte.
+    header: document.querySelector('.panel-header .count')?.textContent ?? ''
+  }))
+  check(
+    inFolder.badge === '2·1' && inFolder.count === '1' && inFolder.header === '2',
+    'Carpetas: arrastrar una tarjeta a la zona la mete dentro y la renumera como captura',
+    `chapa ${inFolder.badge}, ${inFolder.count} dentro, encabezado ${inFolder.header}`
+  )
+
+  // Trabajando dentro de la carpeta, lo que se añade entra DENTRO: es lo que se
+  // estaba haciendo, y obligar a arrastrarlo después sería absurdo.
+  await gui.locator('.group-card .group-title').click()
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  await gui.waitForFunction(
+    () => document.querySelectorAll('.step-card.in-group').length === 2,
+    null,
+    {
+      timeout: 5000
+    }
+  )
+  check(true, 'Carpetas: lo que se añade con la carpeta activa entra dentro de ella')
+
+  // Y ⤴ lo saca, dejándolo suelto justo detrás de la carpeta.
+  await gui
+    .locator('.step-card.in-group')
+    .last()
+    .locator('.icon-btn[title^="Sacar esta captura"]')
+    .click()
+  await gui.waitForFunction(
+    () => document.querySelectorAll('.step-card.in-group').length === 1,
+    null,
+    {
+      timeout: 5000
+    }
+  )
+  const afterOut = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card, .group-card')].map((n) =>
+      n.classList.contains('group-card')
+        ? '📁'
+        : n.classList.contains('in-group')
+          ? '·'
+          : n.querySelector('.step-badge')?.textContent
+    )
+  )
+  check(
+    afterOut.join('') === '1📁·3',
+    'Carpetas: ⤴ saca la tarjeta de la carpeta y la deja justo detrás',
+    afterOut.join(' ')
+  )
+
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
+  await gui.fill('.topbar input[placeholder="institucion"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', 'con-carpeta')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', 'Matrícula con carpeta')
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 10000 })
+  if (await gui.getByRole('button', { name: 'Guardar de todos modos' }).count()) {
+    await gui.getByRole('button', { name: 'Guardar de todos modos' }).click()
+  }
+  await gui.waitForFunction(
+    () => /Documentación guardada/.test(document.querySelector('.dialog h3')?.textContent ?? ''),
+    null,
+    { timeout: 15000 }
+  )
+  await gui.getByRole('button', { name: 'Cerrar' }).click()
+
+  const folderDir = join(outDir, 'matriculas', 'con-carpeta')
+  const folderMdx = readFileSync(join(folderDir, 'index.mdx'), 'utf8')
+  const folderSession = JSON.parse(readFileSync(join(folderDir, 'session.json'), 'utf8'))
+  const folderFlow = JSON.parse(readFileSync(join(folderDir, 'flow.json'), 'utf8'))
+  const folderStep = folderSession.steps.find((s) => s.kind === 'group')
+  const member = folderSession.steps.find((s) => s.groupId === folderStep?.id)
+  check(
+    !!folderStep && folderStep.screenshot === '' && !!member && !!member.screenshot,
+    'Carpetas: la carpeta se guarda sin captura propia y sus pasos conservan la suya',
+    `${folderStep?.title} · captura del miembro: ${member?.screenshot ?? '(ninguna)'}`
+  )
+  // La carpeta es UN paso numerado (aquí el 2) y su captura va debajo, sin número
+  // propio: numerarla diría que hay que hacer dos cosas donde el manual describe
+  // una. Por eso la página tiene dos pasos numerados y no tres.
+  check(
+    /^## 2\. Revisar el listado en las dos pantallas$/m.test(folderMdx) &&
+      (folderMdx.match(/^## \d+\./gm) ?? []).length === 2 &&
+      folderMdx.indexOf('## 2. Revisar') < folderMdx.indexOf(`(./${member?.screenshot})`),
+    'Carpetas: la carpeta sale como UN paso numerado y su captura se publica dentro',
+    (folderMdx.match(/^## .*/gm) ?? []).join(' / ')
+  )
+  check(
+    !folderFlow.actions.some((a) => a.action === 'group') &&
+      folderFlow.actions.some((a) => a.url && a.action === 'click'),
+    'Carpetas: la carpeta no entra en flow.json, pero el paso que contiene sí',
+    `${folderFlow.actions.length} acción(es)`
+  )
+
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
+
+  // --- Etapa 12: comprobar el sitio antes de registrar y vista previa (§18) ---
+  //
+  // El repositorio de la prueba no es un proyecto npm, así que hasta aquí no
+  // había nada que comprobar (y guardar no se detenía). Se monta uno con la
+  // misma forma que el Docusaurus de destino: `docusaurus.config.js`,
+  // `package.json` con sus scripts y `docs/` como carpeta de salida. Los
+  // comandos son de verdad —los ejecuta npm, en su propio proceso— pero rápidos:
+  // «compilar» copia las páginas a `build/` y falla si alguna trae ROMPEME, que
+  // es lo que aquí hace de MDX que Docusaurus no puede compilar.
+  const site = mkdtempSync(join(tmpdir(), 'docrecorder-sitio-'))
+  const siteDocs = join(site, 'docs')
+  mkdirSync(join(site, 'scripts'), { recursive: true })
+  mkdirSync(siteDocs, { recursive: true })
+  writeFileSync(join(site, 'docusaurus.config.js'), 'module.exports = {}\n')
+  writeFileSync(
+    join(site, 'scripts', 'compilar.mjs'),
+    [
+      "import { readdirSync, readFileSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs'",
+      "import { join } from 'node:path'",
+      'const walk = (dir) =>',
+      '  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>',
+      "    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]",
+      '  )',
+      "const pages = existsSync('docs') ? walk('docs').filter((f) => f.endsWith('.mdx')) : []",
+      "const roto = pages.find((f) => readFileSync(f, 'utf8').includes('ROMPEME'))",
+      'if (roto) {',
+      '  console.error(`Error: no se pudo compilar ${roto}`)',
+      "  console.error('Unexpected token ROMPEME')",
+      '  process.exit(1)',
+      '}',
+      "rmSync('build', { recursive: true, force: true })",
+      'for (const page of pages) {',
+      "  const out = join('build', page.replace(/^docs\\//, '').replace(/\\/index\\.mdx$/, ''))",
+      '  mkdirSync(out, { recursive: true })',
+      "  writeFileSync(join(out, 'index.html'), `<!doctype html><title>${page}</title>`)",
+      '}',
+      'console.log(`Compiladas ${pages.length} páginas`)'
+    ].join('\n')
+  )
+  writeFileSync(
+    join(site, 'scripts', 'servir.mjs'),
+    [
+      "import { createServer } from 'node:http'",
+      "import { existsSync, readFileSync, statSync } from 'node:fs'",
+      "import { join } from 'node:path'",
+      "const port = Number(process.argv[process.argv.indexOf('--port') + 1] || 3000)",
+      'createServer((req, res) => {',
+      "  const path = decodeURIComponent(req.url.split('?')[0])",
+      "  const file = join('build', path, 'index.html')",
+      '  if (existsSync(file) && statSync(file).isFile()) {',
+      "    res.writeHead(200, { 'content-type': 'text/html' })",
+      '    res.end(readFileSync(file))',
+      '  } else {',
+      '    res.writeHead(404)',
+      "    res.end('no')",
+      '  }',
+      "}).listen(port, '127.0.0.1', () => console.log(`sirviendo en ${port}`))"
+    ].join('\n')
+  )
+  writeFileSync(
+    join(site, 'package.json'),
+    JSON.stringify(
+      {
+        name: 'sitio-de-prueba',
+        version: '0.0.0',
+        private: true,
+        scripts: {
+          typecheck: 'node -e "process.exit(0)"',
+          'lint:docs': 'node -e "process.exit(0)"',
+          build: 'node scripts/compilar.mjs',
+          serve: 'node scripts/servir.mjs'
+        }
+      },
+      null,
+      2
+    )
+  )
+  const gs = (args) => execSync(`git ${args}`, { cwd: site, encoding: 'utf8' }).trim()
+  execSync('git init -q -b main', { cwd: site })
+  gs('config user.email prueba@ejemplo.com')
+  gs('config user.name Prueba')
+  gs('add -A')
+  gs('commit -q -m "chore: sitio de prueba"')
+
+  const comandos = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('checks:detect', dir),
+    siteDocs
+  )
+  check(
+    comandos !== null &&
+      comandos.checks.map((c) => c.script).join(',') === 'typecheck,lint:docs,build' &&
+      comandos.canServe === true &&
+      comandos.projectRoot.endsWith(site.split('/').pop()),
+    'Comprobación: se detectan los comandos del proyecto de destino, del más barato al más caro',
+    comandos ? comandos.checks.map((c) => c.script).join(' → ') : '(ninguno)'
+  )
+  const sinProyecto = await gui.evaluate(
+    (dir) => window.docrecorder.invoke('checks:detect', dir),
+    outDir
+  )
+  check(
+    sinProyecto === null,
+    'Comprobación: un repositorio que no es un proyecto Docusaurus no ofrece nada que ejecutar',
+    String(sinProyecto)
+  )
+
+  /** Guarda una guía en el sitio de prueba, con el título (y el commit) que se pidan. */
+  const saveToSite = (feature, title, verify) =>
+    gui.evaluate(
+      ([dir, feature, title, verify]) =>
+        window.docrecorder.invoke('session:save', {
+          meta: {
+            module: 'publicacion',
+            feature,
+            title,
+            role: 'admin',
+            baseUrl: 'http://x'
+          },
+          viewport: { width: 800, height: 600 },
+          sessionId: `chk-${feature}`,
+          createdAt: new Date().toISOString(),
+          outputDir: dir,
+          steps: [
+            {
+              id: 's1',
+              order: 1,
+              action: 'click',
+              title,
+              description: '',
+              selectorCandidates: [],
+              url: 'http://x',
+              screenshot: '',
+              boundingRect: { x: 0, y: 0, width: 1, height: 1 },
+              includeInDocs: true,
+              timestamp: 't',
+              tempFile: ''
+            }
+          ],
+          git: {
+            enabled: true,
+            branch: 'docs/publicacion',
+            message: `docs(publicacion): ${feature}`,
+            push: false,
+            verify
+          }
+        }),
+      [siteDocs, feature, title, verify]
+    )
+
+  const okSave = await saveToSite('guia-buena', 'Abrir el listado', true)
+  check(
+    okSave.checks?.ok === true &&
+      okSave.checks.runs.map((r) => r.script).join(',') === 'typecheck,lint:docs,build' &&
+      !!okSave.git,
+    'Comprobación: si los tres comandos pasan, el commit se hace como siempre',
+    okSave.checks ? okSave.checks.runs.map((r) => `${r.script} ${r.ms}ms`).join(' · ') : '(sin datos)'
+  )
+
+  // Vista previa: compila y sirve el sitio, y devuelve la dirección de ESTA guía
+  // (no la portada). Se comprueba pidiéndola de verdad por HTTP.
+  const vistaPrevia = await gui.evaluate(
+    (dir) =>
+      window.docrecorder.invoke('preview:start', {
+        outputDir: dir,
+        segments: ['publicacion', 'guia-buena']
+      }),
+    siteDocs
+  )
+  const served = vistaPrevia.url ? await fetch(vistaPrevia.url).catch(() => null) : null
+  check(
+    !!vistaPrevia.url &&
+      vistaPrevia.url.endsWith('/publicacion/guia-buena/') &&
+      served !== null &&
+      served.status === 200,
+    'Vista previa: el sitio se compila, se sirve y la dirección abre la guía recién guardada',
+    vistaPrevia.url ?? vistaPrevia.error ?? '(sin dirección)'
+  )
+  const previewRunning = await gui.evaluate(() => window.docrecorder.invoke('preview:status'))
+  await gui.evaluate(() => window.docrecorder.invoke('preview:stop'))
+  const previewStopped = await gui.evaluate(() => window.docrecorder.invoke('preview:status'))
+  const afterStop = vistaPrevia.url ? await fetch(vistaPrevia.url).catch(() => null) : 'nada'
+  check(
+    previewRunning.running === true && previewStopped.running === false && afterStop === null,
+    'Vista previa: detenerla mata el servidor y libera el puerto',
+    `en marcha ${previewRunning.running} → ${previewStopped.running}`
+  )
+
+  // Y el caso que justifica todo esto: una guía que el sitio no puede compilar.
+  const commitsAntes = gs('rev-list --count --all')
+  const badSave = await saveToSite('guia-rota', 'Paso ROMPEME', true)
+  const commitsDespues = gs('rev-list --count --all')
+  const fallo = badSave.checks?.runs.find((r) => !r.ok)
+  check(
+    badSave.checks?.ok === false &&
+      fallo?.script === 'build' &&
+      /ROMPEME/.test(fallo?.output ?? '') &&
+      !badSave.git &&
+      commitsAntes === commitsDespues,
+    'Comprobación: si el sitio no compila NO se comitea, y el error del comando llega entero',
+    `${fallo?.script ?? '(ninguno)'} · ${commitsAntes} commits antes y después`
+  )
+  check(
+    existsSync(join(siteDocs, 'publicacion', 'guia-rota', 'index.mdx')),
+    'Comprobación: el paquete sí queda escrito en disco, para poder corregirlo y reintentar'
+  )
+  // Las comprobaciones se saltan antes de fallar la primera: es lo que hace
+  // «Registrar de todos modos» desde el aviso.
+  const forzado = await saveToSite('guia-rota', 'Paso ROMPEME', false)
+  check(
+    !forzado.checks && !!forzado.git && Number(gs('rev-list --count --all')) > Number(commitsAntes),
+    'Comprobación: «Registrar de todos modos» comitea sin ejecutar nada',
+    forzado.git?.message ?? forzado.gitError ?? '(sin commit)'
+  )
+
+  // Y la sección del panel, que es donde se ve y se desactiva.
+  await gui.fill('.topbar input[placeholder="Sin seleccionar"]', siteDocs)
+  await gui.waitForSelector('.git-preview button', { timeout: 15000 })
+  const seccion = await gui.evaluate(() => ({
+    comandos: document.querySelector('.git-preview')?.previousElementSibling
+      ? [...document.querySelectorAll('.git-section .git-toggle em')].map((n) => n.textContent)
+      : [],
+    previa: document.querySelector('.git-preview button')?.textContent ?? ''
+  }))
+  check(
+    seccion.comandos.some((t) => t.includes('npm run build')) &&
+      seccion.previa === 'Vista previa del sitio',
+    'Comprobación: el panel enumera los comandos del proyecto y ofrece la vista previa',
+    seccion.comandos.join(' | ')
+  )
 
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.
   await gui.evaluate(() => localStorage.removeItem('docrecorder.groupConsecutive')).catch(() => {})

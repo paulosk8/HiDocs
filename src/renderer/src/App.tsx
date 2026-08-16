@@ -14,6 +14,7 @@ import { PendingDocsModal } from './components/PendingDocsModal'
 import { ipc } from './ipc'
 import { useSession } from './store'
 import { useRepoInspection } from './useRepoInspection'
+import { useDocsChecks } from './useDocsChecks'
 import { useDraftAutosave } from './useDraftAutosave'
 import { useGroupCapture } from './useGroupCapture'
 import type { DraftPayload } from '../../shared/ipc-contract'
@@ -40,6 +41,7 @@ export function App(): React.JSX.Element {
   const setPendingDocsOpen = useSession((s) => s.setPendingDocsOpen)
   const setAiStatus = useSession((s) => s.setAiStatus)
   const setAiProgress = useSession((s) => s.setAiProgress)
+  const checksProgress = useSession((s) => s.checksProgress)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
   const recaptureGroup = useGroupCapture()
 
@@ -57,6 +59,8 @@ export function App(): React.JSX.Element {
 
   // Mantiene `gitRepo` al día aunque el panel (y su sección Git) esté colapsado.
   useRepoInspection()
+  // Y lo mismo con los comandos que el proyecto de destino ofrece comprobar.
+  useDocsChecks()
   // Autoguarda el borrador de la grabación en curso.
   useDraftAutosave()
 
@@ -78,6 +82,7 @@ export function App(): React.JSX.Element {
     const offStep = ipc.on('recorder:step', onStep)
     const offRegen = ipc.on('runner:progress', runnerProgressAdd)
     const offAi = ipc.on('ai:progress', setAiProgress)
+    const offChecks = ipc.on('checks:progress', checksProgress)
     void ipc.invoke('engine:get-state').then(applyEngineState)
     // La configuración de IA vive en el main (con la clave); la GUI solo sabe
     // qué proveedor está activo y si tiene clave.
@@ -87,8 +92,9 @@ export function App(): React.JSX.Element {
       offStep()
       offRegen()
       offAi()
+      offChecks()
     }
-  }, [applyEngineState, onStep, runnerProgressAdd, setAiProgress, setAiStatus])
+  }, [applyEngineState, onStep, runnerProgressAdd, setAiProgress, setAiStatus, checksProgress])
 
   return (
     <div className="app">

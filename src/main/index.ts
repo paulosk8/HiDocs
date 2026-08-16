@@ -31,6 +31,7 @@ import {
   DEFAULT_VIEWPORT,
   type AiProvider,
   type AiSettings,
+  type CheckProgress,
   type DocSession,
   type EngineState,
   type RegenReport
@@ -51,6 +52,8 @@ import {
 } from './git'
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
+import { cancelChecks, detectChecks, runChecks, summarize } from './checks'
+import { previewStatus, startPreview, stopPreview } from './preview'
 import { saveDraft, loadDraft, clearDraft } from './draft'
 import { aiStatus, setAiKey, setAiSettings } from './settings'
 import { draftSteps } from './ai'
@@ -259,6 +262,11 @@ function createWindow(): void {
   })
 }
 
+/** Progreso de las comprobaciones hacia la GUI (línea a línea, como salen). */
+function sendCheckProgress(progress: CheckProgress): void {
+  mainWindow?.webContents.send('checks:progress', progress)
+}
+
 function registerIpc(): void {
   ipcMain.handle('viewport:navigate', async (_e, url: string) => {
     try {
@@ -322,10 +330,43 @@ function registerIpc(): void {
   )
 
   ipcMain.handle('session:save', async (_e, payload: SavePayload) => {
-    const result = await saveSession(payload, viewport.currentSize)
+    const result = await saveSession(payload, viewport.currentSize, sendCheckProgress)
     engine.log('info', `Sesión guardada en ${result.path}`)
+    if (result.checks) {
+      engine.log(
+        result.checks.ok ? 'info' : 'warn',
+        `Comprobación del sitio: ${summarize(result.checks)}`
+      )
+    }
     return result
   })
+
+  // --- comprobación del sitio de destino y vista previa (§18) ---
+
+  ipcMain.handle('checks:detect', async (_e, outputDir: string) => {
+    return detectChecks(outputDir).catch(() => null)
+  })
+
+  ipcMain.handle('checks:run', async (_e, outputDir: string) => {
+    const project = await detectChecks(outputDir).catch(() => null)
+    if (!project || !project.checks.length) return null
+    return runChecks(project.projectRoot, project.checks, sendCheckProgress)
+  })
+
+  ipcMain.handle('checks:cancel', () => cancelChecks())
+
+  ipcMain.handle('preview:start', async (_e, args: { outputDir: string; segments?: string[] }) => {
+    const result = await startPreview(args, sendCheckProgress)
+    // Se abre en el navegador del usuario y no en el visor: el visor es el
+    // sistema que se está documentando, y perder su sesión abierta para mirar
+    // el manual sería un mal cambio. La prueba de humo lo desactiva
+    // (`DOCRECORDER_NO_OPEN`): abrir el navegador de quien la ejecuta sobra.
+    if (result.url && !process.env['DOCRECORDER_NO_OPEN']) await shell.openExternal(result.url)
+    return result
+  })
+
+  ipcMain.handle('preview:stop', async () => stopPreview())
+  ipcMain.handle('preview:status', () => previewStatus())
 
   // --- capturas ajenas al visor (§12) ---
 
@@ -590,6 +631,10 @@ app.on('will-quit', () => {
 app.on('before-quit', () => {
   engine.cleanup()
   void engine.detach()
+  // El servidor de la vista previa y cualquier comando en marcha son procesos
+  // hijos: sin matarlos aquí sobrevivirían a la app, con su puerto ocupado.
+  cancelChecks()
+  void stopPreview()
 })
 
 app.on('window-all-closed', () => {

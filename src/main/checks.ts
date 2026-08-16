@@ -1,0 +1,262 @@
+import { spawn, type ChildProcess } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { findProjectRoot } from './docusaurus'
+import type {
+  CheckProgress,
+  ChecksResult,
+  CheckRun,
+  DocCheck,
+  ProjectChecks
+} from '../shared/types'
+
+/**
+ * Comprobación del sitio de destino (§18).
+ *
+ * La vista previa del panel enseña cómo QUEDA el MDX, pero no si Docusaurus lo
+ * puede compilar: una etiqueta que MDX no acepta, un enlace roto o un componente
+ * sin importar no se ven hasta que alguien ejecuta `npm run build` en el
+ * repositorio de documentación. Antes, ese alguien era el usuario, un rato
+ * después y con el commit ya hecho.
+ *
+ * Aquí se ejecutan los mismos comandos que él ejecutaría a mano, en el proyecto
+ * de destino y con su propio `package.json`: no se asume ninguno, solo se
+ * ofrecen los que ese proyecto tenga.
+ */
+
+/**
+ * Comandos que sabemos interpretar, del más barato al más caro. El orden importa:
+ * se ejecutan en secuencia y se para en el primero que falle, así que compilar el
+ * sitio entero —lo que tarda— solo ocurre si lo anterior pasó.
+ */
+const KNOWN_CHECKS: DocCheck[] = [
+  {
+    script: 'typecheck',
+    label: 'Comprobar los tipos',
+    detail: 'tsc sobre el proyecto de documentación'
+  },
+  {
+    script: 'lint:docs',
+    label: 'Verificar el estilo de las guías',
+    detail: 'las reglas de redacción del propio repositorio'
+  },
+  {
+    script: 'build',
+    label: 'Compilar el sitio',
+    detail: 'lo que de verdad dice si el MDX se publica sin romperse'
+  }
+]
+
+/** Tope de cada comando. Compilar un sitio grande tarda; colgarse no es opción. */
+const CHECK_TIMEOUT_MS = 10 * 60_000
+
+/** Líneas de salida que se conservan de cada comando (las últimas: ahí está el error). */
+const OUTPUT_LINES = 200
+
+/**
+ * Rutas donde suele estar `npm` cuando la app se abre desde el Finder o el Dock:
+ * un proceso lanzado así hereda un `PATH` mínimo, sin `/opt/homebrew/bin` ni el
+ * `bin` de la versión de Node del usuario, y `npm` simplemente «no existe».
+ */
+const EXTRA_PATH = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin']
+
+function npmEnv(): NodeJS.ProcessEnv {
+  const parts = (process.env['PATH'] ?? '').split(':').filter(Boolean)
+  for (const p of EXTRA_PATH) if (!parts.includes(p)) parts.push(p)
+  // Sin color: la salida se muestra tal cual en un diálogo, y los códigos ANSI
+  // ahí son basura ilegible.
+  return { ...process.env, PATH: parts.join(':'), NO_COLOR: '1', FORCE_COLOR: '0' }
+}
+
+/** Proceso en marcha, para poder cancelarlo desde la GUI. */
+let running: ChildProcess | null = null
+let canceled = false
+
+export function cancelChecks(): void {
+  canceled = true
+  killTree(running)
+  running = null
+}
+
+/**
+ * Mata el proceso Y su descendencia. `npm run` es un intermediario: matarlo a él
+ * deja vivo el `docusaurus` que lanzó, que es el que ocupa la CPU y el puerto.
+ * Por eso se lanza en su propio grupo (`detached`) y se mata el grupo entero.
+ */
+export function killTree(child: ChildProcess | null): void {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return
+  try {
+    if (child.pid) process.kill(-child.pid, 'SIGTERM')
+    else child.kill('SIGTERM')
+  } catch {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // El proceso ya no existe: nada que matar.
+    }
+  }
+}
+
+interface NpmRun {
+  code: number
+  output: string
+  /** el comando no se pudo lanzar siquiera (npm no está en el PATH) */
+  spawnError?: string
+}
+
+/**
+ * Ejecuta `npm run <script>` en el proyecto de destino y devuelve su salida.
+ *
+ * Se usa `spawn` y no `execFile` para poder ir emitiendo las líneas según salen:
+ * compilar tarda minutos y un diálogo sin señales de vida parece colgado.
+ */
+export function runNpmScript(
+  cwd: string,
+  script: string,
+  extraArgs: string[],
+  onLine: (line: string) => void
+): Promise<NpmRun> {
+  return new Promise((resolve) => {
+    const args = ['run', script, ...(extraArgs.length ? ['--', ...extraArgs] : [])]
+    // `DOCRECORDER_NPM` permite a la prueba de humo sustituir el ejecutable sin
+    // tocar el resto del circuito (se sigue lanzando un proceso real).
+    const bin = process.env['DOCRECORDER_NPM'] || 'npm'
+    let child: ChildProcess
+    try {
+      child = spawn(bin, args, {
+        cwd,
+        env: npmEnv(),
+        // Grupo propio: al cancelar se mata también lo que npm haya lanzado.
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        // En Windows `npm` es un `.cmd` y no se puede ejecutar sin shell.
+        shell: process.platform === 'win32'
+      })
+    } catch (err) {
+      resolve({ code: 1, output: '', spawnError: err instanceof Error ? err.message : String(err) })
+      return
+    }
+
+    running = child
+    const lines: string[] = []
+    let pending = ''
+    let settled = false
+
+    const push = (chunk: string): void => {
+      pending += chunk
+      const parts = pending.split(/\r?\n/)
+      pending = parts.pop() ?? ''
+      for (const line of parts) {
+        lines.push(line)
+        if (lines.length > OUTPUT_LINES) lines.shift()
+        if (line.trim()) onLine(line)
+      }
+    }
+
+    child.stdout?.on('data', (d: Buffer) => push(String(d)))
+    child.stderr?.on('data', (d: Buffer) => push(String(d)))
+
+    const timer = setTimeout(() => {
+      killTree(child)
+      push(`\nEl comando se detuvo por exceder ${CHECK_TIMEOUT_MS / 60_000} minutos.`)
+    }, CHECK_TIMEOUT_MS)
+
+    const finish = (result: NpmRun): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      running = null
+      if (pending.trim()) lines.push(pending)
+      resolve({ ...result, output: lines.join('\n') })
+    }
+
+    child.on('error', (err: NodeJS.ErrnoException) => {
+      finish({
+        code: 1,
+        output: '',
+        spawnError:
+          err.code === 'ENOENT'
+            ? `No se encontró «${bin}». Instala Node.js o abre la app desde una terminal donde «npm --version» funcione.`
+            : err.message
+      })
+    })
+    child.on('close', (code) => finish({ code: code ?? 1, output: '' }))
+  })
+}
+
+/**
+ * Qué se puede comprobar en el proyecto que contiene la carpeta de salida.
+ *
+ * Devuelve `null` si esa carpeta no está dentro de un proyecto Docusaurus con
+ * `package.json`: entonces no hay nada que ejecutar y la app no debe inventarse
+ * comandos ni estorbar al guardar.
+ */
+export async function detectChecks(outputDir: string): Promise<ProjectChecks | null> {
+  const projectRoot = await findProjectRoot(outputDir)
+  if (!projectRoot) return null
+  let scripts: Record<string, string> = {}
+  try {
+    const raw = await readFile(join(projectRoot, 'package.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { scripts?: Record<string, string> }
+    scripts = parsed.scripts ?? {}
+  } catch {
+    return null
+  }
+  return {
+    projectRoot,
+    checks: KNOWN_CHECKS.filter((c) => typeof scripts[c.script] === 'string'),
+    // La vista previa fiel exige compilar: con el buscador local instalado,
+    // `npm run start` no lo indexa y buscar ahí no encuentra nada.
+    canServe: typeof scripts['serve'] === 'string' && typeof scripts['build'] === 'string'
+  }
+}
+
+/**
+ * Ejecuta las comprobaciones en orden y se para en la primera que falle: si los
+ * tipos no cuadran, compilar el sitio entero solo haría esperar para decir lo
+ * mismo.
+ */
+export async function runChecks(
+  projectRoot: string,
+  checks: DocCheck[],
+  onProgress: (progress: CheckProgress) => void
+): Promise<ChecksResult> {
+  canceled = false
+  const runs: CheckRun[] = []
+  for (const [index, check] of checks.entries()) {
+    if (canceled) break
+    const started = Date.now()
+    onProgress({ script: check.script, label: check.label, index, total: checks.length })
+    const result = await runNpmScript(projectRoot, check.script, [], (line) =>
+      onProgress({ script: check.script, label: check.label, index, total: checks.length, line })
+    )
+    const run: CheckRun = {
+      script: check.script,
+      label: check.label,
+      ok: result.code === 0 && !result.spawnError,
+      ms: Date.now() - started,
+      output: result.spawnError ? result.spawnError : result.output
+    }
+    runs.push(run)
+    if (!run.ok) {
+      // Cancelar mata el proceso, y eso lo devuelve con código distinto de cero:
+      // no es un fallo del sitio y no debe leerse como tal.
+      return { projectRoot, ok: false, runs, canceled: canceled || undefined }
+    }
+  }
+  return { projectRoot, ok: !canceled, runs, canceled: canceled || undefined }
+}
+
+/**
+ * Resumen de una tanda para el registro: qué se ejecutó y cuánto tardó.
+ * Se escribe en la consola del main, que es donde se mira cuando algo va raro.
+ */
+export function summarize(result: ChecksResult): string {
+  const parts = result.runs.map((r) => `${r.script} ${r.ok ? 'ok' : 'FALLA'} (${r.ms} ms)`)
+  return parts.join(' · ') || 'sin comprobaciones'
+}
+
+/** La carpeta `build` del proyecto, donde `docusaurus build` deja el sitio. */
+export function buildDir(projectRoot: string): string {
+  return join(projectRoot, 'build')
+}
