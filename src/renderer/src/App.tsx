@@ -18,6 +18,7 @@ import { useDocsChecks } from './useDocsChecks'
 import { useDraftAutosave } from './useDraftAutosave'
 import { useGroupCapture } from './useGroupCapture'
 import type { DraftPayload } from '../../shared/ipc-contract'
+import { DEFAULT_ZOOM } from '../../shared/zoom'
 
 export function App(): React.JSX.Element {
   const applyEngineState = useSession((s) => s.applyEngineState)
@@ -41,6 +42,7 @@ export function App(): React.JSX.Element {
   const setPendingDocsOpen = useSession((s) => s.setPendingDocsOpen)
   const setAiStatus = useSession((s) => s.setAiStatus)
   const setAiProgress = useSession((s) => s.setAiProgress)
+  const setViewportZoom = useSession((s) => s.setViewportZoom)
   const checksProgress = useSession((s) => s.checksProgress)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
   const recaptureGroup = useGroupCapture()
@@ -64,6 +66,14 @@ export function App(): React.JSX.Element {
   // Autoguarda el borrador de la grabación en curso.
   useDraftAutosave()
 
+  // El visor arranca con el zoom recordado (§19): la vista nativa la crea el
+  // proceso principal siempre al 100 %, así que hay que pedírselo desde aquí,
+  // que es donde vive la preferencia.
+  useEffect(() => {
+    const factor = useSession.getState().viewportZoom
+    if (factor !== DEFAULT_ZOOM) void ipc.invoke('viewport:zoom', { action: 'set', factor })
+  }, [])
+
   // Al arrancar, ofrece continuar un borrador sin terminar (si lo hay).
   useEffect(() => {
     void ipc.invoke('draft:load').then((d) => {
@@ -83,6 +93,9 @@ export function App(): React.JSX.Element {
     const offRegen = ipc.on('runner:progress', runnerProgressAdd)
     const offAi = ipc.on('ai:progress', setAiProgress)
     const offChecks = ipc.on('checks:progress', checksProgress)
+    // El zoom que se cambia con el teclado o la rueda dentro del visor lo aplica
+    // main; la barra se entera por aquí.
+    const offZoom = ipc.on('viewport:zoom-changed', setViewportZoom)
     void ipc.invoke('engine:get-state').then(applyEngineState)
     // La configuración de IA vive en el main (con la clave); la GUI solo sabe
     // qué proveedor está activo y si tiene clave.
@@ -93,8 +106,17 @@ export function App(): React.JSX.Element {
       offRegen()
       offAi()
       offChecks()
+      offZoom()
     }
-  }, [applyEngineState, onStep, runnerProgressAdd, setAiProgress, setAiStatus, checksProgress])
+  }, [
+    applyEngineState,
+    onStep,
+    runnerProgressAdd,
+    setAiProgress,
+    setAiStatus,
+    checksProgress,
+    setViewportZoom
+  ])
 
   return (
     <div className="app">

@@ -228,6 +228,46 @@ select {
   line-height: 1;
 }
 
+/* Zoom del visor (§19): el porcentaje se lee de un vistazo, que es justo lo que
+   el atajo de teclado no dice. */
+.zoom-buttons {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.zoom-buttons button {
+  height: 28px;
+  min-width: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.zoom-buttons button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.zoom-buttons .zoom-level {
+  min-width: 52px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Fuera del 100 % se marca: un zoom olvidado explica capturas que no cuadran. */
+.zoom-buttons .zoom-level-set {
+  color: var(--accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 .status {
   display: flex;
   align-items: center;

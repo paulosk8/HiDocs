@@ -259,6 +259,42 @@ try {
   }
   check(state.attached, 'Etapa 2: Playwright adjunto al viewport vía CDP', state.error ?? '')
 
+  // --- Etapa 2 bis: zoom del visor (§19) ---
+  // Se prueba antes de grabar y se deja el visor al 100 %: las capturas de las
+  // etapas siguientes deben salir a la escala de siempre.
+  const zoomPct = async () => (await gui.locator('.zoom-level').textContent()).trim()
+  const anchoCss = () => target.evaluate(() => window.innerWidth)
+  const esperaZoom = (pct) =>
+    gui.waitForFunction(
+      (esperado) => document.querySelector('.zoom-level')?.textContent === esperado,
+      pct,
+      { timeout: 5000 }
+    )
+  const ancho100 = await anchoCss()
+  await gui.click('.zoom-buttons button[aria-label="Acercar el visor"]')
+  await gui.click('.zoom-buttons button[aria-label="Acercar el visor"]')
+  await esperaZoom('125%')
+  const ancho125 = await anchoCss()
+  check(
+    ancho125 < ancho100,
+    'Etapa 2: el zoom amplía de verdad el visor y la barra dice a qué porcentaje',
+    `${await zoomPct()} · ${ancho100} → ${ancho125} px CSS`
+  )
+  // El zoom de Chromium es por origen: sin reaplicarlo, la recarga lo perdería.
+  await gui.click('.nav-buttons button[title="Recargar"]')
+  await target.waitForLoadState('load')
+  check(
+    (await zoomPct()) === '125%' && (await anchoCss()) === ancho125,
+    'Etapa 2: el zoom del visor sobrevive a la recarga'
+  )
+  check(
+    (await gui.evaluate(() => localStorage.getItem('docrecorder.viewportZoom'))) === '1.25',
+    'Etapa 2: el zoom se recuerda entre usos'
+  )
+  await gui.click('.zoom-level')
+  await esperaZoom('100%')
+  check((await anchoCss()) === ancho100, 'Etapa 2: pulsar el porcentaje devuelve el visor al 100 %')
+
   // --- Etapas 3 y 4: grabar interacciones reales sobre la página de prueba ---
   await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
   await gui.fill('.topbar input[placeholder="crear-matricula"]', 'crear-matricula')
@@ -3533,7 +3569,7 @@ try {
       "import { join } from 'node:path'",
       'const walk = (dir) =>',
       '  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>',
-      "    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]",
+      '    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]',
       '  )',
       "const pages = existsSync('docs') ? walk('docs').filter((f) => f.endsWith('.mdx')) : []",
       "const roto = pages.find((f) => readFileSync(f, 'utf8').includes('ROMPEME'))",
@@ -3667,7 +3703,9 @@ try {
       okSave.checks.runs.map((r) => r.script).join(',') === 'typecheck,lint:docs,build' &&
       !!okSave.git,
     'Comprobación: si los tres comandos pasan, el commit se hace como siempre',
-    okSave.checks ? okSave.checks.runs.map((r) => `${r.script} ${r.ms}ms`).join(' · ') : '(sin datos)'
+    okSave.checks
+      ? okSave.checks.runs.map((r) => `${r.script} ${r.ms}ms`).join(' · ')
+      : '(sin datos)'
   )
 
   // Vista previa: compila y sirve el sitio, y devuelve la dirección de ESTA guía

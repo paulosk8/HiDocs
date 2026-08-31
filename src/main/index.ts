@@ -36,6 +36,7 @@ import {
   type EngineState,
   type RegenReport
 } from '../shared/types'
+import { DEFAULT_ZOOM } from '../shared/zoom'
 import { saveSession } from './storage'
 import { captureSourceToFile, listCaptureSources, readClipboard } from './capture'
 import {
@@ -202,6 +203,23 @@ function configureSpellChecker(): void {
   }
 }
 
+/**
+ * Qué zoom pide esa tecla, ya aplicado, o `null` si no es una tecla de zoom.
+ * `=` entra porque en la mayoría de teclados el `+` se escribe con Shift y lo
+ * que llega sin él es el `=` de la misma tecla.
+ */
+function zoomFromKey(key: string): number | null {
+  if (key === '+' || key === '=') return viewport.stepZoom('in')
+  if (key === '-' || key === '_') return viewport.stepZoom('out')
+  if (key === '0') return viewport.setZoom(DEFAULT_ZOOM)
+  return null
+}
+
+/** Avisa a la GUI del zoom que quedó, para que el porcentaje lo siga. */
+function sendZoom(factor: number): void {
+  mainWindow?.webContents.send('viewport:zoom-changed', factor)
+}
+
 function createWindow(): void {
   // La ventana se dimensiona para que el viewport quepa a tamaño nominal
   // (1440x900) junto al panel; si la pantalla no da, se reduce y la sesión
@@ -255,6 +273,27 @@ function createWindow(): void {
     wc.on('did-navigate', onNav)
     wc.on('did-navigate-in-page', onNav)
     wc.on('did-finish-load', onNav)
+
+    // Zoom del visor con el teclado (§19). Chromium ya trae ⌘+/⌘−/⌘0, pero
+    // cambia la escala por su cuenta y la barra no se entera: se intercepta
+    // aquí para que teclado, rueda y botones muevan el MISMO valor y el
+    // porcentaje diga siempre la verdad. Solo dentro del visor: con la GUI
+    // enfocada, las teclas siguen haciendo lo de siempre.
+    wc.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown' || input.alt) return
+      if (!(input.control || input.meta)) return
+      const zoomed = zoomFromKey(input.key)
+      if (zoomed === null) return
+      event.preventDefault()
+      sendZoom(zoomed)
+    })
+
+    // ⌘/Ctrl + rueda dentro del visor: Chromium aplica su propio salto, así que
+    // se rehace con el paso de nuestra escala en vez de dejar dos escalas
+    // conviviendo.
+    wc.on('zoom-changed', (_event, direction) => {
+      sendZoom(viewport.stepZoom(direction === 'in' ? 'in' : 'out'))
+    })
   }
 
   mainWindow.on('closed', () => {
@@ -293,6 +332,15 @@ function registerIpc(): void {
   ipcMain.handle('viewport:back', () => viewport.goBack())
   ipcMain.handle('viewport:forward', () => viewport.goForward())
   ipcMain.handle('viewport:reload', () => viewport.reload())
+
+  ipcMain.handle(
+    'viewport:zoom',
+    (_e, args: { action: 'in' | 'out' | 'reset' | 'set'; factor?: number }) => {
+      if (args.action === 'in' || args.action === 'out') return viewport.stepZoom(args.action)
+      if (args.action === 'reset') return viewport.setZoom(DEFAULT_ZOOM)
+      return viewport.setZoom(args.factor ?? DEFAULT_ZOOM)
+    }
+  )
 
   ipcMain.handle('engine:get-state', () => engine.state)
 

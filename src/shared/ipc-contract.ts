@@ -297,6 +297,13 @@ export interface IpcInvokeMap {
   'viewport:back': () => void
   'viewport:forward': () => void
   'viewport:reload': () => void
+  /**
+   * Cambia la escala del contenido del visor (§19) y devuelve el factor que
+   * quedó, que es lo que la barra enseña en porcentaje. `set` fija uno concreto
+   * (lo usa la GUI al arrancar, con el valor recordado); `in`/`out` avanzan un
+   * paso de la escala y `reset` vuelve al 100 %.
+   */
+  'viewport:zoom': (args: { action: 'in' | 'out' | 'reset' | 'set'; factor?: number }) => number
   'engine:get-state': () => EngineState
   'recorder:start': () => EngineState
   'recorder:pause': () => EngineState
@@ -450,6 +457,13 @@ export interface IpcEventMap {
   'ai:progress': { done: number; total: number }
   /** progreso de la comprobación del sitio: qué comando y qué va escribiendo */
   'checks:progress': CheckProgress
+  /**
+   * El zoom del visor cambió sin pasar por los botones: con el teclado
+   * (⌘/Ctrl + `+`, `-`, `0`) o con ⌘/Ctrl + rueda dentro del visor. Sin esto la
+   * barra seguiría enseñando el porcentaje anterior, que es justo lo que esta
+   * función viene a arreglar.
+   */
+  'viewport:zoom-changed': number
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -462,6 +476,7 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'viewport:back',
   'viewport:forward',
   'viewport:reload',
+  'viewport:zoom',
   'engine:get-state',
   'recorder:start',
   'recorder:pause',
@@ -513,7 +528,8 @@ export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'engine:log',
   'runner:progress',
   'ai:progress',
-  'checks:progress'
+  'checks:progress',
+  'viewport:zoom-changed'
 ]
 
 /** Protocolo custom que sirve las capturas temporales al renderer. */

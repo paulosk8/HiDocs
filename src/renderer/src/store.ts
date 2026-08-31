@@ -25,6 +25,7 @@ import {
   type SessionMeta,
   type Viewport
 } from '../../shared/types'
+import { DEFAULT_ZOOM, clampZoom } from '../../shared/zoom'
 
 /**
  * De dónde salió la documentación que hay en el panel, cuando no la ha grabado
@@ -171,6 +172,12 @@ interface SessionState {
    * DOM: si no, `about:blank` taparía ese onboarding con un rectángulo vacío.
    */
   viewportActive: boolean
+  /**
+   * Escala del contenido del visor (§19). La aplica el proceso principal sobre
+   * el `WebContentsView`; aquí se guarda solo para enseñar el porcentaje y para
+   * recordarla entre usos.
+   */
+  viewportZoom: number
   /** estado del runner de regeneración de capturas */
   runnerPhase: 'idle' | 'running' | 'done'
   /** resultados por paso, según van llegando */
@@ -312,6 +319,8 @@ interface SessionState {
   togglePanel: () => void
   toggleTheme: () => void
   setViewportActive: (active: boolean) => void
+  /** guarda el zoom que devolvió main (no lo aplica: eso ya está hecho) */
+  setViewportZoom: (factor: number) => void
   setGroupConsecutive: (value: boolean) => void
   runnerStart: () => void
   runnerProgressAdd: (result: RegenStepResult) => void
@@ -636,6 +645,20 @@ function withGroupItems(step: RecordedStep, items: GroupedField[]): RecordedStep
 
 const THEME_KEY = 'docrecorder.theme'
 const HIDE_INTRO_KEY = 'docrecorder.hideDocusaurusIntro'
+const ZOOM_KEY = 'docrecorder.viewportZoom'
+
+/**
+ * Zoom recordado del visor. Se persiste porque documentar el mismo sistema al
+ * 80 % durante una tarde y tener que volver a bajarlo en cada arranque sería un
+ * incordio; un valor ilegible vuelve al 100 %.
+ */
+function initialZoom(): number {
+  try {
+    return clampZoom(Number(localStorage.getItem(ZOOM_KEY)))
+  } catch {
+    return DEFAULT_ZOOM
+  }
+}
 
 /** El aviso inicial se muestra salvo que el usuario haya pedido no verlo más. */
 function initialIntroOpen(): boolean {
@@ -810,6 +833,7 @@ export const useSession = create<SessionState>((set) => ({
   theme: initialTheme(),
   panelCollapsed: false,
   viewportActive: false,
+  viewportZoom: initialZoom(),
   runnerPhase: 'idle',
   runnerProgress: [],
   runnerReport: null,
@@ -1408,6 +1432,15 @@ export const useSession = create<SessionState>((set) => ({
       return { theme }
     }),
   setViewportActive: (viewportActive) => set({ viewportActive }),
+  setViewportZoom: (factor) => {
+    const viewportZoom = clampZoom(factor)
+    try {
+      localStorage.setItem(ZOOM_KEY, String(viewportZoom))
+    } catch {
+      // sin persistencia el zoom vale para esta sesión igualmente
+    }
+    set({ viewportZoom })
+  },
   setGroupConsecutive: (groupConsecutive) => {
     try {
       localStorage.setItem(GROUP_KEY, groupConsecutive ? '1' : '0')

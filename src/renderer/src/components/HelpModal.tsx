@@ -181,6 +181,14 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>‹ › ↻</b> · atrás, adelante y recargar en el visor.
                 </li>
                 <li>
+                  <b>− 100 % +</b> · zoom del visor. El número dice a qué escala estás viendo el
+                  sistema, y pulsarlo vuelve al 100 %. También responde a <b>⌘/Ctrl</b> con <b>+</b>
+                  , <b>−</b> o <b>0</b> y a <b>⌘/Ctrl + rueda</b> dentro del visor: el porcentaje se
+                  actualiza igual, hagas lo que hagas. Ojo: <b>las capturas salen a esta escala</b>,
+                  así que alejarlo para ver una tabla entera cambia lo que se publica. Se recuerda
+                  entre usos.
+                </li>
+                <li>
                   <b>URL base</b> + <b>Abrir</b> · carga el sistema en el visor.
                 </li>
                 <li>
@@ -1142,6 +1150,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   tengas copiado (ver <a onClick={() => go('pegar')}>Pegar imágenes y tablas</a>).
                 </li>
                 <li>
+                  <b>Ctrl/Cmd + «+» / «−» / «0»</b> · dentro del visor, acercar, alejar y volver al
+                  100 %. El porcentaje de la barra lo sigue (ver{' '}
+                  <a onClick={() => go('barra')}>Barra superior</a>).
+                </li>
+                <li>
                   <b>Esc</b> · cerrar esta ayuda, el explorador o un diálogo abierto.
                 </li>
               </ul>
@@ -1166,6 +1179,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>filas distintas</b> de una tabla, que nunca se agrupan—. Lo que viene después
                   empieza un grupo nuevo. Puedes documentarlo aparte o volver a grabar ese tramo
                   seguido.
+                </li>
+                <li>
+                  <b>Las capturas salen más grandes o más pequeñas de lo normal</b> · el visor tiene
+                  zoom. Mira el porcentaje de la barra superior y púlsalo para volver al 100 %.
                 </li>
                 <li>
                   <b>El corrector no subraya nada</b> · usa el diccionario del sistema operativo.
