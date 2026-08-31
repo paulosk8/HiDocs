@@ -11,7 +11,7 @@ import type {
 } from '../shared/types'
 
 /**
- * Comprobación del sitio de destino (§18).
+ * Comprobación del sitio de destino (§17).
  *
  * La vista previa del panel enseña cómo QUEDA el MDX, pero no si Docusaurus lo
  * puede compilar: una etiqueta que MDX no acepta, un enlace roto o un componente

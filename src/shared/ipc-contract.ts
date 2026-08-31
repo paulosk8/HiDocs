@@ -24,14 +24,12 @@ import type {
   GitCommitResult,
   GitRepoInfo,
   GitSaveOptions,
-  FlowAction,
   PendingDocInfo,
   PreviewResult,
   PreviewStatus,
   ProjectChecks,
   ProjectEntry,
-  RegenReport,
-  RegenStepResult,
+  RecordedAction,
   SaveResult,
   SelectorCandidate,
   SessionMeta,
@@ -106,8 +104,8 @@ export interface RecordedStep extends DocStep {
   /**
    * Campos fundidos en este paso, en orden. Es la fuente de verdad del grupo en
    * la GUI: de aquí se derivan `fields` (lo que se publica) y `mergedActions`
-   * (lo que reproduce el runner), y es lo que permite quitar un campo suelto sin
-   * dejar descuadrada su acción ni su resaltado.
+   * (con qué se vuelve a señalar cada elemento), y es lo que permite quitar un
+   * campo suelto sin dejar descuadrado su resaltado.
    */
   groupItems?: GroupedField[]
   /**
@@ -159,7 +157,7 @@ export interface CommitDocEdit {
 export interface GroupTarget {
   /** referencias del observador a ese elemento (enfocarlo y escribir son dos) */
   refs: number[]
-  /** selectores del paso, en orden de robustez, como los usa el runner */
+  /** selectores del paso, en orden de robustez */
   selectorCandidates: SelectorCandidate[]
 }
 
@@ -198,10 +196,10 @@ export interface GroupedField {
   /** valor introducido; vacío si solo se enfocó */
   value: string
   /**
-   * Acciones que lo produjeron (enfocar y escribir son dos), para que el runner
-   * reproduzca el paso igual que ocurrió.
+   * Acciones que lo produjeron (enfocar y escribir son dos): de sus selectores
+   * sale el modo de volver a localizar el elemento para señalarlo.
    */
-  actions: FlowAction[]
+  actions: RecordedAction[]
   /** referencias a su elemento en el observador, para volver a resaltarlo */
   refs: number[]
 }
@@ -298,7 +296,7 @@ export interface IpcInvokeMap {
   'viewport:forward': () => void
   'viewport:reload': () => void
   /**
-   * Cambia la escala del contenido del visor (§19) y devuelve el factor que
+   * Cambia la escala del contenido del visor (§18) y devuelve el factor que
    * quedó, que es lo que la barra enseña en porcentaje. `set` fija uno concreto
    * (lo usa la GUI al arrancar, con el valor recordado); `in`/`out` avanzan un
    * paso de la escala y `reset` vuelve al 100 %.
@@ -406,7 +404,7 @@ export interface IpcInvokeMap {
   'docusaurus:suggest-docs': (dir: string) => string | null
   /**
    * Qué comandos del proyecto de destino se pueden ejecutar para comprobar el
-   * sitio (§18), o `null` si la carpeta de salida no está en uno.
+   * sitio (§17), o `null` si la carpeta de salida no está en uno.
    */
   'checks:detect': (outputDir: string) => ProjectChecks | null
   /**
@@ -429,12 +427,6 @@ export interface IpcInvokeMap {
   'draft:load': () => DraftPayload | null
   /** descarta el borrador (al finalizar o al desecharlo) */
   'draft:clear': () => void
-  /**
-   * Regenera las capturas de una funcionalidad re-ejecutando su flujo en el visor
-   * autenticado. Sin `featureDir`, pide la carpeta con un selector; con él, la usa
-   * directamente. El progreso llega por el evento `runner:progress`.
-   */
-  'runner:regenerate': (featureDir?: string) => RegenReport
   /** configuración de IA y si cada proveedor tiene clave (nunca la clave en sí) */
   'ai:status': () => AiStatus
   /** guarda o borra (cadena vacía) la clave de un proveedor */
@@ -451,8 +443,6 @@ export interface IpcEventMap {
   /** el atajo global Ctrl+Shift+R pide alternar pausa */
   'recorder:toggle-shortcut': void
   'engine:log': { level: 'info' | 'warn' | 'error'; message: string }
-  /** progreso de la regeneración, un paso a la vez */
-  'runner:progress': RegenStepResult
   /** progreso de la redacción con IA, tras cada lote */
   'ai:progress': { done: number; total: number }
   /** progreso de la comprobación del sitio: qué comando y qué va escribiendo */
@@ -514,7 +504,6 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'draft:save',
   'draft:load',
   'draft:clear',
-  'runner:regenerate',
   'ai:status',
   'ai:set-key',
   'ai:set-settings',
@@ -526,7 +515,6 @@ export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'recorder:step',
   'recorder:toggle-shortcut',
   'engine:log',
-  'runner:progress',
   'ai:progress',
   'checks:progress',
   'viewport:zoom-changed'

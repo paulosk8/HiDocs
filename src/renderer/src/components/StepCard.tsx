@@ -164,7 +164,7 @@ export function StepCard({
         </button>
         {/* Recortar o señalar sobre la imagen que ya trae el paso. Solo en los
             pasos cuya imagen es del usuario: la de un paso grabado la produce el
-            motor y la rehace el runner. */}
+            motor. */}
         {(isImage || isCapture) && step.tempFile && (
           <button
             className="icon-btn"

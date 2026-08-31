@@ -11,7 +11,7 @@ interface Props {
 }
 
 /**
- * La comprobación del sitio, mientras corre y cuando termina mal (§18).
+ * La comprobación del sitio, mientras corre y cuando termina mal (§17).
  *
  * Enseña la salida REAL de los comandos, no un «algo ha fallado»: el error de
  * Docusaurus dice el archivo y la línea, y es lo único con lo que se puede

@@ -97,7 +97,7 @@ export function renderFeatureMdx(
   hasImage: (relativePath: string) => boolean,
   subLabel = ''
 ): string {
-  // Las carpetas de capturas (§17) y lo que contiene cada una. Un paso metido en
+  // Las carpetas de capturas (§16) y lo que contiene cada una. Un paso metido en
   // una carpeta no se publica por su cuenta: es una de las ilustraciones del
   // paso que ES la carpeta, y se imprime dentro de ella. Si la carpeta se excluye
   // del manual, se van con ella: sacarlas sueltas convertiría un paso en cuatro.

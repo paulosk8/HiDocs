@@ -30,7 +30,6 @@ const SECTIONS = [
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
   { id: 'comprobar', label: 'Comprobar el sitio' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
-  { id: 'regenerar', label: 'Regenerar capturas' },
   { id: 'ia', label: 'Redactar con IA' },
   { id: 'interfaz', label: 'Panel y tema' },
   { id: 'atajos', label: 'Atajos y solución de problemas' }
@@ -110,10 +109,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 registra en Git como una rama lista para abrir un Pull Request.
               </p>
               <p>
-                Dos ayudas más, una vez grabado: la <a onClick={() => go('ia')}>redacción con IA</a>{' '}
-                propone el título y la descripción de cada paso, y el{' '}
-                <a onClick={() => go('regenerar')}>runner de regeneración</a> actualiza las capturas
-                cuando el sistema documentado cambia de interfaz.
+                Una ayuda más, una vez grabado: la <a onClick={() => go('ia')}>redacción con IA</a>{' '}
+                propone el título y la descripción de cada paso a partir de lo que ocurrió en la
+                pantalla.
               </p>
             </section>
 
@@ -197,10 +195,6 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 </li>
                 <li>
                   <b>Proyectos…</b> · abre el explorador de repositorios ya usados.
-                </li>
-                <li>
-                  <b>Regenerar…</b> · actualiza las capturas de una funcionalidad ya documentada
-                  (ver <a onClick={() => go('regenerar')}>Regenerar capturas</a>).
                 </li>
                 <li>
                   <b>IA</b> · ajustes de la redacción con IA; muestra <b>✓</b> cuando hay clave
@@ -531,10 +525,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 por separado: dirían que hay que hacer cuatro cosas donde solo se describe una.
               </p>
               <p>
-                La carpeta no tiene captura propia ni entra en <code>flow.json</code>, pero{' '}
+                La carpeta no tiene captura propia, pero{' '}
                 <b>lo que hay dentro sí conserva lo suyo</b>: un paso grabado metido en una carpeta
-                se sigue reproduciendo y <a onClick={() => go('regenerar')}>regenerando</a> como
-                cualquier otro.
+                mantiene su acción, su selector y su imagen, como cualquier otro.
               </p>
             </section>
 
@@ -584,9 +577,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 secciones se publica exactamente igual que antes.
               </p>
               <p>
-                Las secciones no se numeran, no llevan captura, no entran en <code>flow.json</code>{' '}
-                y <a onClick={() => go('regenerar')}>regenerar capturas</a> las salta: no hay nada
-                que reproducir en ellas.
+                Las secciones no se numeran y no llevan captura: son el título de un apartado, no un
+                paso que haya que hacer.
               </p>
             </section>
 
@@ -619,9 +611,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </ul>
               <p>
                 El paso resultante se comporta como cualquier otro: título, descripción, nota,
-                bloque de contenido, orden y publicación. La única diferencia es que{' '}
-                <a onClick={() => go('regenerar')}>regenerar capturas</a> no lo toca: esa imagen no
-                la produce el navegador, así que se conserva tal cual.
+                bloque de contenido, orden y publicación. La única diferencia es que su imagen no la
+                produce el navegador, así que no lleva selector ni chip de estrategia.
               </p>
               <p>
                 En <b>macOS</b>, la primera vez hay que autorizar la <b>grabación de pantalla</b> en
@@ -668,11 +659,6 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 sigue pegando texto ahí, como siempre. La tarjeta solo se crea cuando el pegado no
                 tiene otro destino. Y si acabas de usar el visor, haz clic en el panel antes de
                 pegar: el sistema documentado y HiDocs son dos ventanas distintas para el teclado.
-              </p>
-              <p>
-                Las imágenes pegadas <b>no se regeneran</b> (
-                <a onClick={() => go('regenerar')}>Regenerar capturas</a>): no las produce el
-                navegador, así que se conservan tal cual.
               </p>
             </section>
 
@@ -895,7 +881,7 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </ul>
               <p>
                 También aparece un paquete <b>ya commiteado y cambiado después</b> en el disco: es
-                la señal de que hay una regeneración de capturas o una edición a mano sin registrar.
+                la señal de que hay una reedición o una corrección a mano sin registrar.
               </p>
             </section>
 
@@ -909,8 +895,7 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
     └── [<subcategoría>/]       (opcional; con su propio _category_.json)
         └── <funcionalidad>/
             ├── index.mdx      (la página del manual que Docusaurus muestra)
-            ├── session.json   (la sesión completa)
-            ├── flow.json      (acciones + selectores)
+            ├── session.json   (la sesión completa: pasos y selectores)
             └── img/paso-01.png …`}
               </pre>
               <p>
@@ -919,8 +904,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 sin «incluir en docs» se omiten; las <a onClick={() => go('notas')}>notas</a> se
                 publican como admonitions. Si usas <b>subcategoría</b>, se añade un nivel de carpeta
                 con su propio <code>_category_.json</code>, y Docusaurus anida el sidebar solo. Los{' '}
-                <code>.json</code> conviven sin estorbar: Docusaurus solo renderiza <code>.md</code>{' '}
-                / <code>.mdx</code>.
+                <code>session.json</code> convive sin estorbar: Docusaurus solo renderiza{' '}
+                <code>.md</code> / <code>.mdx</code>.
               </p>
               <p>
                 Flujo completo: el repositorio de documentación <b>ya existe</b> y lo mantiene otra
@@ -1030,38 +1015,6 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   disco.
                 </li>
               </ul>
-            </section>
-
-            <section id="regenerar" data-help-section>
-              <h3>Regenerar capturas</h3>
-              <p>
-                Cuando el sistema documentado <b>cambia de interfaz</b>, sus capturas quedan
-                desactualizadas. En vez de volver a grabar, el botón <b>Regenerar…</b> re-ejecuta el
-                flujo de una funcionalidad y actualiza sus capturas:
-              </p>
-              <ol className="help-steps">
-                <li>
-                  Abre el sistema en el visor e <b>inicia sesión</b> (el runner reutiliza esa
-                  sesión).
-                </li>
-                <li>
-                  Pulsa <b>Regenerar…</b> y elige la carpeta de la funcionalidad (la que contiene su{' '}
-                  <code>session.json</code>).
-                </li>
-                <li>
-                  El runner reproduce cada paso en el visor y vuelve a capturar. Localiza los
-                  elementos por sus selectores, con <b>fallback</b> a los alternativos.
-                </li>
-              </ol>
-              <p>
-                Si un paso ya no encuentra su elemento, se <b>marca como fallido</b> (conserva su
-                captura anterior) y el runner sigue con el resto. Las{' '}
-                <a onClick={() => go('captura')}>capturas externas</a> y los{' '}
-                <a onClick={() => go('contenido')}>bloques de contenido</a> se <b>saltan</b>: no
-                salen del navegador y no hay nada que reproducir en ellos. Al final, un informe
-                indica qué pasos se actualizaron y cuáles hay que revisar. Las capturas se
-                sobrescriben en disco; tú revisas y comiteas con el flujo de Git normal.
-              </p>
             </section>
 
             <section id="ia" data-help-section>

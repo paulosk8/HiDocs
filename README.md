@@ -7,8 +7,8 @@ selectores robustos y textos editables. Al detener, se exporta un paquete
 portable a disco.
 
 Implementación del MVP descrito en [`SPEC.md`](./SPEC.md), más las fases posteriores:
-integración con Git, generación de MDX para Docusaurus, runner de regeneración de
-capturas y redacción de los pasos con IA.
+integración con Git, generación de MDX para Docusaurus, comprobación del sitio antes
+de registrar y redacción de los pasos con IA.
 
 ## Uso
 
@@ -65,8 +65,8 @@ Salida:
 
 ```
 <carpeta>/<module>/<feature>/
-  ├── session.json   # sesión completa con textos y capturas
-  ├── flow.json      # solo acciones + selectores (insumo del runner de regeneración)
+  ├── session.json   # sesión completa con textos, selectores y capturas
+  ├── index.mdx      # la página del manual para Docusaurus
   └── img/paso-01.png …
 ```
 
@@ -96,7 +96,6 @@ src/
       selectors.ts ranking y puntuación de selectores
       stability.ts espera de estabilidad del DOM antes de capturar
       recorder.ts  orquestación: cola de eventos → paso documentado
-      runner.ts    replay del flujo para regenerar capturas
   preload/         contextBridge con canales tipados
   renderer/        GUI React
   shared/          tipos y contrato IPC comunes
@@ -121,7 +120,7 @@ depuración y la segunda se quedaría sin poder grabar, sin síntoma visible.
 ### Selectores
 
 Por cada paso se guardan todos los candidatos ordenados por robustez estimada, para
-que el runner futuro pueda hacer fallback: `data-testid` → `id` (descartando los
+poder hacer fallback cuando el preferido deja de resolver: `data-testid` → `id` (descartando los
 autogenerados tipo `:r1:`, `radix-…` o uuid) → rol ARIA + nombre accesible →
 texto visible → CSS estructural corto. Ninguna estrategia se apoya en clases
 hasheadas de CSS Modules ni en cadenas de utilidades Tailwind.
@@ -189,4 +188,4 @@ usuario.
 ## Fases pendientes
 
 Ninguna del planteamiento inicial: la lista «fuera de alcance» de `SPEC.md` §1 (MDX para
-Docusaurus, runner de regeneración y asistencia de IA) está construida.
+Docusaurus e integración con Git) está construida, y la asistencia de IA también.

@@ -5,11 +5,9 @@
  */
 
 /**
- * Lo que ocurrió en el paso. Las seis primeras son interacciones con la página
- * (las únicas que el runner puede reproducir y las únicas que aparecen en
- * `flow.json`); `capture`, `image`, `content`, `section` y `group` solo salen en
- * los pasos que añade el usuario a mano, donde no hay ninguna interacción que
- * describir.
+ * Lo que ocurrió en el paso. Las seis primeras son interacciones con la página;
+ * `capture`, `image`, `content`, `section` y `group` solo salen en los pasos que
+ * añade el usuario a mano, donde no hay ninguna interacción que describir.
  */
 export type StepAction =
   | 'click'
@@ -27,14 +25,13 @@ export type StepAction =
 /**
  * De dónde sale un paso y, por tanto, qué se puede hacer con él.
  *
- * - `interaction`: lo grabó el motor sobre la página. Tiene acción y selectores,
- *   así que el runner puede reproducirlo.
+ * - `interaction`: lo grabó el motor sobre la página. Tiene acción y selectores.
  * - `capture`: una captura de pantalla ajena a la página (otra ventana, el
- *   escritorio o un archivo de imagen). Documenta lo que no vive en el navegador;
- *   no tiene acción que reproducir y el runner la respeta tal cual.
+ *   escritorio o un archivo de imagen). Documenta lo que no vive en el navegador
+ *   y no tiene acción ni selectores.
  * - `image`: una imagen que el usuario trajo pegada desde el portapapeles. Se
- *   comporta igual que `capture` —imagen propia, sin acción, intocable por el
- *   runner— pero se distingue porque su origen no es la pantalla de esta máquina:
+ *   comporta igual que `capture` —imagen propia, sin acción— pero se distingue
+ *   porque su origen no es la pantalla de esta máquina:
  *   es un diagrama, un recorte de otra herramienta o una captura que ya venía
  *   hecha, y eso cambia lo que se puede dar por supuesto al describirla.
  * - `content`: un bloque de contenido escrito a mano (una tabla, un fragmento de
@@ -90,12 +87,12 @@ export interface DocStep {
    */
   fields?: Array<{ label: string; value: string }>
   /**
-   * Acciones individuales que se fundieron en este paso (agrupado). El runner de
-   * regeneración las re-ejecuta todas y luego captura UNA imagen del paso;
-   * `flow.json` también las expande. Ausente en pasos no agrupados: su acción es
-   * `action` + `selectorCandidates` + `value`.
+   * Acciones individuales que se fundieron en este paso (agrupado): con ellas se
+   * vuelve a localizar cada uno de sus elementos para señalarlos todos en la
+   * captura. Ausente en pasos no agrupados: su acción es `action` +
+   * `selectorCandidates` + `value`.
    */
-  mergedActions?: FlowAction[]
+  mergedActions?: RecordedAction[]
   /**
    * Nota destacada del paso, publicada como «admonition» de Docusaurus
    * (`:::note`, `:::tip`, …). Sirve para recalcar algo importante de este paso
@@ -200,25 +197,16 @@ export interface EngineState {
 }
 
 /**
- * Insumo del runner futuro (§7): solo acciones + selectores, sin textos
- * editoriales ni rutas de imágenes.
+ * Una interacción tal como ocurrió: qué se hizo, sobre qué elemento y con qué
+ * valor, sin textos editoriales ni rutas de imágenes. Un paso agrupado guarda
+ * varias (`mergedActions`), que es lo que permite señalar a todos sus elementos.
  */
-export interface FlowAction {
+export interface RecordedAction {
   order: number
   action: StepAction
   selectorCandidates: SelectorCandidate[]
   value?: string
   url: string
-}
-
-export interface Flow {
-  sessionId: string
-  module: string
-  subcategory?: string
-  feature: string
-  baseUrl: string
-  viewport: Viewport
-  actions: FlowAction[]
 }
 
 export interface SaveResult {
@@ -231,13 +219,13 @@ export interface SaveResult {
   /** el commit se pidió pero falló; el paquete en disco sí se escribió */
   gitError?: string
   /**
-   * Comprobación del sitio antes de commitear (§18). Si falló, el commit NO se
+   * Comprobación del sitio antes de commitear (§17). Si falló, el commit NO se
    * hizo: el paquete está en disco y se puede corregir y volver a guardar.
    */
   checks?: ChecksResult
 }
 
-/* --- Comprobación del sitio de destino (§18) --- */
+/* --- Comprobación del sitio de destino (§17) --- */
 
 /** Un comando del proyecto de destino que sabemos interpretar. */
 export interface DocCheck {
@@ -506,30 +494,6 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
   useScreenshot: true
 }
 
-/**
- * Resultado de regenerar la captura de un paso (runner). `skipped` es para los
- * pasos que no tienen nada que reproducir —una captura externa o un bloque de
- * contenido—: no son un fallo, simplemente se conservan tal cual.
- */
-export interface RegenStepResult {
-  order: number
-  title: string
-  status: 'ok' | 'failed' | 'skipped'
-  /** motivo del fallo (o de haberlo saltado), si lo hay */
-  detail: string
-}
-
-/** Resultado global de una regeneración. */
-export interface RegenReport {
-  /** el usuario canceló el selector de carpeta */
-  canceled?: boolean
-  /** no se pudo ni empezar (p. ej. sin session.json, o sin sesión iniciada) */
-  error?: string
-  /** carpeta de la funcionalidad regenerada */
-  featureDir?: string
-  results: RegenStepResult[]
-}
-
 export interface GitCommitOptions {
   repoRoot: string
   branch: string
@@ -566,7 +530,7 @@ export interface GitSaveOptions {
   /** elegida en el explorador de repositorios; sin ella se usa la por defecto */
   baseBranch?: string
   /**
-   * Comprobar el sitio antes de commitear (§18). Con `false` se comitea sin
+   * Comprobar el sitio antes de commitear (§17). Con `false` se comitea sin
    * ejecutar nada: es lo que hace «Registrar de todos modos» tras un fallo.
    */
   verify?: boolean

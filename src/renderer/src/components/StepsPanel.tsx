@@ -55,9 +55,6 @@ export function StepsPanel(): React.JSX.Element {
   const branchPickerOpen = useSession((s) => s.branchPickerOpen)
   const helpOpen = useSession((s) => s.helpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
-  // El informe del runner se muestra al terminar; durante el replay el visor
-  // debe quedar VISIBLE (se ve la reproducción y las capturas salen con tamaño).
-  const runnerReportOpen = useSession((s) => s.runnerPhase === 'done')
   const groupConsecutive = useSession((s) => s.groupConsecutive)
   const setGroupConsecutive = useSession((s) => s.setGroupConsecutive)
   const aiOpen = useSession((s) => s.aiOpen)
@@ -432,7 +429,6 @@ export function StepsPanel(): React.JSX.Element {
     branchPickerOpen ||
     helpOpen ||
     docusaurusIntroOpen ||
-    runnerReportOpen ||
     aiOpen ||
     aiContextOpen ||
     pendingDocsOpen ||

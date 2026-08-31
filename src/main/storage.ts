@@ -6,18 +6,10 @@ import { rememberProject } from './projects'
 import { kebab } from '../shared/naming'
 import { categoryJson, renderFeatureMdx, titleCase } from './mdx'
 import { detectChecks, runChecks } from './checks'
-import type {
-  CheckProgress,
-  DocSession,
-  DocStep,
-  Flow,
-  FlowAction,
-  SaveResult,
-  Viewport
-} from '../shared/types'
+import type { CheckProgress, DocSession, DocStep, SaveResult, Viewport } from '../shared/types'
 
 /**
- * Escritura del paquete en disco (§7). Además del paquete reproducible en JSON,
+ * Escritura del paquete en disco (§7). Además del registro de la sesión en JSON,
  * se genera la página del manual en MDX para que Docusaurus la renderice (§10):
  *
  *   <carpeta>/<module>/[<subcategory>/]
@@ -25,8 +17,7 @@ import type {
  *     │                             uno por cada nivel con carpeta propia)
  *     └── <feature>/
  *         ├── index.mdx            (la página del manual, para Docusaurus)
- *         ├── session.json         (sesión completa, reproducible)
- *         ├── flow.json            (acciones + selectores)
+ *         ├── session.json         (la sesión completa: pasos y selectores)
  *         └── img/paso-01.png …
  */
 
@@ -61,7 +52,6 @@ export async function saveSession(
   // El orden en disco debe coincidir siempre con el orden final del panel: las
   // imágenes se renumeran al guardar, no al reordenar (§7).
   const steps: DocStep[] = []
-  const actions: FlowAction[] = []
   /** rutas absolutas de las capturas copiadas, para indexarlas en Git */
   const writtenImages: string[] = []
   /** rutas relativas escritas, para que el MDX no enlace capturas inexistentes */
@@ -108,7 +98,7 @@ export async function saveSession(
     // commiteadas siguen leyéndose igual y el JSON no engorda sin motivo.
     if (step.kind && step.kind !== 'interaction') persisted.kind = step.kind
     // La pertenencia a una carpeta viaja con el paso: es lo que permite volver a
-    // editar el paquete (o regenerarlo) sin que las carpetas se deshagan.
+    // editar el paquete sin que las carpetas se deshagan.
     if (step.groupId) persisted.groupId = step.groupId
     if (step.content?.trim()) persisted.content = step.content
     if (step.value !== undefined) persisted.value = step.value
@@ -116,32 +106,11 @@ export async function saveSession(
     // La nota destacada se conserva solo si tiene cuerpo: un recuadro vacío no
     // aporta nada al manual y ensuciaría el MDX.
     if (step.note?.body.trim()) persisted.note = step.note
-    // El runner necesita las acciones individuales del paso agrupado para
-    // reproducirlo (una captura tras re-ejecutarlas todas).
+    // Las acciones individuales del paso agrupado se conservan: son las que
+    // localizan a cada uno de sus elementos si el paquete se vuelve a editar y
+    // hay que re-capturarlo con todos ellos señalados.
     if (step.mergedActions?.length) persisted.mergedActions = step.mergedActions
     steps.push(persisted)
-
-    // flow.json es la receta reproducible para el runner: un paso agrupado se
-    // expande en sus acciones individuales, aunque en el manual sea un solo
-    // paso. Una captura externa o un bloque de contenido no aportan ninguna:
-    // no ocurrieron dentro de la página y nadie puede reproducirlas.
-    const stepActions =
-      step.kind && step.kind !== 'interaction'
-        ? []
-        : step.mergedActions && step.mergedActions.length > 0
-          ? step.mergedActions
-          : [
-              {
-                order,
-                action: step.action,
-                selectorCandidates: step.selectorCandidates,
-                url: step.url,
-                ...(step.value !== undefined ? { value: step.value } : {})
-              }
-            ]
-    for (const a of stepActions) {
-      actions.push({ ...a, order: actions.length + 1 })
-    }
   }
 
   const session: DocSession = {
@@ -152,27 +121,15 @@ export async function saveSession(
     title: payload.meta.title,
     role: payload.meta.role,
     baseUrl: payload.meta.baseUrl,
-    // Se guarda el tamaño real del viewport, no el nominal: es el que hace
-    // reproducible la captura en el runner futuro.
+    // Se guarda el tamaño real del viewport, no el nominal: es a lo que
+    // corresponden las capturas del paquete.
     viewport: actualViewport.width > 0 ? actualViewport : payload.viewport,
     createdAt: payload.createdAt,
     steps
   }
 
-  const flow: Flow = {
-    sessionId: session.id,
-    module: session.module,
-    ...(subDir ? { subcategory: subDir } : {}),
-    feature: session.feature,
-    baseUrl: session.baseUrl,
-    viewport: session.viewport,
-    actions
-  }
-
   const sessionFile = join(targetDir, 'session.json')
-  const flowFile = join(targetDir, 'flow.json')
   await writeFile(sessionFile, JSON.stringify(session, null, 2), 'utf8')
-  await writeFile(flowFile, JSON.stringify(flow, null, 2), 'utf8')
 
   // Página del manual para Docusaurus. Las etiquetas de módulo y subcategoría se
   // toman del texto original del usuario (no del slug de carpeta), para que se
@@ -185,7 +142,7 @@ export async function saveSession(
     renderFeatureMdx(session, moduleLabel, (rel) => writtenRelatives.has(rel), subLabel),
     'utf8'
   )
-  const committedFiles = [mdxFile, sessionFile, flowFile, ...writtenImages]
+  const committedFiles = [mdxFile, sessionFile, ...writtenImages]
 
   // Las categorías agrupan las funcionalidades en la barra lateral. Cada nivel
   // con carpeta propia lleva su `_category_.json`, creado solo si falta: si el
@@ -205,7 +162,7 @@ export async function saveSession(
 
   const result: SaveResult = { path: targetDir, stepsWritten: steps.length, imagesWritten }
 
-  // Comprobación del sitio ANTES del commit (§18). El orden es deliberado: los
+  // Comprobación del sitio ANTES del commit (§17). El orden es deliberado: los
   // comandos se ejecutan sobre el paquete ya escrito —es lo que van a compilar—,
   // y si algo no pasa, el commit no llega a hacerse. Lo escrito se queda en
   // disco: se corrige y se vuelve a guardar, o se registra igualmente desde el

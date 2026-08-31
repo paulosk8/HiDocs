@@ -1834,44 +1834,6 @@ select {
   border-radius: 6px;
 }
 
-/* ---------- informe de regeneración ---------- */
-
-.runner-report {
-  max-width: 560px;
-}
-
-.runner-results {
-  list-style: none;
-  margin: 4px 0 12px;
-  padding: 0;
-  max-height: 320px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.runner-results li {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  line-height: 1.4;
-  font-size: 12px;
-}
-
-.runner-badge {
-  flex: 0 0 auto;
-  font-weight: 700;
-}
-
-.runner-results li.ok .runner-badge {
-  color: var(--green);
-}
-
-.runner-results li.failed .runner-badge {
-  color: var(--danger);
-}
-
 /* ---------- redacción con IA ---------- */
 
 /* Botón ✨ de cada paso: discreto en reposo, evidente al pasar por encima. */
@@ -2467,7 +2429,7 @@ select {
 }
 
 /* Los pasos que no vienen del motor se distinguen de un vistazo: no tienen
-   selector ni se pueden regenerar, así que conviene no confundirlos. */
+   selector, así que conviene no confundirlos con los grabados. */
 .step-card.kind-capture {
   border-left: 3px solid var(--amber);
 }

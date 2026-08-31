@@ -259,11 +259,22 @@ try {
   }
   check(state.attached, 'Etapa 2: Playwright adjunto al viewport vía CDP', state.error ?? '')
 
-  // --- Etapa 2 bis: zoom del visor (§19) ---
+  // --- Etapa 2 bis: zoom del visor (§18) ---
   // Se prueba antes de grabar y se deja el visor al 100 %: las capturas de las
   // etapas siguientes deben salir a la escala de siempre.
   const zoomPct = async () => (await gui.locator('.zoom-level').textContent()).trim()
-  const anchoCss = () => target.evaluate(() => window.innerWidth)
+  // El ancho se pide con reintento: justo tras una recarga el contexto de la
+  // página puede estar destruyéndose y `evaluate` lanzaría.
+  const anchoCss = async () => {
+    for (let i = 0; i < 20; i++) {
+      try {
+        return await target.evaluate(() => window.innerWidth)
+      } catch {
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+    return -1
+  }
   const esperaZoom = (pct) =>
     gui.waitForFunction(
       (esperado) => document.querySelector('.zoom-level')?.textContent === esperado,
@@ -281,8 +292,10 @@ try {
     `${await zoomPct()} · ${ancho100} → ${ancho125} px CSS`
   )
   // El zoom de Chromium es por origen: sin reaplicarlo, la recarga lo perdería.
-  await gui.click('.nav-buttons button[title="Recargar"]')
-  await target.waitForLoadState('load')
+  await Promise.all([
+    target.waitForEvent('load', { timeout: 15000 }),
+    gui.click('.nav-buttons button[title="Recargar"]')
+  ])
   check(
     (await zoomPct()) === '125%' && (await anchoCss()) === ancho125,
     'Etapa 2: el zoom del visor sobrevive a la recarga'
@@ -558,11 +571,9 @@ try {
 
   const dir = join(outDir, 'matriculas', 'crear-matricula')
   const session = JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))
-  const flow = JSON.parse(readFileSync(join(dir, 'flow.json'), 'utf8'))
   const images = readdirSync(join(dir, 'img')).sort()
 
   check(existsSync(join(dir, 'session.json')), 'Etapa 6: session.json escrito')
-  check(existsSync(join(dir, 'flow.json')), 'Etapa 6: flow.json escrito')
   check(
     images.join(',') === 'paso-01.png,paso-02.png,paso-03.png,paso-04.png',
     'Etapa 6: imágenes renumeradas según el orden final',
@@ -580,10 +591,6 @@ try {
   check(
     session.steps[1]?.description === 'Desde el listado, pulsa «Nueva matrícula».',
     'Etapa 6: la descripción editada se persiste'
-  )
-  check(
-    flow.actions.length === session.steps.length,
-    'Etapa 6: flow.json refleja las mismas acciones'
   )
   check(
     session.steps.every((s) => s.selectorCandidates.length >= 1),
@@ -617,9 +624,8 @@ try {
     .sort()
   check(
     committed.includes('matriculas/crear-matricula/session.json') &&
-      committed.includes('matriculas/crear-matricula/flow.json') &&
       committed.filter((f) => f.endsWith('.png')).length === 4,
-    'Git: el commit contiene session.json, flow.json y las 4 capturas',
+    'Git: el commit contiene session.json y las 4 capturas',
     committed.join(' ')
   )
   check(
@@ -909,7 +915,6 @@ try {
       'inventario/_category_.json',
       'inventario/dar-de-baja/index.mdx',
       'inventario/dar-de-baja/session.json',
-      'inventario/dar-de-baja/flow.json',
       'inventario/dar-de-baja/img/paso-01.png'
     ].every((f) => pendingFilesCommitted.includes(f)),
     'Sin registrar: viaja el paquete entero, con su img/ y su _category_.json',
@@ -1067,9 +1072,8 @@ try {
     dataUri ? `${dataUri.slice(0, 24)}… (${dataUri.length} b)` : 'null'
   )
 
-  // --- Runner de regeneración: re-ejecutar el flujo y actualizar capturas ---
-  // El diálogo de resultado de la Etapa 6 sigue abierto y oculta el visor; el
-  // runner necesita el visor VISIBLE para capturar, así que se cierra primero.
+  // El diálogo de resultado de la Etapa 6 sigue abierto y oculta el visor, así
+  // que se cierra antes de seguir manejando la GUI.
   await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
 
@@ -1119,7 +1123,7 @@ try {
   )
 
   // Retomar una funcionalidad concreta sí carga sus cuatro campos: se va a
-  // ampliar o regrabar, y debe caer en su misma carpeta.
+  // ampliar o volver a grabar, y debe caer en su misma carpeta.
   await gui.waitForSelector('.branch-docs .row[data-feature="crear-matricula"]', { timeout: 5000 })
   await gui.click('.branch-docs .row[data-feature="crear-matricula"]')
   await gui.waitForSelector('.branch-picker', { state: 'detached', timeout: 5000 })
@@ -1132,82 +1136,12 @@ try {
     'Rama de trabajo: retomar una funcionalidad carga sus metadatos completos',
     JSON.stringify(reloaded)
   )
-  // Se escribe una funcionalidad con dos pasos: uno con selector válido (el botón
-  // del fixture) y otro con selector inexistente, para probar ok + fallo marcado.
-  // El visor sigue adjunto al fixture, así que el runner reutiliza esa sesión.
-  const regenDir = mkdtempSync(join(tmpdir(), 'regen-'))
-  const featureDir = join(regenDir, 'pruebas', 'regenerar')
-  mkdirSync(join(featureDir, 'img'), { recursive: true })
-  writeFileSync(
-    join(featureDir, 'session.json'),
-    JSON.stringify({
-      id: 'r1',
-      module: 'pruebas',
-      feature: 'regenerar',
-      title: 'Regenerar',
-      role: '',
-      baseUrl: fixture.url,
-      viewport: { width: 800, height: 600 },
-      createdAt: new Date().toISOString(),
-      steps: [
-        {
-          id: 'a',
-          order: 1,
-          action: 'click',
-          title: 'Abrir «Nueva matrícula»',
-          description: '',
-          selectorCandidates: [
-            { strategy: 'testid', value: '[data-testid="nueva-matricula"]', score: 100 }
-          ],
-          url: fixture.url,
-          screenshot: 'img/paso-01.png',
-          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
-          includeInDocs: true,
-          timestamp: 't'
-        },
-        {
-          id: 'b',
-          order: 2,
-          action: 'click',
-          title: 'Elemento que ya no existe',
-          description: '',
-          selectorCandidates: [{ strategy: 'css', value: '#no-existe-jamas', score: 10 }],
-          url: fixture.url,
-          screenshot: 'img/paso-02.png',
-          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
-          includeInDocs: true,
-          timestamp: 't'
-        }
-      ]
-    }),
-    'utf8'
-  )
-  const regen = await gui.evaluate(
-    (dir) => window.docrecorder.invoke('runner:regenerate', dir),
-    featureDir
-  )
-  check(
-    !regen.error && regen.results.length === 2,
-    'Runner: re-ejecuta el flujo de la funcionalidad',
-    regen.error ?? `${regen.results.length} paso(s)`
-  )
-  check(
-    regen.results[0]?.status === 'ok' && existsSync(join(featureDir, 'img', 'paso-01.png')),
-    'Runner: regenera la captura del paso con selector válido'
-  )
-  check(
-    regen.results[1]?.status === 'failed',
-    'Runner: marca el paso cuyo elemento no se encuentra (no aborta)',
-    regen.results[1]?.detail
-  )
-  rmSync(regenDir, { recursive: true, force: true })
-
   // --- Renderizado del modal (lo que los checks IPC de arriba NO cubren) ---
   // Un fallo de React —JSX roto, onClick sin cablear, columnas colapsadas—
   // pasaría todos los checks anteriores y aun así dejaría la ventana inservible.
   // Aquí se maneja el DOM real, con esperas web-first en vez de tiempos fijos.
 
-  // El diálogo de resultado ya se cerró antes del runner; se abre el explorador.
+  // El diálogo de resultado ya se cerró más arriba; se abre el explorador.
   await gui.getByRole('button', { name: 'Proyectos…', exact: true }).click()
   await gui.waitForSelector('.projects-modal', { timeout: 5000 })
   check(
@@ -1968,8 +1902,8 @@ try {
   )
   await moduleInput.fill(savedModule)
 
-  // Quitar un campo del grupo debe llevarse también su acción del `flow.json`:
-  // si no, el runner reproduciría un campo que el manual ya no documenta.
+  // Quitar un campo del grupo debe llevarse también su acción: si no, el paso
+  // seguiría señalando un elemento que el manual ya no documenta.
   const groupedCard = gui.locator('.step-card').last()
   const removedLabel = await groupedCard
     .locator('.field-list li .field-label')
@@ -2670,7 +2604,7 @@ try {
     captureCard.title
   )
 
-  // --- Pegar del portapapeles (§15) ---
+  // --- Pegar del portapapeles (§14) ---
   //
   // El pegado se prueba por su camino real, el evento del teclado: se construye
   // un `ClipboardEvent` con lo que llevaría el portapapeles (una imagen, o una
@@ -2932,7 +2866,6 @@ try {
   const extrasDir = join(outDir, 'matriculas', 'extras-de-matricula')
   const extrasMdx = readFileSync(join(extrasDir, 'index.mdx'), 'utf8')
   const extrasSession = JSON.parse(readFileSync(join(extrasDir, 'session.json'), 'utf8'))
-  const extrasFlow = JSON.parse(readFileSync(join(extrasDir, 'flow.json'), 'utf8'))
 
   check(
     !/se va a quitar/i.test(extrasMdx) && !JSON.stringify(extrasSession).includes('se va a quitar'),
@@ -2999,30 +2932,13 @@ try {
     'Pegar: la imagen pegada se numera como paso y publica su nota en el MDX'
   )
   check(
-    !extrasFlow.actions.some(
-      (a) => a.action === 'capture' || a.action === 'content' || a.action === 'image'
-    ),
-    'Flujo: nada de lo añadido a mano (captura, imagen o contenido) entra en flow.json'
+    !existsSync(join(extrasDir, 'flow.json')),
+    'Paquete: solo se escribe session.json junto al MDX y las capturas'
   )
   check(
     extrasSession.steps.some((s) => s.fields?.length === 2 && s.mergedActions?.length === 2),
-    'Agrupar a mano: el paso agrupado se guarda con sus dos acciones para el runner'
+    'Agrupar a mano: el paso agrupado guarda las acciones de sus dos elementos'
   )
-
-  // El runner salta lo que no sale del navegador en vez de darlo por fallido.
-  const extrasRegen = await gui.evaluate(
-    (dir) => window.docrecorder.invoke('runner:regenerate', dir),
-    extrasDir
-  )
-  const skipped = extrasRegen.results.filter((r) => r.status === 'skipped')
-  check(
-    skipped.length === 5 && skipped.filter((r) => /Imagen pegada/.test(r.detail)).length === 2,
-    'Runner: lo añadido a mano se salta (captura, imágenes pegadas y contenido), no cuenta como fallo',
-    skipped.map((r) => r.detail).join(' | ')
-  )
-  if (await gui.locator('.runner-report').count()) {
-    await gui.getByRole('button', { name: 'Entendido' }).click()
-  }
 
   // --- Secciones: apartados dentro de una grabación (§8/§10) ---
   //
@@ -3169,7 +3085,6 @@ try {
   const sectionsDir = join(outDir, 'matriculas', 'con-secciones')
   const sectionsMdx = readFileSync(join(sectionsDir, 'index.mdx'), 'utf8')
   const sectionsSession = JSON.parse(readFileSync(join(sectionsDir, 'session.json'), 'utf8'))
-  const sectionsFlow = JSON.parse(readFileSync(join(sectionsDir, 'flow.json'), 'utf8'))
   check(
     /^## Registro del alumno$/m.test(sectionsMdx) &&
       (sectionsMdx.match(/^### \d+\./gm) ?? []).length === 4 &&
@@ -3187,10 +3102,6 @@ try {
     !!sectionStep && sectionStep.screenshot === '',
     'Secciones: el separador se guarda como paso sin captura',
     sectionStep?.title
-  )
-  check(
-    !sectionsFlow.actions.some((a) => a.action === 'section'),
-    'Secciones: el separador no entra en flow.json (no hay nada que reproducir)'
   )
 
   // --- Descartar documentación que Git no tiene registrada ---
@@ -3383,7 +3294,7 @@ try {
     `${commitsBefore} → ${g('rev-list --count docs/matriculas')} commits · ${reeditReport.replace(/\n/g, ' ')}`
   )
 
-  // --- Carpetas de capturas (§17) ---
+  // --- Carpetas de capturas (§16) ---
   //
   // Un paso del manual que necesita VARIAS imágenes: las pantallas de un
   // asistente, lo que se ve antes y después. Se comprueba el circuito entero:
@@ -3521,7 +3432,6 @@ try {
   const folderDir = join(outDir, 'matriculas', 'con-carpeta')
   const folderMdx = readFileSync(join(folderDir, 'index.mdx'), 'utf8')
   const folderSession = JSON.parse(readFileSync(join(folderDir, 'session.json'), 'utf8'))
-  const folderFlow = JSON.parse(readFileSync(join(folderDir, 'flow.json'), 'utf8'))
   const folderStep = folderSession.steps.find((s) => s.kind === 'group')
   const member = folderSession.steps.find((s) => s.groupId === folderStep?.id)
   check(
@@ -3539,16 +3449,10 @@ try {
     'Carpetas: la carpeta sale como UN paso numerado y su captura se publica dentro',
     (folderMdx.match(/^## .*/gm) ?? []).join(' / ')
   )
-  check(
-    !folderFlow.actions.some((a) => a.action === 'group') &&
-      folderFlow.actions.some((a) => a.url && a.action === 'click'),
-    'Carpetas: la carpeta no entra en flow.json, pero el paso que contiene sí',
-    `${folderFlow.actions.length} acción(es)`
-  )
 
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
 
-  // --- Etapa 12: comprobar el sitio antes de registrar y vista previa (§18) ---
+  // --- Etapa 12: comprobar el sitio antes de registrar y vista previa (§17) ---
   //
   // El repositorio de la prueba no es un proyecto npm, así que hasta aquí no
   // había nada que comprobar (y guardar no se detenía). Se monta uno con la

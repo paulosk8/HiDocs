@@ -12,7 +12,7 @@ import { NoteEditor } from './NoteEditor'
 export const GROUP_DROP_PREFIX = 'group-drop:'
 
 /**
- * Carpeta de capturas (§17).
+ * Carpeta de capturas (§16).
  *
  * Es UN paso del manual cuyas ilustraciones son varias: se le arrastran dentro
  * las tarjetas que cuentan lo mismo —los tres pantallazos de un asistente, la
@@ -20,8 +20,8 @@ export const GROUP_DROP_PREFIX = 'group-drop:'
  * cada una con su pie.
  *
  * Se diferencia de ⊞ Agrupar en lo que conserva: agrupar funde acciones y deja
- * UNA captura (es un paso del flujo que el runner reproduce); la carpeta no toca
- * las acciones de nadie y conserva TODAS las imágenes. Por eso admite lo que
+ * UNA captura (un solo paso del flujo); la carpeta no toca las acciones de nadie
+ * y conserva TODAS las imágenes. Por eso admite lo que
  * agrupar rechaza: capturas externas, imágenes pegadas y pasos que no están al
  * lado. Es la respuesta a documentar con capturas que el motor no graba.
  *

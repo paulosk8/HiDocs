@@ -3,7 +3,7 @@ import { featureSegments } from '../../../shared/naming'
 import { useSession } from '../store'
 
 /**
- * Comprobación del sitio y vista previa (§18).
+ * Comprobación del sitio y vista previa (§17).
  *
  * Vive debajo de la sección Git porque habla de lo mismo: qué pasa al pulsar ■.
  * No se inventa ningún comando: enumera los que el `package.json` del proyecto

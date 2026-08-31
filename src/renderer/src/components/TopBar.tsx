@@ -38,10 +38,6 @@ export function TopBar(): React.JSX.Element {
     setViewportActive,
     viewportZoom,
     setViewportZoom,
-    runnerPhase,
-    runnerProgress,
-    runnerStart,
-    runnerFinish,
     branchDocs
   } = useSession()
   const [opening, setOpening] = useState(false)
@@ -59,20 +55,8 @@ export function TopBar(): React.JSX.Element {
     )
   ].sort()
 
-  // Regenera las capturas de una funcionalidad: pide la carpeta y re-ejecuta el
-  // flujo en el visor autenticado. El progreso llega por evento (lo escucha App).
-  const regenerate = async (): Promise<void> => {
-    runnerStart()
-    const report = await ipc.invoke('runner:regenerate')
-    if (report.canceled) {
-      useSession.getState().runnerClose()
-      return
-    }
-    runnerFinish(report)
-  }
-
   /**
-   * Zoom del visor (§19). Lo aplica el proceso principal sobre la vista nativa y
+   * Zoom del visor (§18). Lo aplica el proceso principal sobre la vista nativa y
    * devuelve el factor que quedó: la GUI solo guarda ese número para enseñarlo,
    * así que teclado, rueda y botones no pueden acabar diciendo cosas distintas.
    */
@@ -240,14 +224,6 @@ export function TopBar(): React.JSX.Element {
           title="Repositorios ya usados, sus ramas y su historial"
         >
           Proyectos…
-        </button>
-        <button
-          className="btn"
-          disabled={runnerPhase === 'running'}
-          onClick={() => void regenerate()}
-          title="Re-ejecuta el flujo de una funcionalidad y actualiza sus capturas (reutiliza tu sesión iniciada)"
-        >
-          {runnerPhase === 'running' ? `Regenerando ${runnerProgress.length}…` : 'Regenerar…'}
         </button>
         <button
           className="btn btn-ai-settings"

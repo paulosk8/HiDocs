@@ -7,7 +7,6 @@ import { ProjectsModal } from './components/ProjectsModal'
 import { HelpModal } from './components/HelpModal'
 import { DocusaurusIntroModal } from './components/DocusaurusIntroModal'
 import { RestoreDraftModal } from './components/RestoreDraftModal'
-import { RunnerReportModal } from './components/RunnerReportModal'
 import { AiSettingsModal } from './components/AiSettingsModal'
 import { AiContextModal } from './components/AiContextModal'
 import { PendingDocsModal } from './components/PendingDocsModal'
@@ -29,10 +28,6 @@ export function App(): React.JSX.Element {
   const helpOpen = useSession((s) => s.helpOpen)
   const setHelpOpen = useSession((s) => s.setHelpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
-  const runnerPhase = useSession((s) => s.runnerPhase)
-  const runnerReport = useSession((s) => s.runnerReport)
-  const runnerProgressAdd = useSession((s) => s.runnerProgressAdd)
-  const runnerClose = useSession((s) => s.runnerClose)
   const theme = useSession((s) => s.theme)
   const aiOpen = useSession((s) => s.aiOpen)
   const setAiOpen = useSession((s) => s.setAiOpen)
@@ -66,7 +61,7 @@ export function App(): React.JSX.Element {
   // Autoguarda el borrador de la grabación en curso.
   useDraftAutosave()
 
-  // El visor arranca con el zoom recordado (§19): la vista nativa la crea el
+  // El visor arranca con el zoom recordado (§18): la vista nativa la crea el
   // proceso principal siempre al 100 %, así que hay que pedírselo desde aquí,
   // que es donde vive la preferencia.
   useEffect(() => {
@@ -90,7 +85,6 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const offState = ipc.on('engine:state', applyEngineState)
     const offStep = ipc.on('recorder:step', onStep)
-    const offRegen = ipc.on('runner:progress', runnerProgressAdd)
     const offAi = ipc.on('ai:progress', setAiProgress)
     const offChecks = ipc.on('checks:progress', checksProgress)
     // El zoom que se cambia con el teclado o la rueda dentro del visor lo aplica
@@ -103,20 +97,11 @@ export function App(): React.JSX.Element {
     return () => {
       offState()
       offStep()
-      offRegen()
       offAi()
       offChecks()
       offZoom()
     }
-  }, [
-    applyEngineState,
-    onStep,
-    runnerProgressAdd,
-    setAiProgress,
-    setAiStatus,
-    checksProgress,
-    setViewportZoom
-  ])
+  }, [applyEngineState, onStep, setAiProgress, setAiStatus, checksProgress, setViewportZoom])
 
   return (
     <div className="app">
@@ -145,9 +130,6 @@ export function App(): React.JSX.Element {
             setDraft(null)
           }}
         />
-      )}
-      {runnerPhase === 'done' && runnerReport && (
-        <RunnerReportModal report={runnerReport} onClose={runnerClose} />
       )}
     </div>
   )

@@ -14,13 +14,11 @@ import {
   type BranchDocInfo,
   type CheckProgress,
   type ChecksResult,
-  type FlowAction,
+  type RecordedAction,
   type GitRepoInfo,
   type ProjectChecks,
   type EngineState,
   type RecorderStatus,
-  type RegenReport,
-  type RegenStepResult,
   type SelectorCandidate,
   type SessionMeta,
   type Viewport
@@ -78,7 +76,7 @@ interface SessionState {
    */
   collapsedSections: string[]
   /**
-   * Documentación ya publicada que se trajo a la sesión para corregirla (§16), o
+   * Documentación ya publicada que se trajo a la sesión para corregirla (§15), o
    * `null` en una grabación normal.
    *
    * Existe para que la edición **se pueda cancelar**. Al cargar un commit, el
@@ -94,7 +92,7 @@ interface SessionState {
   gitEnabled: boolean
   gitPush: boolean
   /**
-   * Comprobar el sitio antes de registrar en Git (§18). Preferencia del usuario,
+   * Comprobar el sitio antes de registrar en Git (§17). Preferencia del usuario,
    * persistida: compilar tarda, y hay tandas en las que se prefiere registrar y
    * revisar después.
    */
@@ -173,17 +171,11 @@ interface SessionState {
    */
   viewportActive: boolean
   /**
-   * Escala del contenido del visor (§19). La aplica el proceso principal sobre
+   * Escala del contenido del visor (§18). La aplica el proceso principal sobre
    * el `WebContentsView`; aquí se guarda solo para enseñar el porcentaje y para
    * recordarla entre usos.
    */
   viewportZoom: number
-  /** estado del runner de regeneración de capturas */
-  runnerPhase: 'idle' | 'running' | 'done'
-  /** resultados por paso, según van llegando */
-  runnerProgress: RegenStepResult[]
-  /** informe final de la regeneración */
-  runnerReport: RegenReport | null
   /**
    * Fundir en un solo paso los controles seguidos del mismo tipo: los campos de
    * un formulario, las casillas de una columna de la tabla, las pestañas o los
@@ -247,7 +239,7 @@ interface SessionState {
   /** pliega o despliega una sección o una carpeta (solo afecta a la vista) */
   toggleSection: (id: string) => void
   /**
-   * Mete un paso en una carpeta de capturas (§17). Es el gesto de arrastrar una
+   * Mete un paso en una carpeta de capturas (§16). Es el gesto de arrastrar una
    * tarjeta hasta la zona de la carpeta: no exige que el paso esté al lado ni que
    * sea de ningún tipo concreto, que es justo lo que ⊞ Agrupar no permite.
    */
@@ -322,10 +314,6 @@ interface SessionState {
   /** guarda el zoom que devolvió main (no lo aplica: eso ya está hecho) */
   setViewportZoom: (factor: number) => void
   setGroupConsecutive: (value: boolean) => void
-  runnerStart: () => void
-  runnerProgressAdd: (result: RegenStepResult) => void
-  runnerFinish: (report: RegenReport) => void
-  runnerClose: () => void
 
   setDocsChecks: (checks: ProjectChecks | null) => void
   /** empieza una tanda: el diálogo aparece antes de que llegue la primera línea */
@@ -385,9 +373,9 @@ function fieldLabel(step: RecordedStep): string {
   return matches.length ? matches[matches.length - 1][1] : step.title
 }
 
-/** Acción reproducible de un paso, para el `flow.json` que usa el runner. */
-function toFlowAction(step: RecordedStep): FlowAction {
-  const action: FlowAction = {
+/** La interacción de un paso, tal como ocurrió (§6). */
+function toRecordedAction(step: RecordedStep): RecordedAction {
+  const action: RecordedAction = {
     order: 0, // se renumera al guardar
     action: step.action,
     selectorCandidates: step.selectorCandidates,
@@ -472,8 +460,7 @@ function sameScope(a: RecordedStep, b: RecordedStep): boolean {
  * entrada, y un valor real no lo pisa un clic vacío posterior.
  *
  * Las acciones y las referencias se acumulan siempre, aunque la entrada ya
- * exista: el runner debe reproducir la secuencia real (enfocar y luego escribir)
- * y el resaltado necesita todos los elementos implicados.
+ * exista: el resaltado necesita todos los elementos implicados.
  */
 function upsertItem(items: GroupedField[], incoming: GroupedField): GroupedField[] {
   const i = items.findIndex((f) => f.label === incoming.label)
@@ -570,7 +557,7 @@ function itemsOf(step: RecordedStep): GroupedField[] {
     {
       label: groupLabel(step),
       value: step.value ?? '',
-      actions: step.mergedActions?.length ? step.mergedActions : [toFlowAction(step)],
+      actions: step.mergedActions?.length ? step.mergedActions : [toRecordedAction(step)],
       refs: step.ref !== undefined ? [step.ref] : []
     }
   ]
@@ -581,10 +568,10 @@ function itemsOf(step: RecordedStep): GroupedField[] {
  * usa el panel para explicar el motivo en vez de dejar un botón apagado sin
  * explicación.
  *
- * Se exige que los pasos sean seguidos porque el grupo se reproduce como una
- * secuencia: fundir el paso 2 con el 7 reordenaría el flujo real y el runner
- * repetiría las acciones en un orden que nunca ocurrió. Para juntarlos, primero
- * se arrastran hasta ponerlos seguidos.
+ * Se exige que los pasos sean seguidos porque el grupo cuenta un tramo del
+ * flujo: fundir el paso 2 con el 7 juntaría en una tarjeta cosas que nunca
+ * ocurrieron seguidas. Para juntarlos, primero se arrastran hasta ponerlos
+ * seguidos.
  */
 export function selectionProblem(steps: RecordedStep[], selectedIds: string[]): string | null {
   const indexes = steps
@@ -631,8 +618,8 @@ function dedupeSelectors(candidates: SelectorCandidate[]): SelectorCandidate[] {
 
 /**
  * Vuelca los campos del grupo sobre el paso: `fields` es lo que se publica en el
- * manual y `mergedActions` lo que reproduce el runner. Se derivan siempre de
- * `groupItems`, para que quitar un campo no deje descuadrada su acción.
+ * manual y `mergedActions` con qué se vuelve a señalar cada elemento. Se derivan
+ * siempre de `groupItems`, para que quitar un campo no deje nada descuadrado.
  */
 function withGroupItems(step: RecordedStep, items: GroupedField[]): RecordedStep {
   return {
@@ -681,7 +668,7 @@ function initialTheme(): 'light' | 'dark' {
   return 'light'
 }
 
-/** El paso es una carpeta de capturas (§17). */
+/** El paso es una carpeta de capturas (§16). */
 function isFolder(step: RecordedStep): boolean {
   return step.kind === 'group'
 }
@@ -834,9 +821,6 @@ export const useSession = create<SessionState>((set) => ({
   panelCollapsed: false,
   viewportActive: false,
   viewportZoom: initialZoom(),
-  runnerPhase: 'idle',
-  runnerProgress: [],
-  runnerReport: null,
   groupConsecutive: initialGroupConsecutive(),
   aiStatus: null,
   aiOpen: false,
@@ -903,14 +887,14 @@ export const useSession = create<SessionState>((set) => ({
           {
             label: fieldLabel(last),
             value: last.value ?? '',
-            actions: [toFlowAction(last)],
+            actions: [toRecordedAction(last)],
             refs: last.ref !== undefined ? [last.ref] : []
           }
         ]
         const items = upsertItem(seeded, {
           label: fieldLabel(step),
           value: step.value ?? '',
-          actions: [toFlowAction(step)],
+          actions: [toRecordedAction(step)],
           refs: step.ref !== undefined ? [step.ref] : []
         })
         // Los pasos originales se conservan siempre (también al fundir solo), y
@@ -1449,11 +1433,6 @@ export const useSession = create<SessionState>((set) => ({
     }
     set({ groupConsecutive })
   },
-
-  runnerStart: () => set({ runnerPhase: 'running', runnerProgress: [], runnerReport: null }),
-  runnerProgressAdd: (result) => set((s) => ({ runnerProgress: [...s.runnerProgress, result] })),
-  runnerFinish: (report) => set({ runnerPhase: 'done', runnerReport: report }),
-  runnerClose: () => set({ runnerPhase: 'idle', runnerProgress: [], runnerReport: null }),
 
   setDocsChecks: (docsChecks) => set({ docsChecks }),
 

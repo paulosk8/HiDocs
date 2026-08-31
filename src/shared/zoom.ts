@@ -1,5 +1,5 @@
 /**
- * Zoom del visor (§19): la escala de pasos y las operaciones sobre ella.
+ * Zoom del visor (§18): la escala de pasos y las operaciones sobre ella.
  *
  * Vive en `shared` porque main la aplica (`setZoomFactor`) y el renderer la
  * dibuja (el porcentaje de la barra), y con dos escalas distintas el número que

@@ -21,7 +21,7 @@ export class TargetViewport {
   /** Tamaño real que ocupa la vista; se persiste en la sesión como `viewport`. */
   private size: Viewport = { width: 0, height: 0 }
 
-  /** Escala del contenido del visor (§19); la GUI la enseña en porcentaje. */
+  /** Escala del contenido del visor (§18); la GUI la enseña en porcentaje. */
   private zoom = DEFAULT_ZOOM
 
   attachTo(window: BaseWindow): void {
@@ -125,7 +125,7 @@ export class TargetViewport {
     return this.zoom
   }
 
-  /** Un paso de la escala hacia arriba o hacia abajo (§19). */
+  /** Un paso de la escala hacia arriba o hacia abajo (§18). */
   stepZoom(direction: 'in' | 'out'): number {
     return this.setZoom(stepZoom(this.zoom, direction))
   }

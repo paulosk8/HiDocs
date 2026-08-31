@@ -32,9 +32,7 @@ import {
   type AiProvider,
   type AiSettings,
   type CheckProgress,
-  type DocSession,
-  type EngineState,
-  type RegenReport
+  type EngineState
 } from '../shared/types'
 import { DEFAULT_ZOOM } from '../shared/zoom'
 import { saveSession } from './storage'
@@ -274,7 +272,7 @@ function createWindow(): void {
     wc.on('did-navigate-in-page', onNav)
     wc.on('did-finish-load', onNav)
 
-    // Zoom del visor con el teclado (§19). Chromium ya trae ⌘+/⌘−/⌘0, pero
+    // Zoom del visor con el teclado (§18). Chromium ya trae ⌘+/⌘−/⌘0, pero
     // cambia la escala por su cuenta y la barra no se entera: se intercepta
     // aquí para que teclado, rueda y botones muevan el MISMO valor y el
     // porcentaje diga siempre la verdad. Solo dentro del visor: con la GUI
@@ -389,7 +387,7 @@ function registerIpc(): void {
     return result
   })
 
-  // --- comprobación del sitio de destino y vista previa (§18) ---
+  // --- comprobación del sitio de destino y vista previa (§17) ---
 
   ipcMain.handle('checks:detect', async (_e, outputDir: string) => {
     return detectChecks(outputDir).catch(() => null)
@@ -596,47 +594,6 @@ function registerIpc(): void {
 
   ipcMain.handle('ai:draft', async (_e, request: AiDraftRequest) => {
     return draftSteps(request, (progress) => mainWindow?.webContents.send('ai:progress', progress))
-  })
-
-  ipcMain.handle('runner:regenerate', async (_e, given?: string): Promise<RegenReport> => {
-    if (!mainWindow) return { results: [] }
-    let featureDir: string
-    if (given) {
-      featureDir = given
-    } else {
-      // Se pide la carpeta; la vista nativa se oculta mientras el selector nativo
-      // está abierto (como en la carpeta de salida).
-      viewport.setVisible(false)
-      try {
-        const picked = await dialog.showOpenDialog(mainWindow, {
-          title: 'Carpeta de la funcionalidad a regenerar (con su session.json)',
-          properties: ['openDirectory']
-        })
-        if (picked.canceled || !picked.filePaths[0]) return { canceled: true, results: [] }
-        featureDir = picked.filePaths[0]
-      } finally {
-        viewport.setVisible(true)
-      }
-    }
-
-    try {
-      const json = await readFile(join(featureDir, 'session.json'), 'utf8')
-      const session = JSON.parse(json) as DocSession
-      const results = await engine.regenerate(session, featureDir, (r) =>
-        mainWindow?.webContents.send('runner:progress', r)
-      )
-      return { featureDir, results }
-    } catch (err) {
-      return {
-        error:
-          err instanceof Error && /ENOENT/.test(err.message)
-            ? 'La carpeta elegida no contiene un session.json.'
-            : err instanceof Error
-              ? err.message
-              : String(err),
-        results: []
-      }
-    }
   })
 }
 

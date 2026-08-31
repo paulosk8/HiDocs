@@ -14,9 +14,8 @@ import {
 } from './observer'
 import { buildSelectorCandidates } from './selectors'
 import { waitForStability } from './stability'
-import { regenerateSession, type RegenStepResult } from './runner'
 import type { GroupTarget, RecordedStep, StepFamily } from '../../shared/ipc-contract'
-import type { DocSession, SelectorCandidate } from '../../shared/types'
+import type { SelectorCandidate } from '../../shared/types'
 import type { EngineState, RecorderStatus, StepAction } from '../../shared/types'
 
 export interface EngineHooks {
@@ -41,7 +40,7 @@ function sameScreen(a: string, b: string): boolean {
 }
 
 /**
- * Localiza un elemento probando sus selectores en orden, como hace el runner.
+ * Localiza un elemento probando sus selectores en orden, del más robusto al menos.
  * Se usa cuando la referencia del observador murió porque el framework reemplazó
  * el nodo: el campo sigue en la pantalla, pero es otro.
  */
@@ -336,34 +335,6 @@ export class RecorderEngine {
     this.emitState()
   }
 
-  /**
-   * Regenera las capturas de una funcionalidad re-ejecutando su flujo en el
-   * visor autenticado (§ runner). Detiene la grabación primero y desactiva el
-   * observador para no capturar las propias acciones del runner.
-   */
-  async regenerate(
-    session: DocSession,
-    targetDir: string,
-    onProgress?: (result: RegenStepResult) => void
-  ): Promise<RegenStepResult[]> {
-    const page = this.attachment?.page
-    if (!page) {
-      throw new Error(
-        'Abre el sistema en el visor e inicia sesión antes de regenerar: el runner reutiliza esa sesión.'
-      )
-    }
-    if (this.status !== 'idle') await this.stop()
-    await this.setObserverEnabled(false)
-    this.log('info', `Regenerando capturas de ${session.module}/${session.feature}…`)
-    const results = await regenerateSession(page, session, targetDir, onProgress)
-    const failed = results.filter((r) => r.status === 'failed').length
-    this.log(
-      failed ? 'warn' : 'info',
-      `Regeneración terminada: ${results.length - failed} ok, ${failed} fallido(s).`
-    )
-    return results
-  }
-
   /** Reinicia el contador de pasos: se llama al empezar una sesión nueva. */
   reset(): void {
     this.stepCount = 0
@@ -405,10 +376,7 @@ export class RecorderEngine {
   private static readonly GROUP_RETRIES = 2
   private static readonly GROUP_RETRY_MS = 350
 
-  private async doCaptureGroup(
-    targets: GroupTarget[],
-    expectUrl?: string
-  ): Promise<string | null> {
+  private async doCaptureGroup(targets: GroupTarget[], expectUrl?: string): Promise<string | null> {
     const page = this.attachment?.page
     if (!page || !this.shotDir || !targets.length) return null
 
@@ -417,16 +385,13 @@ export class RecorderEngine {
     // documentaría la pantalla siguiente y, además, pisaría la captura buena que
     // el motor ya tomó antes de que la página se fuera.
     if (expectUrl && !sameScreen(page.url(), expectUrl)) {
-      this.log(
-        'info',
-        'Grupo: la página ya no es la del paso, se conserva su captura anterior.'
-      )
+      this.log('info', 'Grupo: la página ya no es la del paso, se conserva su captura anterior.')
       return null
     }
 
     // Las referencias mueren cuando el framework reemplaza el nodo (guardar un
     // formulario, redibujar una tabla). Para esos elementos se localiza el actual
-    // con los selectores del paso, los mismos que usa el runner.
+    // con los selectores del paso.
     const alive = await page
       .evaluate(
         ([ns, groups]) => {
@@ -593,13 +558,10 @@ export class RecorderEngine {
       captured = false
     }
     await page
-      .evaluate(
-        (ns) => {
-          const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
-          api?.clearHighlight()
-        },
-        OBSERVER_NAMESPACE
-      )
+      .evaluate((ns) => {
+        const api = (window as unknown as Record<string, { clearHighlight(): void }>)[ns]
+        api?.clearHighlight()
+      }, OBSERVER_NAMESPACE)
       .catch(() => undefined)
 
     return captured ? (painted as HighlightResult | null) : null
@@ -618,8 +580,7 @@ export class RecorderEngine {
       //    después ya no queda nada que marcar y el paso ilustraba la pantalla
       //    siguiente, sin recuadro. Solo se usa si la definitiva no puede
       //    señalar el elemento.
-      const early =
-        NAVIGATING_ACTIONS.includes(event.action) && (await this.earlyShoot(earlyFile))
+      const early = NAVIGATING_ACTIONS.includes(event.action) && (await this.earlyShoot(earlyFile))
 
       // 2. Esperar a que el efecto de la interacción termine (§5).
       await waitForStability(page)
