@@ -432,6 +432,64 @@ try {
     ordersAfterDelete.join(',')
   )
 
+  // --- Papelera: quitar una tarjeta deja de ser definitivo (§19) ---
+  //
+  // Un paso grabado se lleva consigo su captura y su selector, así que quitarlo
+  // por error costaba repetir el proceso en el sistema real. Se comprueban los
+  // dos caminos de vuelta: la franja de deshacer (el arrepentimiento inmediato)
+  // y la papelera (el de un rato después).
+  const undoLabel = await gui.locator('.undo-strip .undo-what').textContent()
+  await gui.locator('.undo-strip .btn').click()
+  await gui.waitForFunction((n) => document.querySelectorAll('.step-card').length === n, before, {
+    timeout: 5000
+  })
+  const undoneOrders = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-badge')].map((b) => b.textContent)
+  )
+  check(
+    /Quitado:/.test(undoLabel ?? '') && undoneOrders.join(',') === '1,2,3,4,5',
+    'Papelera: la franja «Deshacer» devuelve el paso a su sitio y renumera',
+    `${undoLabel} → ${undoneOrders.join(',')}`
+  )
+
+  // Y otra vez, ahora recuperándolo desde la papelera: es el mismo material,
+  // pero pasado el momento de la franja.
+  await gui.locator('.step-card').last().locator('.icon-btn.danger').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    before,
+    { timeout: 5000 }
+  )
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  const trashEntry = await gui.locator('.trash-list > li b').first().textContent()
+  const trashShots = await gui.locator('.trash-list > li img').count()
+  await gui.locator('.trash-list > li').first().getByRole('button', { name: 'Restaurar' }).click()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  const backFromTrash = await gui.locator('.step-card').count()
+  check(
+    backFromTrash === before && /^Paso 5/.test(trashEntry ?? '') && trashShots >= 1,
+    'Papelera: la lista enseña lo quitado con su captura y lo restaura',
+    `${trashEntry} · ${backFromTrash} tarjetas · ${trashShots} miniatura(s)`
+  )
+
+  // Se vuelve a dejar como esperan las comprobaciones siguientes (cuatro pasos),
+  // y se retira la franja: si desapareciera sola en mitad del arrastre de abajo,
+  // la lista se desplazaría bajo el ratón.
+  await gui.locator('.step-card').last().locator('.icon-btn.danger').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    before,
+    { timeout: 5000 }
+  )
+  await gui.locator('.undo-strip .icon-btn').click()
+  await gui.waitForSelector('.undo-strip', { state: 'detached', timeout: 5000 })
+  check(
+    (await gui.locator('.panel-toolbar .btn-trash .trash-count').textContent()) === '1',
+    'Papelera: cerrar la franja no vacía la papelera'
+  )
+
   // Reordenar arrastrando la tarjeta 1 por debajo de la 2.
   const titlesBefore = await gui.evaluate(() =>
     [...document.querySelectorAll('.step-title')].map((i) => i.value)
@@ -529,6 +587,18 @@ try {
   check(
     !!draftBefore && draftBefore.steps.every((s) => /\/draft\/img\//.test(s.tempFile)),
     'Borrador: las capturas se guardan en una carpeta durable'
+  )
+  // La papelera viaja con el borrador (§19), y la captura de lo quitado va a la
+  // misma carpeta durable: una papelera que mañana devolviera una tarjeta sin
+  // imagen no serviría para lo único que justifica que exista.
+  const draftTrash = draftBefore?.trash ?? []
+  check(
+    draftTrash.length >= 1 &&
+      draftTrash.every(
+        (e) => e.kind !== 'steps' || e.steps.every((s) => /\/draft\/img\//.test(s.tempFile))
+      ),
+    'Borrador: la papelera se guarda con él, con la captura de lo quitado ya durable',
+    draftTrash.map((e) => e.label).join(' · ') || '(papelera vacía)'
   )
 
   await gui.click('.ctrl:nth-child(3)')
@@ -2870,6 +2940,56 @@ try {
     JSON.stringify(cleaned)
   )
 
+  // Lo quitado dentro de una tarjeta también se recupera: vuelve al mismo paso,
+  // con su texto (§19). La papelera lista lo más reciente primero.
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  const innerLabels = await gui.evaluate(() =>
+    [...document.querySelectorAll('.trash-list > li')].map(
+      (li) => li.querySelector('b')?.textContent ?? ''
+    )
+  )
+  const notePreview = await gui
+    .locator('.trash-list > li')
+    .nth(1)
+    .locator('.trash-preview')
+    .textContent()
+  await gui.locator('.trash-list > li').nth(1).getByRole('button', { name: 'Restaurar' }).click()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  await removable.locator('.note-btn.has-note').waitFor({ timeout: 5000 })
+  await removable.locator('.note-btn').click()
+  const noteBack = await removable.locator('.note-body').inputValue()
+  // La papelera trae ya lo quitado en etapas anteriores (un elemento de un grupo,
+  // pasos de prueba): lo que se comprueba aquí es que estos dos van los primeros,
+  // que es el orden de la lista.
+  check(
+    innerLabels.length >= 2 &&
+      /^Bloque de «/.test(innerLabels[0]) &&
+      /^Nota de «/.test(innerLabels[1]) &&
+      /Nota que se va a quitar/.test(notePreview ?? '') &&
+      noteBack === 'Nota que se va a quitar.',
+    'Papelera: el bloque y la nota quitados vuelven al mismo paso con su texto',
+    `${innerLabels.join(' · ')} → nota restaurada: «${noteBack}»`
+  )
+
+  // Se vuelve a quitar (el resto de la etapa comprueba que lo quitado NO llega
+  // al manual) y se vacía la papelera, que es la única salida definitiva.
+  await removable.locator('.step-note .editor-remove').click()
+  await removable.locator('.step-note .editor-remove-confirm button.danger').click()
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  await gui.locator('.trash-modal footer .btn.danger').click()
+  await gui.locator('.trash-confirm .btn.danger').click()
+  const emptied = await gui.locator('.trash-list > li').count()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  check(
+    emptied === 0 && (await gui.locator('.panel-toolbar .btn-trash').count()) === 0,
+    'Papelera: vaciarla la deja sin entradas y retira su botón de la barra',
+    `${emptied} entrada(s)`
+  )
+
   // Guardado: el MDX debe llevar tabla, código, pestañas (con sus imports), la
   // captura externa y las imágenes pegadas, y NO numerar el bloque de contenido
   // como un paso más.
@@ -3461,6 +3581,38 @@ try {
     afterOut.join('') === '1📁·3',
     'Carpetas: ⤴ saca la tarjeta de la carpeta y la deja justo detrás',
     afterOut.join(' ')
+  )
+
+  // Papelera: quitar la carpeta LIBERA sus capturas en vez de borrarlas, así que
+  // restaurarla tiene que volver a meterlas dentro (§19). Es el caso que obliga a
+  // recordar quién colgaba de ella: sin eso volvería vacía.
+  await gui.locator('.group-card .icon-btn.danger').click()
+  await gui.waitForFunction(() => document.querySelectorAll('.group-card').length === 0, null, {
+    timeout: 5000
+  })
+  const freed = await gui.locator('.step-card.in-group').count()
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  const folderEntry = await gui.locator('.trash-list > li b').first().textContent()
+  await gui.locator('.trash-list > li').first().getByRole('button', { name: 'Restaurar' }).click()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  await gui.waitForFunction(() => document.querySelectorAll('.group-card').length === 1, null, {
+    timeout: 5000
+  })
+  const backInFolder = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card, .group-card')].map((n) =>
+      n.classList.contains('group-card')
+        ? '📁'
+        : n.classList.contains('in-group')
+          ? '·'
+          : n.querySelector('.step-badge')?.textContent
+    )
+  )
+  check(
+    freed === 0 && backInFolder.join('') === '1📁·3' && /^Carpeta/.test(folderEntry ?? ''),
+    'Papelera: restaurar una carpeta la devuelve con las capturas que colgaban de ella',
+    `${folderEntry} · sueltas al quitarla: ${freed} · ${backInFolder.join(' ')}`
   )
 
   await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')

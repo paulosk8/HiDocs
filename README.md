@@ -29,6 +29,9 @@ Flujo de trabajo:
    `Ctrl+Shift+R` pausa y reanuda sin salir del sistema documentado.
 5. Edita títulos y descripciones, reordena arrastrando y elimina lo que sobre. Con **✨** (o
    **Redactar todos**) la IA los propone por ti; hay que configurar la clave en **IA** primero.
+   Quitar ya no es definitivo: la franja **⟲ Deshacer** lo devuelve al momento y **🗑 N**
+   abre la **papelera de la guía** con todo lo quitado (tarjetas, bloques y notas), que se
+   restaura en la posición que ocupaba y sobrevive al cierre de la aplicación.
 6. Completa lo que el motor no puede grabar:
    - **Agrupa** pasos que son uno solo para quien lee: marca sus casillas y pulsa
      **⊞ Agrupar**. Lo seguido del mismo tipo ya se funde solo (**agrupar seguidos**):

@@ -28,6 +28,7 @@ import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
 import { CaptureModal } from './CaptureModal'
 import { ContentModal } from './ContentModal'
+import { TrashModal } from './TrashModal'
 import { ConfirmDialog } from './ConfirmDialog'
 import { ChecksModal } from './ChecksModal'
 import { GitSection } from './GitSection'
@@ -71,6 +72,12 @@ export function StepsPanel(): React.JSX.Element {
   const clearSelection = useSession((s) => s.clearSelection)
   const groupSelected = useSession((s) => s.groupSelected)
   const removeSelected = useSession((s) => s.removeSelected)
+  const trash = useSession((s) => s.trash)
+  const lastTrashId = useSession((s) => s.lastTrashId)
+  const trashOpen = useSession((s) => s.trashOpen)
+  const setTrashOpen = useSession((s) => s.setTrashOpen)
+  const restoreTrash = useSession((s) => s.restoreTrash)
+  const dismissUndo = useSession((s) => s.dismissUndo)
   const addManualStep = useSession((s) => s.addManualStep)
   const addToGroup = useSession((s) => s.addToGroup)
   const setMeta = useSession((s) => s.setMeta)
@@ -447,6 +454,7 @@ export function StepsPanel(): React.JSX.Element {
     aiOpen ||
     aiContextOpen ||
     pendingDocsOpen ||
+    trashOpen ||
     capture !== null ||
     wideContentId !== null ||
     pasteProblem !== null ||
@@ -501,6 +509,22 @@ export function StepsPanel(): React.JSX.Element {
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [modalOpen, pasteFromEvent, pasteFromClipboard])
+
+  /**
+   * La franja «Deshacer» se retira sola: es un ofrecimiento para el instante en
+   * que uno se da cuenta de que ha borrado lo que no era, no un aviso que haya
+   * que cerrar. Lo quitado sigue en la papelera cuando la franja se va.
+   */
+  const undone = trash.find((entry) => entry.id === lastTrashId) ?? null
+  useEffect(() => {
+    if (!lastTrashId) return
+    const timer = setTimeout(() => dismissUndo(), 12000)
+    return () => clearTimeout(timer)
+  }, [lastTrashId, dismissUndo])
+
+  // Restaurar un elemento de un paso agrupado devuelve el paso: hay que rehacer
+  // su captura para que vuelva a señalar lo que acaba de recuperar.
+  const restore = (entryId: string): void => recaptureGroup(restoreTrash(entryId))
 
   const record = async (): Promise<void> => {
     setProblem(null)
@@ -703,6 +727,8 @@ export function StepsPanel(): React.JSX.Element {
           onConfirm={() => setProblem(null)}
         />
       )}
+
+      {trashOpen && <TrashModal onClose={() => setTrashOpen(false)} onRestore={restore} />}
 
       {result && (
         <ConfirmDialog
@@ -935,6 +961,18 @@ export function StepsPanel(): React.JSX.Element {
             )}
           </div>
 
+          {/* Solo aparece cuando hay algo dentro: una papelera vacía en la barra
+              sería un botón que no lleva a ninguna parte. */}
+          {trash.length > 0 && (
+            <button
+              className="btn btn-trash"
+              title={`Papelera de la guía: ${trash.length} cosa(s) quitadas que todavía puedes restaurar`}
+              onClick={() => setTrashOpen(true)}
+            >
+              🗑 <em className="trash-count">{trash.length}</em>
+            </button>
+          )}
+
           {/* Solo se redactan los pasos que van al manual: pagar tokens por un paso
               excluido de la documentación no tendría sentido. Las secciones
               tampoco: su título lo pone quien decide la estructura. */}
@@ -975,6 +1013,25 @@ export function StepsPanel(): React.JSX.Element {
             />
             agrupar seguidos
           </label>
+        </div>
+      )}
+
+      {/* Lo que se acaba de quitar, con la vuelta atrás a un clic. Va aquí —entre
+          la barra y la lista— porque es donde estaba mirando quien borró. */}
+      {undone && (
+        <div className="undo-strip">
+          <span className="undo-what">⟲ Quitado: {undone.label}</span>
+          <button className="btn" onClick={() => restore(undone.id)}>
+            Deshacer
+          </button>
+          <button
+            className="icon-btn"
+            title="Ocultar este aviso (sigue en la papelera)"
+            aria-label="Ocultar el aviso de lo quitado"
+            onClick={dismissUndo}
+          >
+            ×
+          </button>
         </div>
       )}
 

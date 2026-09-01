@@ -35,6 +35,7 @@ import type {
   SessionMeta,
   StepAction,
   StepKind,
+  StepNote,
   Viewport
 } from './types'
 
@@ -205,6 +206,82 @@ export interface GroupedField {
 }
 
 /**
+ * Algo que se quitó de la guía y todavía se puede recuperar (§19).
+ *
+ * Existe porque quitar es de las pocas acciones del panel que no tienen vuelta:
+ * un paso grabado se lleva consigo su captura, su selector y lo redactado, y
+ * volver a conseguirlo obliga a repetir el proceso en el sistema real. La
+ * papelera no cambia lo que se publica —lo quitado sigue fuera del manual y del
+ * paquete— sino que conserva lo suficiente para devolverlo a su sitio.
+ *
+ * Cada forma de quitar guarda lo suyo: `steps` para las tarjetas (una, o las
+ * marcadas de golpe), y `content`/`note`/`field` para lo que se quita DENTRO de
+ * una tarjeta, que no borra la tarjeta y por eso solo necesita a qué paso
+ * volver.
+ */
+interface TrashBase {
+  /** id de la entrada de la papelera (no el del paso) */
+  id: string
+  /** cuándo se quitó (ISO): ordena la lista y data cada entrada */
+  at: string
+  /** cómo se lee la entrada en la papelera («Paso 4: Pulsar «Guardar»») */
+  label: string
+}
+
+/** Tarjetas quitadas del panel: el ✕ de una, o «Eliminar» sobre las marcadas. */
+export interface TrashedSteps extends TrashBase {
+  kind: 'steps'
+  /** las tarjetas, tal como estaban, en el orden que tenían */
+  steps: RecordedStep[]
+  /**
+   * Posición que ocupaba cada una. Restaurar las devuelve a su sitio en vez de
+   * amontonarlas al final, que es lo que haría inútil recuperar el paso 3 de una
+   * grabación de cuarenta.
+   */
+  indexes: number[]
+  /**
+   * Capturas que colgaban de cada carpeta quitada: id de la carpeta → ids de sus
+   * capturas. Quitar una carpeta libera sus capturas en lugar de borrarlas
+   * (§16), así que restaurarla tiene que volver a meterlas dentro: sin esto la
+   * carpeta volvería vacía. Va por carpeta porque de una sola vez se pueden
+   * quitar varias (la barra de selección), y entonces cada captura tiene que
+   * saber a cuál vuelve.
+   */
+  members?: Record<string, string[]>
+}
+
+/** Bloque de contenido quitado con el 🗑 de su editor; el paso sigue ahí. */
+export interface TrashedContent extends TrashBase {
+  kind: 'content'
+  stepId: string
+  content: string
+}
+
+/** Nota destacada quitada con el 🗑 de su editor; el paso sigue ahí. */
+export interface TrashedNote extends TrashBase {
+  kind: 'note'
+  stepId: string
+  note: StepNote
+}
+
+/** Elemento quitado de un paso agrupado con el ✕ de su fila. */
+export interface TrashedField extends TrashBase {
+  kind: 'field'
+  stepId: string
+  /** el elemento, con sus acciones y sus referencias para volver a señalarlo */
+  item: GroupedField
+  /** posición que ocupaba dentro del grupo */
+  index: number
+  /**
+   * Los pasos originales del grupo, que quitar un elemento descarta (dejan de
+   * casar con lo que el grupo es). Restaurarlo devuelve también «⊟ Deshacer».
+   */
+  sources?: RecordedStep[]
+}
+
+export type TrashEntry = TrashedSteps | TrashedContent | TrashedNote | TrashedField
+
+/**
  * Borrador de la grabación en curso, persistido para poder cerrar la app y
  * continuar otro día (§8). Incluye los pasos con su captura y la configuración
  * de la sesión y de Git.
@@ -222,6 +299,12 @@ export interface DraftPayload {
     messageOverride: string | null
     baseBranch: string | null
   }
+  /**
+   * Papelera de la guía (§19). Va con el borrador para que lo quitado ayer se
+   * pueda recuperar hoy: si no, cerrar la aplicación sería la manera silenciosa
+   * de perder para siempre lo que todavía se podía deshacer.
+   */
+  trash?: TrashEntry[]
   /** ISO; se muestra al ofrecer la restauración */
   savedAt: string
 }

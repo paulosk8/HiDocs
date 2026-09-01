@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { DraftPayload } from '../shared/ipc-contract'
+import type { DraftPayload, RecordedStep } from '../shared/ipc-contract'
 
 /**
  * Borrador de la grabación en curso, para poder cerrar la app y continuar otro
@@ -47,19 +47,35 @@ export async function saveDraft(draft: DraftPayload): Promise<void> {
     return { ...step, tempFile: stored ? dest : step.tempFile }
   }
 
-  const steps = await Promise.all(
-    draft.steps.map(async (step) => {
-      const saved = await persistShot(step)
-      // Los pasos que quedaron dentro de una agrupación manual conservan su
-      // propia captura: es lo que devuelve «deshacer agrupación», y sin copiarla
-      // aquí deshacerla mañana dejaría los pasos sin imagen.
-      if (!step.groupSources?.length) return saved
-      return { ...saved, groupSources: await Promise.all(step.groupSources.map(persistShot)) }
-    })
-  )
+  /** Un paso con su captura durable, incluidas las de lo que guarda dentro. */
+  const persistStep = async (step: RecordedStep): Promise<RecordedStep> => {
+    const saved = await persistShot(step)
+    // Los pasos que quedaron dentro de una agrupación manual conservan su
+    // propia captura: es lo que devuelve «deshacer agrupación», y sin copiarla
+    // aquí deshacerla mañana dejaría los pasos sin imagen.
+    if (!step.groupSources?.length) return saved
+    return { ...saved, groupSources: await Promise.all(step.groupSources.map(persistShot)) }
+  }
+
+  const steps = await Promise.all(draft.steps.map(persistStep))
+
+  // Lo que hay en la papelera se guarda con su captura por la misma razón que
+  // los pasos: una papelera que mañana devolviera tarjetas sin imagen no serviría
+  // para lo que existe, que es recuperar justo lo que no se puede rehacer.
+  const trash = draft.trash?.length
+    ? await Promise.all(
+        draft.trash.map(async (entry) =>
+          entry.kind === 'steps'
+            ? { ...entry, steps: await Promise.all(entry.steps.map(persistStep)) }
+            : entry.kind === 'field' && entry.sources?.length
+              ? { ...entry, sources: await Promise.all(entry.sources.map(persistStep)) }
+              : entry
+        )
+      )
+    : draft.trash
 
   const tmp = `${file()}.tmp`
-  await writeFile(tmp, JSON.stringify({ ...draft, steps }, null, 2), 'utf8')
+  await writeFile(tmp, JSON.stringify({ ...draft, steps, trash }, null, 2), 'utf8')
   await rename(tmp, file())
 }
 

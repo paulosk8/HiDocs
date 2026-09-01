@@ -55,6 +55,10 @@ export function StepCard({
 }: Props): React.JSX.Element {
   const updateStep = useSession((s) => s.updateStep)
   const removeStep = useSession((s) => s.removeStep)
+  // Quitar pasa por el store, no por `updateStep`: lo quitado va a la papelera
+  // (§19) con el paso al que hay que devolverlo.
+  const removeContent = useSession((s) => s.removeContent)
+  const removeNote = useSession((s) => s.removeNote)
   const focusStepId = useSession((s) => s.focusStepId)
   const clearFocus = useSession((s) => s.clearFocus)
   const setActiveStep = useSession((s) => s.setActiveStep)
@@ -306,7 +310,7 @@ export function StepCard({
               isContent && !step.note
                 ? undefined
                 : () => {
-                    updateStep(step.id, { content: '' })
+                    removeContent(step.id)
                     setContentOpen(false)
                   }
             }
@@ -320,7 +324,7 @@ export function StepCard({
             value={step.note}
             onChange={(note) => updateStep(step.id, { note })}
             onRemove={() => {
-              updateStep(step.id, { note: undefined })
+              removeNote(step.id)
               setNoteOpen(false)
               // En un paso que se creó COMO nota, quitarla dejaría una tarjeta sin
               // nada dentro: pasa a ser un bloque de contenido normal, con su

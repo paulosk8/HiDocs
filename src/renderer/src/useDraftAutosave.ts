@@ -23,6 +23,9 @@ export function useDraftAutosave(): void {
         void ipc.invoke('draft:save', {
           meta: s.meta,
           steps: s.steps,
+          // La papelera viaja con el borrador: lo que se quitó por error hoy se
+          // sigue pudiendo recuperar mañana (§19).
+          trash: s.trash,
           sessionId: s.sessionId,
           createdAt: s.createdAt,
           outputDir: s.outputDir,
@@ -41,6 +44,7 @@ export function useDraftAutosave(): void {
     const unsub = useSession.subscribe((s, prev) => {
       if (
         s.steps !== prev.steps ||
+        s.trash !== prev.trash ||
         s.meta !== prev.meta ||
         s.outputDir !== prev.outputDir ||
         s.gitEnabled !== prev.gitEnabled ||

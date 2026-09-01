@@ -23,6 +23,7 @@ const SECTIONS = [
   { id: 'pegar', label: 'Pegar imágenes y tablas' },
   { id: 'contenido', label: 'Bloques de contenido' },
   { id: 'notas', label: 'Notas destacadas' },
+  { id: 'papelera', label: 'Papelera y deshacer' },
   { id: 'estado', label: 'Estado del proyecto' },
   { id: 'rama', label: 'Rama de trabajo' },
   { id: 'git', label: 'Integración con Git' },
@@ -349,7 +350,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   publicarlo.
                 </li>
                 <li>
-                  <b>Arrastrar</b> para reordenar, <b>eliminar</b> para descartar.
+                  <b>Arrastrar</b> para reordenar, <b>✕</b> para quitar. Lo quitado se puede
+                  recuperar (ver <a onClick={() => go('papelera')}>Papelera y deshacer</a>).
                 </li>
               </ul>
               <p>
@@ -372,6 +374,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <a onClick={() => go('contenido')}>bloque de contenido</a> o una{' '}
                   <a onClick={() => go('secciones')}>sección</a>. Lo añadido se coloca detrás de la
                   tarjeta en la que estés trabajando.
+                </li>
+                <li>
+                  <b>🗑 N</b> · aparece en cuanto quitas algo: es la{' '}
+                  <a onClick={() => go('papelera')}>papelera de la guía</a>, con lo que todavía
+                  puedes restaurar.
                 </li>
                 <li>
                   <b>✨ Redactar todos</b> · redacta de una vez todos los pasos marcados como
@@ -711,8 +718,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>🗑 Quitarlo</b> · el <b>▦</b> de la cabecera solo <i>abre y cierra</i> el
                   editor: lo escrito sigue ahí (y se publica) aunque lo cierres. Para deshacerte del
                   bloque usa el <b>🗑</b> del final de su barra, que pregunta antes si tiene texto.
-                  En un paso que <i>es</i> el bloque, quitarlo sería eliminar el paso: para eso está
-                  su <b>✕</b>.
+                  Lo quitado va a la <a onClick={() => go('papelera')}>papelera</a>. En un paso que{' '}
+                  <i>es</i> el bloque, quitarlo sería eliminar el paso: para eso está su <b>✕</b>.
                 </li>
               </ul>
               <p>
@@ -759,12 +766,72 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>🗑 Quitarla</b> · el <b>📝</b> de la cabecera solo <i>abre y cierra</i> el
                   editor: la nota sigue ahí (y se publica) aunque lo cierres. Para deshacerte de
                   ella usa el <b>🗑</b> de la fila de tipos, que pregunta antes si ya has escrito
-                  algo.
+                  algo. Si te arrepientes, está en la <a onClick={() => go('papelera')}>papelera</a>
+                  .
                 </li>
               </ul>
               <p>
                 La nota aparece en el manual entre la descripción del paso y su captura. Si vacías
                 su contenido, deja de publicarse.
+              </p>
+            </section>
+
+            <section id="papelera" data-help-section>
+              <h3>Papelera y deshacer</h3>
+              <p>
+                Todo lo que quitas de la guía se puede <b>recuperar</b>. Quitar era la única acción
+                del panel sin vuelta atrás, y la más cara: un paso grabado se lleva consigo su
+                captura, su selector y lo que hubieras redactado, y volver a tenerlo obligaba a
+                repetir el proceso en el sistema real.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>⟲ Deshacer</b> · justo después de quitar algo aparece una franja azul encima de
+                  la lista con lo que acabas de quitar y un botón para devolverlo. Se retira sola a
+                  los pocos segundos; lo quitado sigue en la papelera.
+                </li>
+                <li>
+                  <b>🗑 N</b> · en la barra de herramientas del panel, con el número de cosas
+                  quitadas. Abre la <b>papelera de la guía</b>: la lista de todo lo que has quitado,
+                  de lo más reciente a lo más antiguo, con su captura y la hora.
+                </li>
+                <li>
+                  <b>Restaurar</b> · devuelve la tarjeta a la <b>posición que ocupaba</b>, no al
+                  final de la lista. Una carpeta de capturas vuelve con las suyas dentro.
+                </li>
+                <li>
+                  <b>Olvidar</b> y <b>Vaciar la papelera</b> · para lo que ya sabes que no quieres.
+                  A partir de ahí sí es definitivo.
+                </li>
+              </ul>
+              <p>La papelera recoge todas las formas de quitar:</p>
+              <ul className="help-defs">
+                <li>
+                  <b>✕</b> de una tarjeta (paso, captura, imagen pegada, sección o carpeta).
+                </li>
+                <li>
+                  <b>Eliminar</b> de la barra de selección, con varias tarjetas marcadas: se
+                  recuperan todas juntas, cada una en su sitio.
+                </li>
+                <li>
+                  <b>🗑</b> del bloque de contenido y de la nota destacada: vuelven al paso del que
+                  salieron.
+                </li>
+                <li>
+                  <b>✕</b> de un elemento de un paso agrupado: vuelve a su posición dentro del
+                  grupo, con la captura rehecha para volver a señalarlo.
+                </li>
+              </ul>
+              <p>
+                La papelera <b>no se publica</b>: lo que hay dentro está fuera del manual y del
+                paquete mientras siga ahí. Se guarda con el borrador —así que lo que quitaste ayer
+                se sigue pudiendo recuperar hoy— y se vacía al guardar la guía y empezar la
+                siguiente, al descartar una edición y al traer una funcionalidad ya publicada: es la
+                papelera de <i>esta</i> guía, no un historial general.
+              </p>
+              <p>
+                Si el paso al que pertenecía un bloque o una nota ya no está en la guía, su entrada
+                se queda a la vista pero apagada: no hay dónde devolverla. Restaura antes el paso.
               </p>
             </section>
 

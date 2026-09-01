@@ -45,6 +45,8 @@ export function GroupCard({
 }): React.JSX.Element {
   const updateStep = useSession((s) => s.updateStep)
   const removeStep = useSession((s) => s.removeStep)
+  const removeContent = useSession((s) => s.removeContent)
+  const removeNote = useSession((s) => s.removeNote)
   const focusStepId = useSession((s) => s.focusStepId)
   const clearFocus = useSession((s) => s.clearFocus)
   const setActiveStep = useSession((s) => s.setActiveStep)
@@ -187,7 +189,7 @@ export function GroupCard({
             onChange={(content) => updateStep(step.id, { content })}
             onExpand={() => setWideContentId(step.id)}
             onRemove={() => {
-              updateStep(step.id, { content: '' })
+              removeContent(step.id)
               setContentOpen(false)
             }}
           />
@@ -200,7 +202,7 @@ export function GroupCard({
             value={step.note}
             onChange={(note) => updateStep(step.id, { note })}
             onRemove={() => {
-              updateStep(step.id, { note: undefined })
+              removeNote(step.id)
               setNoteOpen(false)
             }}
           />

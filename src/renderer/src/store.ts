@@ -5,7 +5,12 @@ import type {
   GroupTarget,
   GroupedField,
   RecordedStep,
-  StepFamily
+  StepFamily,
+  TrashEntry,
+  TrashedContent,
+  TrashedField,
+  TrashedNote,
+  TrashedSteps
 } from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
@@ -86,6 +91,22 @@ interface SessionState {
    * editando, dónde va a ir y ofrece descartarlo sin registrar nada.
    */
   editing: EditingSource | null
+
+  /**
+   * Lo que se ha quitado de la guía y todavía se puede recuperar (§19).
+   *
+   * Es lo único del panel que sobrevive a un borrado, así que se guarda en el
+   * borrador junto a los pasos. La entrada más reciente va la primera, que es la
+   * que ofrece deshacer la franja del panel.
+   */
+  trash: TrashEntry[]
+  /**
+   * Entrada recién creada, mientras la franja «Deshacer» siga a la vista. Se
+   * limpia al deshacerla, al descartarla o sola a los pocos segundos: pasado ese
+   * momento, lo quitado sigue en la papelera, pero ya no interrumpe.
+   */
+  lastTrashId: string | null
+  trashOpen: boolean
 
   /** repositorio que contiene la carpeta de salida, o null si no hay ninguno */
   gitRepo: GitRepoInfo | null
@@ -240,6 +261,28 @@ interface SessionState {
   }) => void
   updateStep: (id: string, patch: Partial<RecordedStep>) => void
   removeStep: (id: string) => void
+  /**
+   * Quita el bloque de contenido de un paso (el 🗑 de su editor) y lo manda a la
+   * papelera. Un bloque vacío no deja entrada: no hay nada que recuperar.
+   */
+  removeContent: (stepId: string) => void
+  /** Quita la nota destacada de un paso y la manda a la papelera. */
+  removeNote: (stepId: string) => void
+
+  /**
+   * Devuelve a la guía lo que guarda una entrada de la papelera. Como
+   * `removeGroupField`, devuelve el paso resultante cuando lo restaurado cambia
+   * un grupo (hay que rehacer su captura con el elemento otra vez señalado); en
+   * cualquier otro caso, `null`.
+   */
+  restoreTrash: (entryId: string) => RecordedStep | null
+  /** Olvida una entrada de la papelera: eso ya no se puede recuperar. */
+  dropTrash: (entryId: string) => void
+  /** Vacía la papelera entera. */
+  clearTrash: () => void
+  /** Retira la franja «Deshacer» sin tocar la papelera. */
+  dismissUndo: () => void
+  setTrashOpen: (open: boolean) => void
 
   /** pliega o despliega una sección o una carpeta (solo afecta a la vista) */
   toggleSection: (id: string) => void
@@ -781,6 +824,84 @@ export function sectionIdAt(steps: RecordedStep[], index: number): string | null
   return null
 }
 
+/**
+ * Cuántas entradas guarda la papelera. Es un tope generoso —quitar diez cosas
+ * seguidas y arrepentirse de la primera entra de sobra— pero tope al fin: cada
+ * paso guardado arrastra su captura al borrador, y una papelera sin límite haría
+ * crecer el borrador sin que nadie lo pidiera.
+ */
+const TRASH_MAX = 25
+
+/** Una entrada de la papelera antes de sellarla con su id y su fecha. */
+type NewTrashEntry =
+  | Omit<TrashedSteps, 'id' | 'at'>
+  | Omit<TrashedContent, 'id' | 'at'>
+  | Omit<TrashedNote, 'id' | 'at'>
+  | Omit<TrashedField, 'id' | 'at'>
+
+/**
+ * Añade la entrada a la papelera y la deja como la última quitada, que es de la
+ * que habla la franja «Deshacer». Devuelve el trozo de estado a fusionar, para
+ * que cada acción de quitar siga siendo un solo `set`.
+ */
+function pushTrash(
+  trash: TrashEntry[],
+  entry: NewTrashEntry
+): { trash: TrashEntry[]; lastTrashId: string } {
+  const id = crypto.randomUUID()
+  const full = { ...entry, id, at: new Date().toISOString() } as TrashEntry
+  return { trash: [full, ...trash].slice(0, TRASH_MAX), lastTrashId: id }
+}
+
+/** Cómo se nombra un paso cuando hay que hablar de él fuera de su tarjeta. */
+function stepName(step: RecordedStep): string {
+  const title = step.title.trim()
+  if (title) return title
+  return step.kind === 'section' ? 'sección sin título' : `paso ${step.order}`
+}
+
+/** Qué es la tarjeta, para que la papelera no sea una lista de títulos sueltos. */
+function kindName(step: RecordedStep): string {
+  if (step.kind === 'section') return 'Sección'
+  if (step.kind === 'group') return 'Carpeta'
+  if (step.kind === 'capture') return 'Captura'
+  if (step.kind === 'image') return 'Imagen'
+  // Un paso creado COMO nota no tiene cuerpo de bloque (§14): llamarlo «bloque»
+  // en la papelera sería describirlo por lo que no es.
+  if (step.kind === 'content') return step.content === undefined && step.note ? 'Nota' : 'Bloque'
+  return `Paso ${step.order}`
+}
+
+/**
+ * Qué capturas colgaban de cada carpeta de las que se van, para poder volver a
+ * meterlas si se restauran. Las que se quitan a la vez que su carpeta no cuentan:
+ * vuelven ellas mismas, con su `groupId` intacto. `undefined` = ninguna carpeta.
+ */
+function folderMembers(
+  steps: RecordedStep[],
+  removed: RecordedStep[],
+  alsoRemoved: string[] = []
+): Record<string, string[]> | undefined {
+  const folders = removed.filter(isFolder).map((step) => step.id)
+  if (!folders.length) return undefined
+  const members: Record<string, string[]> = {}
+  for (const id of folders) {
+    const ids = steps
+      .filter((step) => step.groupId === id && !alsoRemoved.includes(step.id))
+      .map((step) => step.id)
+    if (ids.length) members[id] = ids
+  }
+  return Object.keys(members).length ? members : undefined
+}
+
+/** Cómo se lee en la papelera lo que se acaba de quitar. */
+function trashLabel(steps: RecordedStep[]): string {
+  if (steps.length > 1) return `${steps.length} tarjetas`
+  const [step] = steps
+  const title = step.title.trim()
+  return title ? `${kindName(step)}: ${title}` : `${kindName(step)} sin título`
+}
+
 export const useSession = create<SessionState>((set) => ({
   sessionId: crypto.randomUUID(),
   createdAt: new Date().toISOString(),
@@ -805,6 +926,9 @@ export const useSession = create<SessionState>((set) => ({
   selectedIds: [],
   collapsedSections: [],
   editing: null,
+  trash: [],
+  lastTrashId: null,
+  trashOpen: false,
   gitRepo: null,
   gitEnabled: false,
   gitPush: false,
@@ -970,12 +1094,25 @@ export const useSession = create<SessionState>((set) => ({
       if (kept.length === items.length || !kept.length) return {}
       // Quitar un elemento a mano deja de casar con los pasos originales, así que
       // el grupo pierde la opción de deshacerse: restaurar lo que el usuario
-      // acaba de quitar sería justo lo contrario de lo que pidió.
+      // acaba de quitar sería justo lo contrario de lo que pidió. Los pasos se
+      // guardan en la papelera con el elemento, de modo que recuperarlo devuelve
+      // el grupo entero a como estaba, «⊟ Deshacer» incluido.
       const base = { ...target }
       delete base.groupSources
       const updated = withGroupItems(base, kept)
       result.updated = updated
-      return { steps: s.steps.map((step) => (step.id === stepId ? updated : step)) }
+      const index = items.findIndex((item) => item.label === label)
+      return {
+        steps: s.steps.map((step) => (step.id === stepId ? updated : step)),
+        ...pushTrash(s.trash, {
+          kind: 'field',
+          label: `Elemento «${label}» de «${stepName(target)}»`,
+          stepId,
+          item: items[index],
+          index,
+          ...(target.groupSources?.length ? { sources: target.groupSources } : {})
+        })
+      }
     })
     return result.updated
   },
@@ -1052,12 +1189,180 @@ export const useSession = create<SessionState>((set) => ({
   // pasan al apartado anterior. Es lo contrario de lo que haría un borrado en
   // cascada, y es lo que se espera de un separador: deshacer la división, no
   // perder media grabación de un clic.
+  //
+  // La tarjeta se va a la papelera (§19) con la posición que ocupaba: quitar es
+  // lo único del panel que se llevaba por delante una captura irrepetible sin
+  // ofrecer marcha atrás.
   removeStep: (id) =>
+    set((s) => {
+      const index = s.steps.findIndex((step) => step.id === id)
+      if (index < 0) return {}
+      const removed = s.steps[index]
+      // Las capturas de una carpeta no se borran con ella, pero se anota cuáles
+      // eran: al restaurarla vuelven dentro, en vez de dejarla vacía.
+      const members = folderMembers(s.steps, [removed])
+      return {
+        steps: renumber(s.steps.filter((step) => step.id !== id)),
+        selectedIds: s.selectedIds.filter((selected) => selected !== id),
+        collapsedSections: s.collapsedSections.filter((section) => section !== id),
+        ...pushTrash(s.trash, {
+          kind: 'steps',
+          label: trashLabel([removed]),
+          steps: [removed],
+          indexes: [index],
+          ...(members ? { members } : {})
+        })
+      }
+    }),
+
+  removeContent: (stepId) =>
+    set((s) => {
+      const step = s.steps.find((existing) => existing.id === stepId)
+      if (!step) return {}
+      const content = step.content ?? ''
+      return {
+        steps: s.steps.map((existing) =>
+          existing.id === stepId ? { ...existing, content: '' } : existing
+        ),
+        // Un bloque en blanco no deja entrada: la papelera es para lo que se
+        // puede echar de menos, no para el editor que se abrió y no se usó.
+        ...(content.trim()
+          ? pushTrash(s.trash, {
+              kind: 'content',
+              label: `Bloque de «${stepName(step)}»`,
+              stepId,
+              content
+            })
+          : {})
+      }
+    }),
+
+  removeNote: (stepId) =>
+    set((s) => {
+      const step = s.steps.find((existing) => existing.id === stepId)
+      if (!step) return {}
+      const note = step.note
+      const cleaned = { ...step }
+      delete cleaned.note
+      return {
+        steps: s.steps.map((existing) => (existing.id === stepId ? cleaned : existing)),
+        ...(note && (note.body.trim() || note.title?.trim())
+          ? pushTrash(s.trash, {
+              kind: 'note',
+              label: `Nota de «${stepName(step)}»`,
+              stepId,
+              note
+            })
+          : {})
+      }
+    }),
+
+  /**
+   * Devuelve a la guía lo que guarda una entrada, y la saca de la papelera.
+   *
+   * Cada tipo vuelve a su sitio de la manera que le corresponde: las tarjetas a
+   * la posición que ocupaban (y dentro de su carpeta, si sigue existiendo), y lo
+   * que se quitó DENTRO de una tarjeta, a esa tarjeta. Si el paso al que
+   * pertenecía ya no está, la entrada no se puede restaurar y se queda donde
+   * está: la papelera lo dice en la lista en vez de fallar en silencio.
+   */
+  restoreTrash: (entryId) => {
+    const result: { updated: RecordedStep | null } = { updated: null }
+    set((s) => {
+      const entry = s.trash.find((item) => item.id === entryId)
+      if (!entry) return {}
+      const without = s.trash.filter((item) => item.id !== entryId)
+      const done = { trash: without, lastTrashId: null }
+
+      if (entry.kind === 'steps') {
+        const next = [...s.steps]
+        // En orden ascendente, cada una en su hueco: reinsertadas así, una lista
+        // que no ha cambiado queda exactamente como estaba.
+        entry.steps.forEach((step, i) => {
+          const at = Math.min(entry.indexes[i] ?? next.length, next.length)
+          next.splice(at, 0, step)
+        })
+        // Cada captura vuelve a SU carpeta (de una vez se pueden haber quitado
+        // varias). Solo se readopta lo que sigue suelto: si mientras tanto se
+        // metió en otra carpeta, manda lo último que pidió el usuario.
+        const owner = new Map<string, string>()
+        for (const [folderId, ids] of Object.entries(entry.members ?? {})) {
+          for (const id of ids) owner.set(id, folderId)
+        }
+        const folders = new Set(entry.steps.filter(isFolder).map((step) => step.id))
+        const restored = owner.size
+          ? next.map((step) =>
+              owner.has(step.id) && !step.groupId ? { ...step, groupId: owner.get(step.id) } : step
+            )
+          : next
+        return {
+          ...done,
+          steps: renumber(restored),
+          // La tarjeta recuperada se trae a la vista y pasa a ser la activa: es
+          // donde está mirando quien acaba de deshacer.
+          focusStepId: entry.steps[0].id,
+          activeStepId: entry.steps[0].id,
+          // Una carpeta vuelve desplegada, para ver que sus capturas volvieron
+          // con ella.
+          collapsedSections: s.collapsedSections.filter((id) => !folders.has(id))
+        }
+      }
+
+      const target = s.steps.find((step) => step.id === entry.stepId)
+      if (!target) return {}
+
+      if (entry.kind === 'content') {
+        return {
+          ...done,
+          steps: s.steps.map((step) =>
+            step.id === entry.stepId ? { ...step, content: entry.content } : step
+          ),
+          focusStepId: target.id,
+          activeStepId: target.id
+        }
+      }
+
+      if (entry.kind === 'note') {
+        return {
+          ...done,
+          steps: s.steps.map((step) =>
+            step.id === entry.stepId ? { ...step, note: entry.note } : step
+          ),
+          focusStepId: target.id,
+          activeStepId: target.id
+        }
+      }
+
+      // Un elemento vuelve a su posición dentro del grupo. Si mientras tanto se
+      // volvió a agrupar algo con esa misma etiqueta, no se duplica.
+      const items = target.groupItems ?? []
+      if (items.some((item) => item.label === entry.item.label)) return { ...done }
+      const next = items.slice()
+      next.splice(Math.min(entry.index, next.length), 0, entry.item)
+      const restored = withGroupItems(
+        { ...target, ...(entry.sources ? { groupSources: entry.sources } : {}) },
+        next
+      )
+      result.updated = restored
+      return {
+        ...done,
+        steps: s.steps.map((step) => (step.id === entry.stepId ? restored : step)),
+        focusStepId: target.id,
+        activeStepId: target.id
+      }
+    })
+    return result.updated
+  },
+
+  dropTrash: (entryId) =>
     set((s) => ({
-      steps: renumber(s.steps.filter((step) => step.id !== id)),
-      selectedIds: s.selectedIds.filter((selected) => selected !== id),
-      collapsedSections: s.collapsedSections.filter((section) => section !== id)
+      trash: s.trash.filter((entry) => entry.id !== entryId),
+      lastTrashId: s.lastTrashId === entryId ? null : s.lastTrashId
     })),
+
+  clearTrash: () => set({ trash: [], lastTrashId: null }),
+  dismissUndo: () => set({ lastTrashId: null }),
+  setTrashOpen: (trashOpen) => set({ trashOpen }),
 
   toggleSection: (id) =>
     set((s) => ({
@@ -1075,11 +1380,28 @@ export const useSession = create<SessionState>((set) => ({
 
   clearSelection: () => set({ selectedIds: [] }),
 
+  // Las marcadas se van juntas a UNA entrada de la papelera: se quitaron de un
+  // gesto y se recuperan de otro. Cada una recuerda su posición, así que volver
+  // atrás no las amontona al final aunque estuvieran repartidas por la lista.
   removeSelected: () =>
-    set((s) => ({
-      steps: renumber(s.steps.filter((step) => !s.selectedIds.includes(step.id))),
-      selectedIds: []
-    })),
+    set((s) => {
+      const removed = s.steps.filter((step) => s.selectedIds.includes(step.id))
+      if (!removed.length) return { selectedIds: [] }
+      const indexes = removed.map((step) => s.steps.indexOf(step))
+      const members = folderMembers(s.steps, removed, s.selectedIds)
+      return {
+        steps: renumber(s.steps.filter((step) => !s.selectedIds.includes(step.id))),
+        selectedIds: [],
+        collapsedSections: s.collapsedSections.filter((id) => !s.selectedIds.includes(id)),
+        ...pushTrash(s.trash, {
+          kind: 'steps',
+          label: trashLabel(removed),
+          steps: removed,
+          indexes,
+          ...(members ? { members } : {})
+        })
+      }
+    }),
 
   // Agrupar a mano es la respuesta a lo que el motor no puede adivinar: que dos
   // botones, o un selector y su opción, o varias filas de una tabla, son UN paso
@@ -1211,7 +1533,11 @@ export const useSession = create<SessionState>((set) => ({
       activeStepId: null,
       selectedIds: [],
       collapsedSections: [],
-      editing: null
+      editing: null,
+      // La papelera es de ESTA guía: conservarla al vaciar el panel ofrecería
+      // devolver pasos de una grabación a otra que no tiene nada que ver.
+      trash: [],
+      lastTrashId: null
     }),
 
   // Descartar deja la sesión como estaba antes de cargar el commit en lo que se
@@ -1226,6 +1552,8 @@ export const useSession = create<SessionState>((set) => ({
       selectedIds: [],
       collapsedSections: [],
       editing: null,
+      trash: [],
+      lastTrashId: null,
       sessionId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       meta: { ...s.meta, feature: '', title: '' },
@@ -1246,6 +1574,11 @@ export const useSession = create<SessionState>((set) => ({
       // información que merezca sobrevivir al cierre de la aplicación.
       collapsedSections: [],
       editing: null,
+      // La papelera sí sobrevive: lo que se quitó ayer por error se sigue
+      // pudiendo recuperar hoy. Los borradores de antes de la papelera no la
+      // traen, y entonces llega vacía.
+      trash: draft.trash ?? [],
+      lastTrashId: null,
       gitEnabled: draft.git.enabled,
       gitPush: draft.git.push,
       gitBranchOverride: draft.git.branchOverride,
@@ -1276,6 +1609,8 @@ export const useSession = create<SessionState>((set) => ({
       activeStepId: null,
       selectedIds: [],
       collapsedSections: [],
+      trash: [],
+      lastTrashId: null,
       // El panel lo dice y ofrece cancelarlo: estos pasos no los ha grabado
       // nadie en esta sesión, y sin decirlo la única salida visible sería ■.
       editing: {
@@ -1304,6 +1639,8 @@ export const useSession = create<SessionState>((set) => ({
       selectedIds: [],
       collapsedSections: [],
       editing: null,
+      trash: [],
+      lastTrashId: null,
       sessionId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       gitMessageOverride: null

@@ -3277,3 +3277,141 @@ select {
   padding: 4px 8px;
   white-space: nowrap;
 }
+
+/* ─── Papelera de la guía (§19) ───────────────────────────────────────────── */
+
+/* En la barra de herramientas, junto a lo demás que se HACE con los pasos. Solo
+   se dibuja cuando hay algo dentro, así que no necesita estado vacío. */
+.btn.btn-trash {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.trash-count {
+  font-style: normal;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+/* La vuelta atrás inmediata, entre la barra y la lista: donde estaba mirando
+   quien acaba de quitar algo. En azul de aviso, no en ámbar: no hay nada
+   pendiente de registrar, solo algo que se puede deshacer. */
+.undo-strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--info-bg);
+  border-bottom: 1px solid var(--info-border);
+}
+
+.undo-what {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-strip .btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.trash-modal {
+  width: min(640px, 100%);
+}
+
+.trash-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.trash-list > li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+/* Su paso ya no está: la entrada se queda a la vista —dice qué se perdió— pero
+   apagada, porque no hay dónde devolverla. */
+.trash-list > li.trash-orphan {
+  opacity: 0.65;
+}
+
+.trash-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.trash-head b {
+  flex: 1 1 auto;
+  word-break: break-word;
+}
+
+.trash-icon {
+  font-size: 13px;
+}
+
+.trash-preview {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 3.6em;
+  overflow: hidden;
+}
+
+.trash-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.trash-shots img {
+  width: 84px;
+  height: 52px;
+  object-fit: cover;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--tint);
+}
+
+.trash-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Vaciar del todo se confirma en la misma barra: un diálogo encima del diálogo
+   tendría que volver a negociar quién oculta el visor nativo. */
+.trash-modal > footer > .btn.danger {
+  margin-right: auto;
+}
+
+.trash-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-right: auto;
+  font-size: 12px;
+  color: var(--danger);
+}
