@@ -51,7 +51,7 @@ import {
 } from './git'
 import { listProjects, forgetProject } from './projects'
 import { suggestDocsDir } from './docusaurus'
-import { cancelChecks, detectChecks, runChecks, summarize } from './checks'
+import { cancelChecks, detectChecks, readProjectGuide, runChecks, summarize } from './checks'
 import { previewStatus, startPreview, stopPreview } from './preview'
 import { saveDraft, loadDraft, clearDraft } from './draft'
 import { aiStatus, setAiKey, setAiSettings } from './settings'
@@ -400,6 +400,10 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('checks:cancel', () => cancelChecks())
+
+  ipcMain.handle('docs:guide', async (_e, outputDir: string) => {
+    return readProjectGuide(outputDir).catch(() => null)
+  })
 
   ipcMain.handle('preview:start', async (_e, args: { outputDir: string; segments?: string[] }) => {
     const result = await startPreview(args, sendCheckProgress)

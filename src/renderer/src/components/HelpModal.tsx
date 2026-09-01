@@ -29,6 +29,7 @@ const SECTIONS = [
   { id: 'git', label: 'Integración con Git' },
   { id: 'pendiente', label: 'Documentación sin registrar' },
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
+  { id: 'requisitos', label: 'Requisitos del proyecto' },
   { id: 'comprobar', label: 'Comprobar el sitio' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
   { id: 'ia', label: 'Redactar con IA' },
@@ -1061,6 +1062,42 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </p>
             </section>
 
+            <section id="requisitos" data-help-section>
+              <h3>Requisitos del proyecto</h3>
+              <p>
+                Cada repositorio de documentación tiene sus reglas —cómo se redacta, qué se
+                comprueba antes de un PR— y hasta ahora vivían fuera de esta aplicación: te
+                enterabas de ellas cuando <code>lint:docs</code> bloqueaba el commit, con la guía ya
+                escrita. La ficha <b>Requisitos del proyecto</b> las pone delante <b>antes</b> de
+                empezar.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Con qué se trabaja</b> · el proyecto Docusaurus, la carpeta de salida dentro de
+                  él y la rama en la que se registrará.
+                </li>
+                <li>
+                  <b>Qué se ejecutará antes de registrar</b> · los comandos del proyecto, cada uno
+                  con su casilla. Desmarca lo que no necesites en cada guardado (compilar el sitio,
+                  típicamente) y se recuerda para ese proyecto. Ver{' '}
+                  <a onClick={() => go('comprobar')}>Comprobar el sitio</a>.
+                </li>
+                <li>
+                  <b>Cómo se escribe aquí</b> · la guía de estilo del propio repositorio (
+                  <code>CONTRIBUTING.md</code>, <code>STYLEGUIDE.md</code>…), leída de su raíz o de
+                  la del repositorio, con un buscador por apartados: escribe <i>guion</i> o{' '}
+                  <i>emoji</i> y te deja solo lo que habla de eso. También puedes abrirla en tu
+                  editor. Si el repositorio no tiene ninguna, lo dice: la app no se inventa reglas.
+                </li>
+              </ul>
+              <p>
+                Aparece sola al <b>estrenar guía</b> —justo después de guardar la anterior, que es
+                cuando sirve de algo— y está siempre disponible en el botón{' '}
+                <b>Requisitos del proyecto</b>, al final del panel. Si te estorba, la casilla{' '}
+                <b>No mostrarla al empezar una guía</b> la calla para siempre sin quitar el botón.
+              </p>
+            </section>
+
             <section id="comprobar" data-help-section>
               <h3>Comprobar el sitio y vista previa</h3>
               <p>
@@ -1077,10 +1114,26 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   si las tiene.
                 </li>
                 <li>
+                  <b>Las demás comprobaciones del repositorio</b> — cualquier script suyo que se
+                  llame <code>lint…</code> o <code>check…</code> (por ejemplo{' '}
+                  <code>lint:modelo</code>), en orden alfabético. Son las que su CI ejecuta en cada
+                  PR: dejarlas fuera solo retrasaba el fallo. Lo que <i>escribe</i> nunca se ejecuta
+                  (<code>lint:fix</code>, <code>format</code>, <code>write-…</code>): comprobar no
+                  puede cambiarte los archivos.
+                </li>
+                <li>
                   <code>npm run build</code> — la que de verdad importa: compila el sitio y falla si
-                  una etiqueta, un enlace o un componente rompen el MDX.
+                  una etiqueta, un enlace o un componente rompen el MDX. Va al final porque es la
+                  que tarda.
                 </li>
               </ul>
+              <p>
+                <b>Y eliges cuáles.</b> Cada comando tiene su casilla al final del panel (y en{' '}
+                <a onClick={() => go('requisitos')}>Requisitos del proyecto</a>): lo que desmarques
+                no se ejecuta, y la elección se recuerda <b>para ese proyecto</b>. Es lo que permite
+                comprobar el estilo en cada guardado —tarda segundos— sin pagar la compilación
+                entera cada vez.
+              </p>
               <p>
                 Se paran en el primero que falle. Si alguno falla, <b>no se comitea nada</b>, pero
                 el paquete <b>sí queda escrito</b> en el repositorio: el aviso te enseña el error
@@ -1097,7 +1150,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </p>
               <p>
                 Compilar tarda: el aviso enseña la salida del comando según sale y se puede
-                cancelar. Si prefieres no esperar, desactiva{' '}
+                cancelar. Si prefieres no esperar por uno en concreto, desmárcalo; y para no
+                comprobar nada en ningún proyecto, desactiva{' '}
                 <b>Comprobar el sitio antes de registrar en Git</b> al final del panel; la
                 preferencia se recuerda. Si tu carpeta de salida no está dentro de un proyecto
                 Docusaurus con <code>package.json</code>, no hay nada que ejecutar y guardar no se

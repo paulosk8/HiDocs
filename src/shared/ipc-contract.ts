@@ -29,6 +29,7 @@ import type {
   PreviewStatus,
   ProjectChecks,
   ProjectEntry,
+  ProjectGuide,
   RecordedAction,
   SaveResult,
   SelectorCandidate,
@@ -498,6 +499,12 @@ export interface IpcInvokeMap {
   /** corta la tanda en marcha (la de guardar incluida) */
   'checks:cancel': () => void
   /**
+   * La guía de estilo del repositorio de destino (§20), o `null` si no tiene
+   * ninguna. Es lo que hay que leer ANTES de escribir, no después de que
+   * `lint:docs` bloquee el commit.
+   */
+  'docs:guide': (outputDir: string) => ProjectGuide | null
+  /**
    * Compila el sitio y lo sirve, y abre en el navegador la guía indicada.
    * `segments` son las carpetas de la guía (módulo/subcategoría/funcionalidad).
    */
@@ -581,6 +588,7 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'checks:detect',
   'checks:run',
   'checks:cancel',
+  'docs:guide',
   'preview:start',
   'preview:stop',
   'preview:status',

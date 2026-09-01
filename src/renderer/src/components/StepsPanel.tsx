@@ -20,7 +20,7 @@ import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
 import { CONTENT_KINDS } from '../content-templates'
-import { groupSize, sectionSize, selectionProblem, useSession } from '../store'
+import { checksToRun, groupSize, sectionSize, selectionProblem, useSession } from '../store'
 import { invalidateBranches } from '../useBranches'
 import { GROUP_DROP_PREFIX, GroupCard } from './GroupCard'
 import { SectionCard } from './SectionCard'
@@ -29,6 +29,7 @@ import { ShotModal } from './ShotModal'
 import { CaptureModal } from './CaptureModal'
 import { ContentModal } from './ContentModal'
 import { TrashModal } from './TrashModal'
+import { RequirementsModal } from './RequirementsModal'
 import { ConfirmDialog } from './ConfirmDialog'
 import { ChecksModal } from './ChecksModal'
 import { GitSection } from './GitSection'
@@ -90,6 +91,8 @@ export function StepsPanel(): React.JSX.Element {
   const discardEditing = useSession((s) => s.discardEditing)
   const checksRun = useSession((s) => s.checksRun)
   const checksReport = useSession((s) => s.checksReport)
+  const requirementsOpen = useSession((s) => s.requirementsOpen)
+  const setRequirementsOpen = useSession((s) => s.setRequirementsOpen)
   const { draft } = useAiDraft()
   const recaptureGroup = useGroupCapture()
   const {
@@ -137,6 +140,12 @@ export function StepsPanel(): React.JSX.Element {
    * preguntar si sigue valiendo. Ver el diálogo, más abajo.
    */
   const [askContext, setAskContext] = useState(false)
+  /**
+   * Hay que enseñar la ficha del proyecto en cuanto el usuario termine con los
+   * avisos de haber guardado (§20). No se abre a la vez que ellos: se encadena,
+   * o serían tres superposiciones apiladas sobre el mismo momento.
+   */
+  const [pendingRequirements, setPendingRequirements] = useState(false)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -263,7 +272,7 @@ export function StepsPanel(): React.JSX.Element {
         s.gitEnabled &&
         s.gitVerify &&
         !options?.skipVerify &&
-        (s.docsChecks?.checks.length ?? 0) > 0
+        checksToRun(s.docsChecks, s.checksSkip).length > 0
       if (verifying) s.checksStart('commit')
       try {
         const saved = await ipc.invoke('session:save', {
@@ -284,7 +293,9 @@ export function StepsPanel(): React.JSX.Element {
                 // Sin elección explícita se omite, y el main resuelve la rama por
                 // defecto del repositorio.
                 baseBranch: s.gitBaseBranch ?? undefined,
-                verify: verifying
+                verify: verifying,
+                // Lo desmarcado para este proyecto no se ejecuta (§20).
+                skipChecks: s.checksSkip
               }
             : undefined
         })
@@ -314,6 +325,13 @@ export function StepsPanel(): React.JSX.Element {
         // con los nombres de la anterior sin que nadie lo note. Se pregunta al
         // estrenar sesión, que es cuando la respuesta se conoce.
         if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
+        // Y la ficha del proyecto, que es lo que hay que tener delante ANTES de
+        // escribir la guía siguiente: con qué comandos se va a topar y cómo pide
+        // el repositorio que se redacte. Enterarse de eso al final —cuando el
+        // commit se bloquea— es justo lo que se quiere dejar de hacer.
+        if (useSession.getState().requirementsOnStart && useSession.getState().docsChecks) {
+          setPendingRequirements(true)
+        }
         void ipc.invoke('draft:clear')
       } catch (err) {
         useSession.getState().checksFinish()
@@ -455,6 +473,7 @@ export function StepsPanel(): React.JSX.Element {
     aiContextOpen ||
     pendingDocsOpen ||
     trashOpen ||
+    requirementsOpen ||
     capture !== null ||
     wideContentId !== null ||
     pasteProblem !== null ||
@@ -521,6 +540,21 @@ export function StepsPanel(): React.JSX.Element {
     const timer = setTimeout(() => dismissUndo(), 12000)
     return () => clearTimeout(timer)
   }, [lastTrashId, dismissUndo])
+
+  /**
+   * Cierra uno de los avisos de haber guardado y, si era el último que quedaba,
+   * enseña la ficha del proyecto (§20). Se encadena a mano y no con un efecto
+   * porque el orden es el que importa: primero lo que habla de la guía que se
+   * acaba de terminar, y solo después lo que prepara la siguiente.
+   */
+  const closeAfterSave = (what: 'result' | 'context'): void => {
+    if (what === 'result') setResult(null)
+    else setAskContext(false)
+    const otherPending = what === 'result' ? askContext : result !== null
+    if (otherPending || !pendingRequirements) return
+    setPendingRequirements(false)
+    setRequirementsOpen(true)
+  }
 
   // Restaurar un elemento de un paso agrupado devuelve el paso: hay que rehacer
   // su captura para que vuelva a señalar lo que acaba de recuperar.
@@ -704,9 +738,9 @@ export function StepsPanel(): React.JSX.Element {
           cancelLabel="Conservarlo"
           onConfirm={() => {
             setMeta({ aiContext: '' })
-            setAskContext(false)
+            closeAfterSave('context')
           }}
-          onCancel={() => setAskContext(false)}
+          onCancel={() => closeAfterSave('context')}
         />
       )}
 
@@ -730,6 +764,8 @@ export function StepsPanel(): React.JSX.Element {
 
       {trashOpen && <TrashModal onClose={() => setTrashOpen(false)} onRestore={restore} />}
 
+      {requirementsOpen && <RequirementsModal onClose={() => setRequirementsOpen(false)} />}
+
       {result && (
         <ConfirmDialog
           title="Documentación guardada"
@@ -747,9 +783,9 @@ export function StepsPanel(): React.JSX.Element {
           cancelLabel="Cerrar"
           onConfirm={() => {
             void ipc.invoke('shell:open-path', result.path)
-            setResult(null)
+            closeAfterSave('result')
           }}
-          onCancel={() => setResult(null)}
+          onCancel={() => closeAfterSave('result')}
         />
       )}
     </>

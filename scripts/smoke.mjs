@@ -3723,6 +3723,11 @@ try {
         scripts: {
           typecheck: 'node -e "process.exit(0)"',
           'lint:docs': 'node -e "process.exit(0)"',
+          // Una comprobación propia del repositorio, de las que la app no
+          // conoce por su nombre pero su CI sí ejecuta (§20).
+          'lint:extra': 'node -e "process.exit(0)"',
+          // Y una que ESCRIBE: no debe ejecutarse nunca, aunque se llame lint.
+          'lint:fix': 'node -e "process.exit(1)"',
           build: 'node scripts/compilar.mjs',
           serve: 'node scripts/servir.mjs'
         }
@@ -3731,6 +3736,27 @@ try {
       2
     )
   )
+  // La guía de estilo del repositorio: lo que la ficha del proyecto tiene que
+  // leer y enseñar ANTES de escribir la guía siguiente (§20).
+  writeFileSync(
+    join(site, 'CONTRIBUTING.md'),
+    [
+      '# Guía de estilo del sitio de prueba',
+      '',
+      'Las convenciones que sigue toda guía de este repositorio.',
+      '',
+      '## Redacción',
+      '',
+      '- Sin guion largo: usa dos puntos, paréntesis o coma.',
+      '- Sin emojis en ninguna parte.',
+      '',
+      '## Imágenes',
+      '',
+      '- El alt de cada imagen repite el título del paso.',
+      ''
+    ].join('\n')
+  )
+
   const gs = (args) => execSync(`git ${args}`, { cwd: site, encoding: 'utf8' }).trim()
   execSync('git init -q -b main', { cwd: site })
   gs('config user.email prueba@ejemplo.com')
@@ -3744,11 +3770,16 @@ try {
   )
   check(
     comandos !== null &&
-      comandos.checks.map((c) => c.script).join(',') === 'typecheck,lint:docs,build' &&
+      comandos.checks.map((c) => c.script).join(',') === 'typecheck,lint:docs,lint:extra,build' &&
       comandos.canServe === true &&
       comandos.projectRoot.endsWith(site.split('/').pop()),
-    'Comprobación: se detectan los comandos del proyecto de destino, del más barato al más caro',
+    'Comprobación: se detectan los comandos del proyecto, los suyos propios incluidos y el build al final',
     comandos ? comandos.checks.map((c) => c.script).join(' → ') : '(ninguno)'
+  )
+  check(
+    !comandos?.checks.some((c) => c.script === 'lint:fix'),
+    'Comprobación: lo que ESCRIBE no se ofrece nunca, aunque se llame «lint»',
+    comandos?.checks.map((c) => c.script).join(' → ') ?? '(ninguno)'
   )
   const sinProyecto = await gui.evaluate(
     (dir) => window.docrecorder.invoke('checks:detect', dir),
@@ -3761,9 +3792,9 @@ try {
   )
 
   /** Guarda una guía en el sitio de prueba, con el título (y el commit) que se pidan. */
-  const saveToSite = (feature, title, verify) =>
+  const saveToSite = (feature, title, verify, skipChecks = []) =>
     gui.evaluate(
-      ([dir, feature, title, verify]) =>
+      ([dir, feature, title, verify, skipChecks]) =>
         window.docrecorder.invoke('session:save', {
           meta: {
             module: 'publicacion',
@@ -3797,16 +3828,18 @@ try {
             branch: 'docs/publicacion',
             message: `docs(publicacion): ${feature}`,
             push: false,
-            verify
+            verify,
+            skipChecks
           }
         }),
-      [siteDocs, feature, title, verify]
+      [siteDocs, feature, title, verify, skipChecks]
     )
 
   const okSave = await saveToSite('guia-buena', 'Abrir el listado', true)
   check(
     okSave.checks?.ok === true &&
-      okSave.checks.runs.map((r) => r.script).join(',') === 'typecheck,lint:docs,build' &&
+      okSave.checks.runs.map((r) => r.script).join(',') ===
+        'typecheck,lint:docs,lint:extra,build' &&
       !!okSave.git,
     'Comprobación: si los tres comandos pasan, el commit se hace como siempre',
     okSave.checks
@@ -3895,20 +3928,141 @@ try {
     forzado.git?.message ?? forzado.gitError ?? '(sin commit)'
   )
 
+  // Lo desmarcado no se ejecuta (§20). Es el caso que lo motivó: compilar tarda
+  // y no siempre hace falta pagarlo en cada guardado, mientras que el estilo sí
+  // conviene comprobarlo siempre. Con «build» fuera, la guía que NO compila se
+  // registra igual: se ejecuta lo demás y el commit sale.
+  const commitsAntesDeSaltar = Number(gs('rev-list --count --all'))
+  const saltando = await saveToSite('guia-rota', 'Paso ROMPEME', true, ['build'])
+  check(
+    saltando.checks?.ok === true &&
+      saltando.checks.runs.map((r) => r.script).join(',') === 'typecheck,lint:docs,lint:extra' &&
+      !!saltando.git &&
+      Number(gs('rev-list --count --all')) === commitsAntesDeSaltar + 1,
+    'Requisitos: el comando desmarcado no se ejecuta y el resto sí',
+    saltando.checks?.runs.map((r) => r.script).join(' → ') ?? '(sin comprobaciones)'
+  )
+
   // Y la sección del panel, que es donde se ve y se desactiva.
   await gui.fill('.topbar input[placeholder="Sin seleccionar"]', siteDocs)
   await gui.waitForSelector('.git-preview button', { timeout: 15000 })
+  await gui.waitForSelector('.git-checks li', { timeout: 15000 })
   const seccion = await gui.evaluate(() => ({
-    comandos: document.querySelector('.git-preview')?.previousElementSibling
-      ? [...document.querySelectorAll('.git-section .git-toggle em')].map((n) => n.textContent)
-      : [],
-    previa: document.querySelector('.git-preview button')?.textContent ?? ''
+    comandos: [...document.querySelectorAll('.git-checks li code')].map((n) => n.textContent),
+    resumen: [...document.querySelectorAll('.git-section .git-toggle em')].map(
+      (n) => n.textContent
+    ),
+    previa: [...document.querySelectorAll('.git-preview button')].map((n) => n.textContent)
   }))
   check(
-    seccion.comandos.some((t) => t.includes('npm run build')) &&
-      seccion.previa === 'Vista previa del sitio',
+    seccion.comandos.join(' · ') ===
+      'npm run typecheck · npm run lint:docs · npm run lint:extra · npm run build' &&
+      seccion.previa.includes('Vista previa del sitio'),
     'Comprobación: el panel enumera los comandos del proyecto y ofrece la vista previa',
     seccion.comandos.join(' | ')
+  )
+
+  // --- Requisitos del proyecto: la ficha antes de escribir (§20) ---
+  //
+  // El fallo real que lo motivó: el commit se bloqueaba una y otra vez porque
+  // `lint:docs` aplica reglas de redacción escritas en el CONTRIBUTING.md del
+  // repositorio, fuera de esta aplicación. Aquí se comprueba que la app las lee
+  // de ese repositorio, las enseña y deja elegir qué comandos se ejecutan.
+  const desmarcar = gui.locator('.git-checks li', { hasText: 'npm run build' }).locator('input')
+  await desmarcar.uncheck()
+  await gui.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.git-section .git-toggle em')].some((n) =>
+        /3 de 4/.test(n.textContent ?? '')
+      ),
+    null,
+    { timeout: 5000 }
+  )
+  const recordado = await gui.evaluate(() => localStorage.getItem('docrecorder.skipChecks'))
+  check(
+    recordado !== null && JSON.parse(recordado)[site]?.join(',') === 'build',
+    'Requisitos: desmarcar un comando se recuerda para ese proyecto',
+    recordado ?? '(nada guardado)'
+  )
+
+  await gui.getByRole('button', { name: 'Requisitos del proyecto' }).click()
+  await gui.waitForSelector('.requirements-modal', { timeout: 5000 })
+  await gui.waitForSelector('.req-guide', { timeout: 5000 })
+  const ficha = await gui.evaluate(() => ({
+    datos: [...document.querySelectorAll('.req-facts dd')].map((n) => n.textContent.trim()),
+    marcados: [...document.querySelectorAll('.requirements-modal .req-checks input')].map(
+      (i) => i.checked
+    ),
+    reglas: document.querySelector('.req-guide')?.textContent ?? '',
+    apartados: document.querySelector('.req-search .muted')?.textContent ?? ''
+  }))
+  check(
+    ficha.datos[0].endsWith(site.split('/').pop()) &&
+      ficha.datos[1] === 'docs' &&
+      ficha.datos[2] === 'docs/publicacion' &&
+      ficha.marcados.join(',') === 'true,true,true,false',
+    'Requisitos: la ficha dice proyecto, carpeta, rama y qué se ejecutará',
+    `${ficha.datos.join(' · ')} · marcados ${ficha.marcados.join(',')}`
+  )
+  check(
+    /Sin guion largo/.test(ficha.reglas) && /3 apartado/.test(ficha.apartados),
+    'Requisitos: la guía de estilo se lee del repositorio y se enseña dentro de la app',
+    ficha.apartados
+  )
+
+  // Buscar deja solo el apartado que habla de eso: cuatrocientas líneas de guía
+  // se consultan, no se leen enteras.
+  await gui.fill('.req-search input', 'emoji')
+  await gui.waitForFunction(
+    () => /1 de 3/.test(document.querySelector('.req-search .muted')?.textContent ?? ''),
+    null,
+    { timeout: 5000 }
+  )
+  const filtrado = await gui.evaluate(() => document.querySelector('.req-guide')?.textContent ?? '')
+  check(
+    /Sin emojis/.test(filtrado) && !/alt de cada imagen/.test(filtrado),
+    'Requisitos: buscar en las reglas deja solo los apartados que las mencionan',
+    filtrado.replace(/\s+/g, ' ').slice(0, 80)
+  )
+  await gui.getByRole('button', { name: 'Entendido' }).click()
+  await gui.waitForSelector('.requirements-modal', { state: 'detached', timeout: 5000 })
+
+  // Y sale sola al estrenar guía, que es el momento en el que sirve de algo:
+  // justo antes de escribir la siguiente, no cuando el commit ya falló.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Nota destacada")').click()
+  await gui.waitForSelector('.step-card', { timeout: 5000 })
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'publicacion')
+  await gui.fill('.topbar input[placeholder="institucion"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', 'guia-desde-la-gui')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', 'Guía escrita desde la GUI')
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 10000 })
+  if (await gui.getByRole('button', { name: 'Registrar en Git' }).count()) {
+    await gui.getByRole('button', { name: 'Registrar en Git' }).click()
+  }
+  if (await gui.getByRole('button', { name: 'Guardar de todos modos' }).count()) {
+    await gui.getByRole('button', { name: 'Guardar de todos modos' }).click()
+  }
+  await gui.waitForFunction(
+    () => /Documentación guardada/.test(document.querySelector('.dialog h3')?.textContent ?? ''),
+    null,
+    { timeout: 30000 }
+  )
+  await gui.getByRole('button', { name: 'Cerrar' }).click()
+  const salioSola = await gui
+    .waitForSelector('.requirements-modal', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false)
+  check(salioSola, 'Requisitos: la ficha sale sola al estrenar guía, detrás del aviso de guardado')
+  // Y se puede callar para siempre sin perder el botón.
+  await gui.locator('.intro-remember input').check()
+  await gui.getByRole('button', { name: 'Entendido' }).click()
+  await gui.waitForSelector('.requirements-modal', { state: 'detached', timeout: 5000 })
+  check(
+    (await gui.evaluate(() => localStorage.getItem('docrecorder.requirementsOnStart'))) === '0' &&
+      (await gui.getByRole('button', { name: 'Requisitos del proyecto' }).count()) === 1,
+    'Requisitos: «no mostrarla al empezar» se recuerda y deja el botón donde estaba'
   )
 
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.

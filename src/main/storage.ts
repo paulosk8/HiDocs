@@ -170,13 +170,14 @@ export async function saveSession(
   // sigue siendo lo de siempre.
   if (payload.git?.enabled && payload.git.verify !== false) {
     const project = await detectChecks(payload.outputDir).catch(() => null)
-    if (project && project.checks.length) {
-      result.checks = await runChecks(
-        project.projectRoot,
-        project.checks,
-        onCheckProgress,
-        targetDir
-      )
+    // Lo que el usuario ha desmarcado para este proyecto no se ejecuta (§20):
+    // compilar el sitio entero cuesta minutos y no siempre hace falta pagarlos en
+    // cada guardado, mientras que el estilo y los tipos sí conviene comprobarlos
+    // siempre. Antes solo se podía elegir entre los tres o ninguno.
+    const skip = payload.git.skipChecks ?? []
+    const chosen = project?.checks.filter((c) => !skip.includes(c.script)) ?? []
+    if (project && chosen.length) {
+      result.checks = await runChecks(project.projectRoot, chosen, onCheckProgress, targetDir)
       if (!result.checks.ok) return result
     }
   }

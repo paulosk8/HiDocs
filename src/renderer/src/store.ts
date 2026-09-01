@@ -21,6 +21,7 @@ import {
   type ChecksResult,
   type RecordedAction,
   type GitRepoInfo,
+  type DocCheck,
   type ProjectChecks,
   type EngineState,
   type RecorderStatus,
@@ -125,6 +126,16 @@ interface SessionState {
    * y guardar no se detiene a comprobar nada).
    */
   docsChecks: ProjectChecks | null
+  /**
+   * Comandos que el usuario ha desmarcado para el proyecto actual (§20). Se
+   * conocen y se enseñan, pero no se ejecutan: compilar el sitio entero tarda
+   * minutos y no siempre hace falta pagarlos en cada guardado.
+   */
+  checksSkip: string[]
+  /** ficha del proyecto de destino abierta (§20) */
+  requirementsOpen: boolean
+  /** enseñarla sola al estrenar guía; el usuario puede callarla para siempre */
+  requirementsOnStart: boolean
   /** tanda en marcha: qué comando va y qué lleva escrito */
   checksRun: {
     purpose: ChecksPurpose
@@ -364,6 +375,10 @@ interface SessionState {
   setGroupConsecutive: (value: boolean) => void
 
   setDocsChecks: (checks: ProjectChecks | null) => void
+  /** marca o desmarca un comando para el proyecto actual, y lo recuerda */
+  toggleCheck: (script: string) => void
+  setRequirementsOpen: (open: boolean) => void
+  setRequirementsOnStart: (on: boolean) => void
   /** empieza una tanda: el diálogo aparece antes de que llegue la primera línea */
   checksStart: (purpose: ChecksPurpose) => void
   checksProgress: (progress: CheckProgress) => void
@@ -386,6 +401,9 @@ interface SessionState {
 
 const GROUP_KEY = 'docrecorder.groupConsecutive'
 const VERIFY_KEY = 'docrecorder.verifyBeforeCommit'
+/** Comandos desmarcados, POR proyecto: cada repositorio tiene su ritmo (§20). */
+const SKIP_CHECKS_KEY = 'docrecorder.skipChecks'
+const REQUIREMENTS_KEY = 'docrecorder.requirementsOnStart'
 
 /** Líneas de salida que se guardan del comando en marcha, para enseñar el final. */
 const CHECK_LINES = 60
@@ -413,6 +431,57 @@ function initialVerify(): boolean {
   } catch {
     return true
   }
+}
+
+/**
+ * Comandos desmarcados por proyecto, tal como se guardan: raíz del proyecto →
+ * scripts que NO hay que ejecutar. Se guarda lo desmarcado y no lo elegido a
+ * propósito: así, un comando que el proyecto añada mañana entra solo, en vez de
+ * quedarse fuera para siempre por no estar en una lista de ayer.
+ */
+function readSkipChecks(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(SKIP_CHECKS_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string[]>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeSkipChecks(projectRoot: string, scripts: string[]): void {
+  try {
+    const all = readSkipChecks()
+    if (scripts.length) all[projectRoot] = scripts
+    else delete all[projectRoot]
+    localStorage.setItem(SKIP_CHECKS_KEY, JSON.stringify(all))
+  } catch {
+    // Sin almacenamiento la elección vale solo para esta sesión, que es mejor
+    // que no poder elegir.
+  }
+}
+
+/**
+ * La ficha del proyecto se enseña al empezar una guía salvo que el usuario haya
+ * pedido no verla. Viene activada: el caso que la motivó es justo el de alguien
+ * que no sabía que el repositorio tenía reglas hasta que el commit se bloqueó.
+ */
+function initialRequirementsOnStart(): boolean {
+  try {
+    return localStorage.getItem(REQUIREMENTS_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Los comandos que se van a ejecutar de verdad: los que el proyecto tiene, menos
+ * los que el usuario ha desmarcado. En un solo sitio porque de esto dependen
+ * tres decisiones que tienen que decir lo mismo: si hay algo que comprobar al
+ * guardar, qué enseña el progreso y qué promete la ficha.
+ */
+export function checksToRun(project: ProjectChecks | null, skip: string[]): DocCheck[] {
+  return project ? project.checks.filter((check) => !skip.includes(check.script)) : []
 }
 
 /** Nombre del campo de un paso `fill`/`select`/clic, del último «…» del título. */
@@ -934,6 +1003,9 @@ export const useSession = create<SessionState>((set) => ({
   gitPush: false,
   gitVerify: initialVerify(),
   docsChecks: null,
+  checksSkip: [],
+  requirementsOpen: false,
+  requirementsOnStart: initialRequirementsOnStart(),
   checksRun: null,
   checksReport: null,
   previewUrl: null,
@@ -1780,7 +1852,35 @@ export const useSession = create<SessionState>((set) => ({
     set({ groupConsecutive })
   },
 
-  setDocsChecks: (docsChecks) => set({ docsChecks }),
+  // Al cambiar de proyecto se recupera SU elección de comandos: cada repositorio
+  // tiene su ritmo (uno compila en tres segundos y otro en dos minutos), y
+  // arrastrar la elección de uno al siguiente sorprendería en el peor momento.
+  setDocsChecks: (docsChecks) =>
+    set({
+      docsChecks,
+      checksSkip: docsChecks ? (readSkipChecks()[docsChecks.projectRoot] ?? []) : []
+    }),
+
+  toggleCheck: (script) =>
+    set((s) => {
+      const skip = s.checksSkip.includes(script)
+        ? s.checksSkip.filter((item) => item !== script)
+        : [...s.checksSkip, script]
+      if (s.docsChecks) writeSkipChecks(s.docsChecks.projectRoot, skip)
+      return { checksSkip: skip }
+    }),
+
+  setRequirementsOpen: (requirementsOpen) => set({ requirementsOpen }),
+
+  setRequirementsOnStart: (on) => {
+    try {
+      localStorage.setItem(REQUIREMENTS_KEY, on ? '1' : '0')
+    } catch {
+      // Sin almacenamiento la preferencia dura lo que la sesión.
+    }
+    set({ requirementsOnStart: on })
+  },
+
 
   checksStart: (purpose) =>
     set((s) => ({
@@ -1789,7 +1889,12 @@ export const useSession = create<SessionState>((set) => ({
         purpose,
         label: 'Preparando…',
         index: 0,
-        total: s.docsChecks?.checks.length ?? 1,
+        // Los desmarcados no se ejecutan, así que tampoco cuentan: un «1 de 3»
+        // que en realidad son dos haría esperar un comando que no va a venir.
+        // La vista previa siempre compila y sirve, pase lo que pase aquí.
+        total: (purpose === 'preview'
+          ? s.docsChecks?.checks.length
+          : checksToRun(s.docsChecks, s.checksSkip).length) || 1,
         lines: []
       }
     })),

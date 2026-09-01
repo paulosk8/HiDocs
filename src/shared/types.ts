@@ -237,6 +237,23 @@ export interface DocCheck {
   detail: string
 }
 
+/**
+ * La guía de estilo del repositorio de documentación (§20).
+ *
+ * Es el documento que explica cómo hay que escribir en ESE proyecto —lo que
+ * `lint:docs` comprueba después—, y hasta ahora vivía fuera de la aplicación:
+ * quien documentaba se enteraba de sus reglas cuando el comando fallaba, con la
+ * guía ya escrita y el commit bloqueado.
+ */
+export interface ProjectGuide {
+  /** ruta del archivo, para poder abrirlo en el editor */
+  path: string
+  /** su contenido en Markdown */
+  content: string
+  /** se cortó por ser enorme: se dice, en vez de enseñar media regla */
+  truncated?: boolean
+}
+
 /** Qué se puede ejecutar en el proyecto que contiene la carpeta de salida. */
 export interface ProjectChecks {
   /** raíz del proyecto Docusaurus: donde están `package.json` y la configuración */
@@ -544,6 +561,13 @@ export interface GitSaveOptions {
    * ejecutar nada: es lo que hace «Registrar de todos modos» tras un fallo.
    */
   verify?: boolean
+  /**
+   * Comandos que el usuario ha desmarcado para este proyecto (§20): se conocen,
+   * pero no se ejecutan. Compilar el sitio entero tarda minutos y no siempre
+   * hace falta pagarlos en cada guardado; el resto sí, y saltárselos todos —lo
+   * único que se podía hacer antes— dejaba de comprobar también lo barato.
+   */
+  skipChecks?: string[]
 }
 
 /**

@@ -52,7 +52,14 @@ Flujo de trabajo:
    - **＋ Añadir → ▤ Sección** divide la grabación en apartados: los pasos que van debajo
      cuelgan de ella, se pliegan con un clic y la sección se arrastra **con** ellos. En el
      manual sale como encabezado `##`, con sus pasos por debajo.
-7. Pulsa **■** para detener y guardar.
+7. Pulsa **■** para detener y guardar. Antes de registrar en Git se ejecutan las
+   comprobaciones del proyecto de destino (`typecheck`, `lint:docs`, sus otros `lint:…`
+   y `build`), cada una con su casilla: lo que desmarques no se ejecuta y se recuerda
+   para ese proyecto.
+8. Al estrenar la guía siguiente sale la ficha **Requisitos del proyecto**: dónde se
+   escribe, qué se comprobará y la guía de estilo del propio repositorio
+   (`CONTRIBUTING.md`) con buscador, para redactar según sus reglas desde el principio
+   en vez de descubrirlas cuando el commit se bloquea.
 
 Todo lo que se añade —y también **lo que graba el motor**— entra justo **detrás de la
 tarjeta activa** (la última que grabaste o la última que tocaste), no al final: volver a

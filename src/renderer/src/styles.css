@@ -3415,3 +3415,106 @@ select {
   font-size: 12px;
   color: var(--danger);
 }
+
+/* ─── Ficha del proyecto de destino (§20) ────────────────────────────────── */
+
+.requirements-modal {
+  width: min(760px, 100%);
+}
+
+/* Los datos del proyecto, en pares etiqueta/valor: es una ficha, no una lista
+   de frases. */
+.req-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.req-facts > div {
+  display: contents;
+}
+
+.req-facts dt {
+  color: var(--muted);
+}
+
+.req-facts dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.req-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
+.req-title .link {
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.req-checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.req-checks label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.req-checks em {
+  display: block;
+  font-style: normal;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Desmarcar un comando lo deja a la vista pero apagado: sigue existiendo en el
+   proyecto, solo que esta app no lo ejecuta. */
+.req-checks input:not(:checked) + span code {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.req-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+}
+
+.req-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* La guía del repositorio se lee dentro de la ficha, con su propio desplazamiento:
+   son cientos de líneas y el resto de la ficha no debe irse hacia arriba. */
+.req-guide {
+  max-height: 40vh;
+  overflow: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.req-guide h1,
+.req-guide h2 {
+  margin: 12px 0 6px;
+  font-size: 14px;
+}
