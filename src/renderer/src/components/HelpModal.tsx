@@ -101,18 +101,66 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>
                 DocRecorder documenta <b>paso a paso</b> los flujos de un sistema web al que solo
                 tienes acceso como usuario (sin su código fuente). Abres el sistema en un visor
-                integrado, grabas tu recorrido y cada interacción se convierte en un <b>paso</b> con
-                su captura de pantalla, el elemento resaltado y un selector reutilizable.
+                integrado, <a onClick={() => go('grabar')}>grabas tu recorrido</a> y cada
+                interacción se convierte en un <b>paso</b> con su captura de pantalla, el elemento
+                resaltado y un selector reutilizable.
               </p>
               <p>
-                El resultado es un paquete portable (JSON + imágenes) más la página del manual en{' '}
-                <b>MDX</b>, lista para que <b>Docusaurus</b> la renderice, y opcionalmente se
-                registra en Git como una rama lista para abrir un Pull Request.
+                El resultado es un paquete portable —el <code>session.json</code> con todo lo
+                grabado y sus imágenes— más la página del manual en <b>MDX</b>, lista para que{' '}
+                <a onClick={() => go('docusaurus')}>Docusaurus</a> la renderice y{' '}
+                <a onClick={() => go('git')}>registrada en Git</a> en la rama de su módulo, lista
+                para abrir un Pull Request.
               </p>
               <p>
-                Una ayuda más, una vez grabado: la <a onClick={() => go('ia')}>redacción con IA</a>{' '}
-                propone el título y la descripción de cada paso a partir de lo que ocurrió en la
-                pantalla.
+                Pero una guía de verdad no es solo lo que el motor puede grabar, así que el panel
+                deja completar el resto <b>a mano</b>, sin salir de la aplicación:
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Lo que pasa fuera del visor</b> ·{' '}
+                  <a onClick={() => go('captura')}>capturas de otra ventana</a>, del escritorio o de
+                  un archivo, e <a onClick={() => go('pegar')}>imágenes pegadas</a> del
+                  portapapeles, con recorte y recuadro para señalar.
+                </li>
+                <li>
+                  <b>Lo que no es una captura</b> ·{' '}
+                  <a onClick={() => go('contenido')}>bloques de contenido</a> (tablas, código,
+                  pestañas, desplegables) y <a onClick={() => go('notas')}>notas destacadas</a>, con
+                  vista previa de lo que se publicará.
+                </li>
+                <li>
+                  <b>Estructura</b> · <a onClick={() => go('secciones')}>secciones</a> para dividir
+                  una grabación larga en apartados, y{' '}
+                  <a onClick={() => go('carpetas')}>carpetas de capturas</a> para un paso que
+                  necesita varias imágenes.
+                </li>
+                <li>
+                  <b>Un paso del manual, varias acciones</b> ·{' '}
+                  <a onClick={() => go('agrupar')}>agrupar</a> une los controles seguidos del mismo
+                  tipo —los campos de un formulario, las pestañas, las casillas de una columna— y
+                  cualquier combinación que marques a mano.
+                </li>
+                <li>
+                  <b>Redacción con IA</b> · la <a onClick={() => go('ia')}>redacción con IA</a>{' '}
+                  propone el título y la descripción de cada paso a partir de lo que ocurrió en la
+                  pantalla.
+                </li>
+              </ul>
+              <p>
+                Y lo guardado no queda cerrado.{' '}
+                <a onClick={() => go('comprobar')}>Antes de registrar</a> se ejecutan los comandos
+                del proyecto de destino, así que un MDX que no compila no llega al historial, y la
+                guía recién guardada se abre en el navegador ya compilada y servida. La
+                documentación que está en el disco pero{' '}
+                <a onClick={() => go('pendiente')}>Git no tiene registrada</a> se ve, se registra o
+                se descarta; y una funcionalidad <a onClick={() => go('proyectos')}>ya publicada</a>{' '}
+                se trae de vuelta a la sesión para corregirla, reescribiendo su misma carpeta con un
+                commit encima.
+              </p>
+              <p>
+                Quitar tampoco es definitivo: todo lo que se quita del panel se puede devolver a su
+                sitio desde la <a onClick={() => go('papelera')}>papelera de la guía</a>.
               </p>
             </section>
 
