@@ -230,8 +230,13 @@ interface SessionState {
     kind: 'capture' | 'image' | 'content' | 'section' | 'group'
     title: string
     tempFile?: string
-    /** cuerpo inicial del bloque, cuando viene pegado del portapapeles */
+    /** cuerpo inicial del bloque: lo pegado, o el esqueleto del tipo elegido */
     content?: string
+    /**
+     * Nota destacada inicial. Es lo que crea «＋ Añadir → 📝 Nota destacada»: un
+     * paso cuyo contenido ES la admonition, sin cuerpo de bloque que rellenar.
+     */
+    note?: RecordedStep['note']
   }) => void
   updateStep: (id: string, patch: Partial<RecordedStep>) => void
   removeStep: (id: string) => void
@@ -978,7 +983,7 @@ export const useSession = create<SessionState>((set) => ({
   // Un paso manual comparte el modelo con los grabados —así viaja por el mismo
   // camino: panel, borrador, MDX y Git— pero sin selector ni acción que
   // reproducir. La URL se anota igual, porque sitúa dónde estaba el usuario.
-  addManualStep: ({ kind, title, tempFile, content }) =>
+  addManualStep: ({ kind, title, tempFile, content, note }) =>
     set((s) => {
       // Trabajando dentro de una carpeta —se acaba de crear, o se está mirando
       // una de sus capturas—, lo que se añade entra DENTRO: es lo que se estaba
@@ -1006,7 +1011,11 @@ export const useSession = create<SessionState>((set) => ({
         timestamp: new Date().toISOString(),
         tempFile: tempFile ?? '',
         ...(owner ? { groupId: owner } : {}),
-        ...(kind === 'content' ? { content: content ?? '' } : {}),
+        // Un paso de nota no lleva cuerpo de bloque: si se le pusiera cadena
+        // vacía, la tarjeta abriría también el editor de contenido y publicaría
+        // dos apartados donde se pidió uno.
+        ...(kind === 'content' && !note ? { content: content ?? '' } : {}),
+        ...(note ? { note } : {}),
         // Una imagen o una captura también admiten bloque de contenido, pero solo
         // si viene dado: abrir el editor vacío en cada imagen sería estorbo.
         ...(kind !== 'content' && content ? { content } : {})

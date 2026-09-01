@@ -255,6 +255,16 @@ export interface CheckRun {
   ms: number
   /** últimas líneas de su salida (ahí está el error) */
   output: string
+  /**
+   * Archivos que cita el error, repartidos según de quién son. Los comandos del
+   * proyecto miran TODA la documentación, así que un fallo puede no tener nada
+   * que ver con lo que se acaba de guardar: saber eso es la diferencia entre
+   * corregir algo propio y registrar con confianza y arreglar lo ajeno aparte.
+   * Solo se rellenan cuando el comando falla y se sabe qué guía se estaba
+   * guardando; las rutas son relativas a la raíz del proyecto.
+   */
+  ownFiles?: string[]
+  otherFiles?: string[]
 }
 
 export interface ChecksResult {

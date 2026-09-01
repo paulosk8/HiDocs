@@ -678,6 +678,19 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   acción concreta. Ese paso no consume número de paso en el manual.
                 </li>
                 <li>
+                  <b>Eliges qué bloque</b> · <b>+ Añadir → ▦ Bloque de contenido</b> pregunta de qué
+                  clase: <b>Tabla</b>, <b>Código</b>, <b>Pestañas</b>, <b>Detalle</b> o{' '}
+                  <b>Texto libre</b>. La tarjeta nace con ese esqueleto ya escrito, listo para
+                  sustituir por lo tuyo.
+                </li>
+                <li>
+                  <b>¿Querías una nota?</b> · está en el mismo menú, como{' '}
+                  <b>+ Añadir → 📝 Nota destacada</b>: crea un paso cuyo contenido es el recuadro de
+                  aviso, con su editor y sin el del bloque (ver{' '}
+                  <a onClick={() => go('notas')}>Notas destacadas</a>). Si más adelante quitas la
+                  nota, la tarjeta se convierte en un bloque de contenido normal.
+                </li>
+                <li>
                   <b>Pegar una tabla</b> · copia una tabla del sistema que estás documentando y
                   pégala en el bloque: se convierte sola a tabla Markdown, con sus columnas.
                 </li>
@@ -718,6 +731,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <b>recalcar algo importante</b> de ese paso o del grupo. Se publica como un{' '}
                 <b>admonition de Docusaurus</b>, el mismo bloque coloreado con icono que ves en la
                 documentación.
+              </p>
+              <p>
+                Si lo que quieres es una nota <i>suelta</i>, que no cuelgue de ningún paso, créala
+                con <b>+ Añadir → 📝 Nota destacada</b>: es un paso cuyo contenido es el recuadro,
+                sin bloque de contenido al lado.
               </p>
               <ul className="help-defs">
                 <li>
@@ -954,6 +972,13 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 del comando —con su archivo y su línea—, y puedes corregir y volver a pulsar ■, o{' '}
                 <b>Registrar de todos modos</b> y arreglarlo después. Lo que quede sin registrar lo
                 verás en <a onClick={() => go('pendiente')}>⚠ N sin registrar</a>.
+              </p>
+              <p>
+                <b>Y te dice de quién es el problema.</b> Estos comandos revisan <b>toda</b> la
+                documentación del proyecto, así que una página ajena a medio escribir puede hacer
+                fallar la comprobación de una guía que no tiene nada malo. El aviso separa los
+                archivos del error: si ninguno es de la guía que acabas de guardar, lo dice en su
+                título y enumera los ajenos, para que registres con confianza y arregles eso aparte.
               </p>
               <p>
                 Compilar tarda: el aviso enseña la salida del comando según sale y se puede

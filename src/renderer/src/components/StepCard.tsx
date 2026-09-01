@@ -77,8 +77,14 @@ export function StepCard({
   // La nota y el bloque de contenido se abren solos si el paso ya los trae
   // (borrador restaurado), y a petición con su botón; así no estorban en los
   // pasos que no los usan.
-  const [noteOpen, setNoteOpen] = useState(!!step.note?.body.trim())
-  const [contentOpen, setContentOpen] = useState(step.kind === 'content' || !!step.content?.trim())
+  const [noteOpen, setNoteOpen] = useState(!!step.note)
+  // Un paso creado como «nota destacada» no abre el editor de bloque: su
+  // contenido ES la nota, y abrir los dos editores daba una tarjeta con dos
+  // apartados donde se pidió uno solo (§14).
+  const isNoteStep = step.kind === 'content' && !!step.note && !step.content?.trim()
+  const [contentOpen, setContentOpen] = useState(
+    (step.kind === 'content' && !isNoteStep) || !!step.content?.trim()
+  )
 
   const isContent = step.kind === 'content'
   const isCapture = step.kind === 'capture'
@@ -297,7 +303,7 @@ export function StepCard({
             // En un paso que ES el bloque, quitarlo sería eliminar el paso: para
             // eso está su ✕, y ofrecer las dos cosas solo confundiría.
             onRemove={
-              isContent
+              isContent && !step.note
                 ? undefined
                 : () => {
                     updateStep(step.id, { content: '' })
@@ -316,6 +322,10 @@ export function StepCard({
             onRemove={() => {
               updateStep(step.id, { note: undefined })
               setNoteOpen(false)
+              // En un paso que se creó COMO nota, quitarla dejaría una tarjeta sin
+              // nada dentro: pasa a ser un bloque de contenido normal, con su
+              // editor abierto, en vez de un hueco mudo que hay que eliminar.
+              if (isContent) setContentOpen(true)
             }}
           />
         </div>

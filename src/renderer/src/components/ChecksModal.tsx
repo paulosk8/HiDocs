@@ -61,11 +61,17 @@ export function ChecksModal({ onCommitAnyway }: Props): React.JSX.Element | null
 
   const failed = report.result?.runs.find((r) => !r.ok)
   const canceled = report.result?.canceled
+  // Los comandos del proyecto miran TODA la documentación, así que el error
+  // puede no tener nada que ver con la guía recién guardada: una página ajena a
+  // medio escribir bloqueaba el commit sin decir que el problema no era tuyo.
+  const ajeno = !!failed?.otherFiles?.length && !failed?.ownFiles?.length
   const title = canceled
     ? 'Comprobación cancelada'
     : report.purpose === 'preview'
       ? 'No se pudo abrir la vista previa'
-      : 'El sitio no compila: no se ha registrado nada'
+      : ajeno
+        ? 'El sitio no compila, pero el problema no es de tu guía'
+        : 'El sitio no compila: no se ha registrado nada'
 
   return (
     <div className="overlay" onClick={close}>
@@ -77,6 +83,29 @@ export function ChecksModal({ onCommitAnyway }: Props): React.JSX.Element | null
             <p>
               Falló <code>npm run {failed.script}</code> ({failed.label}).
             </p>
+            {ajeno && (
+              <p className="checks-scope">
+                Los problemas están en{' '}
+                {failed.otherFiles?.length === 1 ? 'otra página' : 'otras páginas'} del sitio, no en
+                lo que acabas de guardar:{' '}
+                {failed.otherFiles?.slice(0, 3).map((f) => (
+                  <code key={f}>{f}</code>
+                ))}
+                {(failed.otherFiles?.length ?? 0) > 3 &&
+                  ` y ${(failed.otherFiles?.length ?? 0) - 3} más`}
+                . Puedes registrar tu guía y arreglar eso aparte.
+              </p>
+            )}
+            {!!failed.ownFiles?.length && (
+              <p className="checks-scope own">
+                Hay {failed.ownFiles.length === 1 ? 'un problema' : 'problemas'} en la guía que
+                acabas de guardar:{' '}
+                {failed.ownFiles.map((f) => (
+                  <code key={f}>{f}</code>
+                ))}
+                .
+              </p>
+            )}
             <pre className="checks-log">{failed.output || 'El comando no escribió nada.'}</pre>
           </>
         )}

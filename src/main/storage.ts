@@ -171,7 +171,12 @@ export async function saveSession(
   if (payload.git?.enabled && payload.git.verify !== false) {
     const project = await detectChecks(payload.outputDir).catch(() => null)
     if (project && project.checks.length) {
-      result.checks = await runChecks(project.projectRoot, project.checks, onCheckProgress)
+      result.checks = await runChecks(
+        project.projectRoot,
+        project.checks,
+        onCheckProgress,
+        targetDir
+      )
       if (!result.checks.ok) return result
     }
   }

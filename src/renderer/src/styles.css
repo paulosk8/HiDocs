@@ -1834,6 +1834,26 @@ select {
   border-radius: 6px;
 }
 
+/* De quién es el fallo de la comprobación: lo propio se lee en rojo, lo ajeno
+   en el color de aviso, porque llevan a decisiones distintas (§17). */
+.checks-scope {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--amber);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.checks-scope.own {
+  border-color: var(--danger);
+}
+
+.checks-scope code {
+  margin-right: 6px;
+  word-break: break-all;
+}
+
 /* ---------- redacción con IA ---------- */
 
 /* Botón ✨ de cada paso: discreto en reposo, evidente al pasar por encima. */
@@ -2414,6 +2434,15 @@ select {
 .add-menu-list small {
   color: var(--muted);
   font-size: 11px;
+}
+
+/* Vuelta al primer nivel del menú: se lee como lo que es, un paso atrás, no
+   como una opción más de las que hay debajo. */
+.add-menu-back {
+  color: var(--muted) !important;
+  border-bottom: 1px solid var(--border) !important;
+  border-radius: 6px 6px 0 0 !important;
+  margin-bottom: 2px;
 }
 
 /* ─── Tarjetas: selección y tipos de paso ────────────────────────────────── */

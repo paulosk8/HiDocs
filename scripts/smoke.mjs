@@ -2480,9 +2480,58 @@ try {
     { timeout: 5000 }
   )
 
+  // Qué clase de bloque se añade se pregunta ANTES de crear la tarjeta: el menú
+  // tiene un segundo nivel con los tipos, cada uno con su esqueleto ya escrito.
+  // Sin esa pregunta, quien quería una nota creaba un bloque genérico y acababa
+  // con dos apartados en la misma tarjeta.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  const tipos = await gui.locator('.add-menu-list button').allInnerTexts()
+  check(
+    /Volver/.test(tipos[0] ?? '') &&
+      ['Tabla', 'Código', 'Pestañas', 'Detalle', 'Texto libre'].every((t) =>
+        tipos.some((opcion) => opcion.includes(t))
+      ),
+    'Contenido: el menú pregunta qué clase de bloque antes de crearlo',
+    tipos.map((t) => t.split('\n')[0]).join(' · ')
+  )
+  await gui.locator('.add-menu-list button:has-text("Tabla")').click()
+  await gui.waitForSelector('.step-card.kind-content', { timeout: 5000 })
+  const sembrado = await gui
+    .locator('.step-card.kind-content')
+    .last()
+    .locator('.content-body')
+    .inputValue()
+  check(
+    /^\| Campo \| Descripción \| Obligatorio \|/.test(sembrado),
+    'Contenido: elegir «Tabla» siembra la tarjeta con el esqueleto de la tabla',
+    sembrado.split('\n')[0]
+  )
+  await gui.locator('.step-card.kind-content').last().locator('.icon-btn.danger').click()
+
+  // Una nota es un paso propio: se crea con SU editor y sin el del bloque, que
+  // es lo que generaba dos apartados donde se pedía uno.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Nota destacada")').click()
+  await gui.waitForSelector('.step-card.kind-content', { timeout: 5000 })
+  const notaSola = await gui.evaluate(() => {
+    const card = [...document.querySelectorAll('.step-card.kind-content')].pop()
+    return {
+      nota: !!card?.querySelector('.step-note'),
+      bloque: !!card?.querySelector('.step-content')
+    }
+  })
+  check(
+    notaSola.nota && !notaSola.bloque,
+    'Contenido: «Nota destacada» abre solo el editor de la nota, no el del bloque',
+    `nota ${notaSola.nota} · bloque ${notaSola.bloque}`
+  )
+  await gui.locator('.step-card.kind-content').last().locator('.icon-btn.danger').click()
+
   // Bloque de contenido: se escribe sintaxis de Docusaurus y se previsualiza.
   await gui.locator('.add-menu > button').click()
   await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  await gui.locator('.add-menu-list button:has-text("Texto libre")').click()
   await gui.waitForSelector('.step-card.kind-content', { timeout: 5000 })
   const contentCard = gui.locator('.step-card.kind-content').last()
   await contentCard.locator('.step-title').fill('Estados de una matrícula')
@@ -3376,6 +3425,7 @@ try {
   await gui.locator('.group-card .group-title').click()
   await gui.locator('.add-menu > button').click()
   await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  await gui.locator('.add-menu-list button:has-text("Texto libre")').click()
   await gui.waitForFunction(
     () => document.querySelectorAll('.step-card.in-group').length === 2,
     null,
@@ -3659,6 +3709,31 @@ try {
     existsSync(join(siteDocs, 'publicacion', 'guia-rota', 'index.mdx')),
     'Comprobación: el paquete sí queda escrito en disco, para poder corregirlo y reintentar'
   )
+  check(
+    fallo?.ownFiles?.some((f) => f.includes('guia-rota')) && !fallo?.otherFiles?.length,
+    'Comprobación: el fallo se atribuye a la guía que se acaba de guardar',
+    `propios: ${fallo?.ownFiles?.join(' ') ?? '(ninguno)'} · ajenos: ${fallo?.otherFiles?.join(' ') ?? '(ninguno)'}`
+  )
+
+  // Lo que motivó repartir la culpa: los comandos miran TODA la documentación,
+  // así que una página ajena a medio escribir bloquea el commit de una guía que
+  // no tiene nada malo. Hay que poder verlo y registrar igualmente con criterio.
+  mkdirSync(join(siteDocs, 'otro-modulo', 'pagina-ajena'), { recursive: true })
+  writeFileSync(
+    join(siteDocs, 'otro-modulo', 'pagina-ajena', 'index.mdx'),
+    '# Página de otro\n\nROMPEME\n'
+  )
+  const saveAjeno = await saveToSite('guia-limpia', 'Abrir el panel', true)
+  const falloAjeno = saveAjeno.checks?.runs.find((r) => !r.ok)
+  check(
+    saveAjeno.checks?.ok === false &&
+      !saveAjeno.git &&
+      falloAjeno?.otherFiles?.some((f) => f.includes('pagina-ajena')) &&
+      !falloAjeno?.ownFiles?.length,
+    'Comprobación: si lo roto es de otra página, se dice que no es de tu guía',
+    `ajenos: ${falloAjeno?.otherFiles?.join(' ') ?? '(ninguno)'}`
+  )
+  rmSync(join(siteDocs, 'otro-modulo'), { recursive: true, force: true })
   // Las comprobaciones se saltan antes de fallar la primera: es lo que hace
   // «Registrar de todos modos» desde el aviso.
   const forzado = await saveToSite('guia-rota', 'Paso ROMPEME', false)

@@ -19,6 +19,7 @@ import {
 import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
+import { CONTENT_KINDS } from '../content-templates'
 import { groupSize, sectionSize, selectionProblem, useSession } from '../store'
 import { invalidateBranches } from '../useBranches'
 import { GROUP_DROP_PREFIX, GroupCard } from './GroupCard'
@@ -92,6 +93,11 @@ export function StepsPanel(): React.JSX.Element {
   } = usePasteStep()
 
   const [addOpen, setAddOpen] = useState(false)
+  // El menú «＋ Añadir» tiene dos niveles: al elegir «Bloque de contenido» la
+  // lista se sustituye por los tipos concretos. Preguntar el tipo evita el caso
+  // que lo motivó: crear un bloque genérico, querer en realidad una nota y
+  // acabar con dos apartados en la misma tarjeta.
+  const [addView, setAddView] = useState<'main' | 'content'>('main')
   /**
    * El diálogo de la imagen, en sus tres formas: elegir una fuente que capturar,
    * ajustar lo que se acaba de pegar antes de crear la tarjeta, o retocar la
@@ -395,15 +401,24 @@ export function StepsPanel(): React.JSX.Element {
     [toggleRecording]
   )
 
+  /** Cierra el menú y lo deja en su primer nivel para la próxima vez. */
+  const closeAddMenu = useCallback((): void => {
+    setAddOpen(false)
+    setAddView('main')
+  }, [])
+
   // El menú «Añadir» se cierra al pulsar fuera o con Escape, como el resto de
-  // desplegables de la app.
+  // desplegables de la app. Escape dentro del selector de tipo vuelve a la lista
+  // principal en vez de cerrarlo todo: es un paso atrás, no una cancelación.
   useEffect(() => {
     if (!addOpen) return
     const onDown = (e: MouseEvent): void => {
-      if (!addRef.current?.contains(e.target as Node)) setAddOpen(false)
+      if (!addRef.current?.contains(e.target as Node)) closeAddMenu()
     }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setAddOpen(false)
+      if (e.key !== 'Escape') return
+      if (addView === 'content') setAddView('main')
+      else closeAddMenu()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -411,7 +426,7 @@ export function StepsPanel(): React.JSX.Element {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [addOpen])
+  }, [addOpen, addView, closeAddMenu])
 
   // El WebContentsView se pinta por encima del HTML del renderer, así que
   // cualquier superposición propia exige ocultarlo mientras esté abierta. Incluye
@@ -807,16 +822,16 @@ export function StepsPanel(): React.JSX.Element {
               className="btn"
               aria-expanded={addOpen}
               title={`Añadir algo que no se graba: una imagen pegada, una captura externa, un bloque de contenido o una sección. ${insertHint}`}
-              onClick={() => setAddOpen((v) => !v)}
+              onClick={() => (addOpen ? closeAddMenu() : setAddOpen(true))}
             >
               + Añadir ▾
             </button>
-            {addOpen && (
+            {addOpen && addView === 'main' && (
               <div className="add-menu-list" role="menu">
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     void pasteFromClipboard()
                   }}
                 >
@@ -826,7 +841,7 @@ export function StepsPanel(): React.JSX.Element {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     void ipc.invoke('clipboard:read').then((clip) => {
                       if (clip.file) setCapture({ mode: 'paste', file: clip.file })
                       // Sin imagen que ajustar se cae al selector de fuentes, que
@@ -841,27 +856,38 @@ export function StepsPanel(): React.JSX.Element {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     setCapture({ mode: 'source' })
                   }}
                 >
                   📷 Captura de pantalla…
                   <small>Otra ventana, el escritorio o una imagen del disco</small>
                 </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setAddOpen(false)
-                    addManualStep({ kind: 'content', title: '' })
-                  }}
-                >
-                  ▦ Bloque de contenido
-                  <small>Una tabla, código o pestañas de Docusaurus</small>
+                <button role="menuitem" aria-haspopup="menu" onClick={() => setAddView('content')}>
+                  ▦ Bloque de contenido ▸
+                  <small>Elige qué: tabla, código, pestañas, detalle o texto</small>
                 </button>
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
+                    // Una nota es un paso de contenido cuyo cuerpo ES la
+                    // admonition. Crearla desde aquí evita el rodeo de abrir un
+                    // bloque vacío y añadirle la nota al lado.
+                    addManualStep({
+                      kind: 'content',
+                      title: '',
+                      note: { type: 'note', body: '' }
+                    })
+                  }}
+                >
+                  📝 Nota destacada
+                  <small>Un aviso de Docusaurus: nota, consejo, info, aviso o peligro</small>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    closeAddMenu()
                     addManualStep({ kind: 'group', title: '' })
                   }}
                 >
@@ -871,13 +897,40 @@ export function StepsPanel(): React.JSX.Element {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     addManualStep({ kind: 'section', title: '' })
                   }}
                 >
                   ▤ Sección
                   <small>Encabeza los pasos siguientes; se pliega y se mueve entera</small>
                 </button>
+              </div>
+            )}
+            {/* Segundo nivel: qué clase de bloque. La tarjeta nace con el
+                esqueleto ya escrito —la misma plantilla que inserta la barra del
+                editor—, así que no hay que recordar la sintaxis de Docusaurus. */}
+            {addOpen && addView === 'content' && (
+              <div className="add-menu-list" role="menu">
+                <button
+                  role="menuitem"
+                  className="add-menu-back"
+                  onClick={() => setAddView('main')}
+                >
+                  ‹ Volver
+                </button>
+                {CONTENT_KINDS.map(({ kind, label, hint, template }) => (
+                  <button
+                    key={kind}
+                    role="menuitem"
+                    onClick={() => {
+                      closeAddMenu()
+                      addManualStep({ kind: 'content', title: '', content: template })
+                    }}
+                  >
+                    {label}
+                    <small>{hint}</small>
+                  </button>
+                ))}
               </div>
             )}
           </div>

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { findProjectRoot } from './docusaurus'
 import type {
   CheckProgress,
@@ -216,10 +216,52 @@ export async function detectChecks(outputDir: string): Promise<ProjectChecks | n
  * tipos no cuadran, compilar el sitio entero solo haría esperar para decir lo
  * mismo.
  */
+/**
+ * Archivos que cita la salida de un comando, en rutas relativas a la raíz del
+ * proyecto. Sirve para responder a la pregunta que se hace quien ve fallar la
+ * comprobación: «¿esto lo he roto yo?».
+ *
+ * No intenta entender el formato de cada herramienta —cada linter escribe el
+ * suyo—, solo recoge lo que parece la ruta de un archivo de documentación. Un
+ * falso positivo aquí no rompe nada: como mucho, un archivo de más en la lista.
+ */
+const FILE_PATTERN = /[\w./@-]+\.(?:mdx|md|json|tsx?|jsx?)/g
+
+export function citedFiles(
+  output: string,
+  projectRoot: string,
+  guideDir?: string
+): { own: string[]; other: string[] } {
+  const guide = guideDir ? relative(projectRoot, guideDir) : ''
+  const own = new Set<string>()
+  const other = new Set<string>()
+  for (const match of output.match(FILE_PATTERN) ?? []) {
+    // Las herramientas escriben unas veces la ruta absoluta y otras la relativa
+    // al proyecto; se normaliza para poder compararlas con la de la guía.
+    const path = (isAbsolute(match) ? relative(projectRoot, match) : match).replace(/^\.\//, '')
+    if (path.startsWith('..') || !path.includes('.')) continue
+    // `package.json`, `tsconfig.json` y demás no son documentación de nadie: se
+    // dejan fuera para no llamar «otras páginas» a la configuración.
+    if (!path.includes('/')) continue
+    if (guide && (path === guide || path.startsWith(guide + sep) || path.startsWith(guide + '/'))) {
+      own.add(path)
+    } else {
+      other.add(path)
+    }
+  }
+  return { own: [...own], other: [...other] }
+}
+
+/**
+ * @param guideDir carpeta de la guía que se acaba de escribir, si la tanda viene
+ *   de guardar. Con ella, un fallo puede decir si es de la guía o del resto del
+ *   sitio; sin ella (comprobación lanzada a mano) se informa igual, sin repartir.
+ */
 export async function runChecks(
   projectRoot: string,
   checks: DocCheck[],
-  onProgress: (progress: CheckProgress) => void
+  onProgress: (progress: CheckProgress) => void,
+  guideDir?: string
 ): Promise<ChecksResult> {
   canceled = false
   const runs: CheckRun[] = []
@@ -236,6 +278,11 @@ export async function runChecks(
       ok: result.code === 0 && !result.spawnError,
       ms: Date.now() - started,
       output: result.spawnError ? result.spawnError : result.output
+    }
+    if (!run.ok && guideDir) {
+      const cited = citedFiles(run.output, projectRoot, guideDir)
+      if (cited.own.length) run.ownFiles = cited.own
+      if (cited.other.length) run.otherFiles = cited.other
     }
     runs.push(run)
     if (!run.ok) {
