@@ -12,7 +12,7 @@ import { NoteEditor } from './NoteEditor'
 export const GROUP_DROP_PREFIX = 'group-drop:'
 
 /**
- * Carpeta de capturas (§17).
+ * Carpeta de capturas (§16).
  *
  * Es UN paso del manual cuyas ilustraciones son varias: se le arrastran dentro
  * las tarjetas que cuentan lo mismo —los tres pantallazos de un asistente, la
@@ -20,8 +20,8 @@ export const GROUP_DROP_PREFIX = 'group-drop:'
  * cada una con su pie.
  *
  * Se diferencia de ⊞ Agrupar en lo que conserva: agrupar funde acciones y deja
- * UNA captura (es un paso del flujo que el runner reproduce); la carpeta no toca
- * las acciones de nadie y conserva TODAS las imágenes. Por eso admite lo que
+ * UNA captura (un solo paso del flujo); la carpeta no toca las acciones de nadie
+ * y conserva TODAS las imágenes. Por eso admite lo que
  * agrupar rechaza: capturas externas, imágenes pegadas y pasos que no están al
  * lado. Es la respuesta a documentar con capturas que el motor no graba.
  *
@@ -45,6 +45,8 @@ export function GroupCard({
 }): React.JSX.Element {
   const updateStep = useSession((s) => s.updateStep)
   const removeStep = useSession((s) => s.removeStep)
+  const removeContent = useSession((s) => s.removeContent)
+  const removeNote = useSession((s) => s.removeNote)
   const focusStepId = useSession((s) => s.focusStepId)
   const clearFocus = useSession((s) => s.clearFocus)
   const setActiveStep = useSession((s) => s.setActiveStep)
@@ -187,7 +189,7 @@ export function GroupCard({
             onChange={(content) => updateStep(step.id, { content })}
             onExpand={() => setWideContentId(step.id)}
             onRemove={() => {
-              updateStep(step.id, { content: '' })
+              removeContent(step.id)
               setContentOpen(false)
             }}
           />
@@ -200,7 +202,7 @@ export function GroupCard({
             value={step.note}
             onChange={(note) => updateStep(step.id, { note })}
             onRemove={() => {
-              updateStep(step.id, { note: undefined })
+              removeNote(step.id)
               setNoteOpen(false)
             }}
           />

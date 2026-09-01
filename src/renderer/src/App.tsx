@@ -7,7 +7,6 @@ import { ProjectsModal } from './components/ProjectsModal'
 import { HelpModal } from './components/HelpModal'
 import { DocusaurusIntroModal } from './components/DocusaurusIntroModal'
 import { RestoreDraftModal } from './components/RestoreDraftModal'
-import { RunnerReportModal } from './components/RunnerReportModal'
 import { AiSettingsModal } from './components/AiSettingsModal'
 import { AiContextModal } from './components/AiContextModal'
 import { PendingDocsModal } from './components/PendingDocsModal'
@@ -18,6 +17,7 @@ import { useDocsChecks } from './useDocsChecks'
 import { useDraftAutosave } from './useDraftAutosave'
 import { useGroupCapture } from './useGroupCapture'
 import type { DraftPayload } from '../../shared/ipc-contract'
+import { DEFAULT_ZOOM } from '../../shared/zoom'
 
 export function App(): React.JSX.Element {
   const applyEngineState = useSession((s) => s.applyEngineState)
@@ -28,10 +28,6 @@ export function App(): React.JSX.Element {
   const helpOpen = useSession((s) => s.helpOpen)
   const setHelpOpen = useSession((s) => s.setHelpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
-  const runnerPhase = useSession((s) => s.runnerPhase)
-  const runnerReport = useSession((s) => s.runnerReport)
-  const runnerProgressAdd = useSession((s) => s.runnerProgressAdd)
-  const runnerClose = useSession((s) => s.runnerClose)
   const theme = useSession((s) => s.theme)
   const aiOpen = useSession((s) => s.aiOpen)
   const setAiOpen = useSession((s) => s.setAiOpen)
@@ -41,6 +37,7 @@ export function App(): React.JSX.Element {
   const setPendingDocsOpen = useSession((s) => s.setPendingDocsOpen)
   const setAiStatus = useSession((s) => s.setAiStatus)
   const setAiProgress = useSession((s) => s.setAiProgress)
+  const setViewportZoom = useSession((s) => s.setViewportZoom)
   const checksProgress = useSession((s) => s.checksProgress)
   const [draft, setDraft] = useState<DraftPayload | null>(null)
   const recaptureGroup = useGroupCapture()
@@ -64,6 +61,14 @@ export function App(): React.JSX.Element {
   // Autoguarda el borrador de la grabación en curso.
   useDraftAutosave()
 
+  // El visor arranca con el zoom recordado (§18): la vista nativa la crea el
+  // proceso principal siempre al 100 %, así que hay que pedírselo desde aquí,
+  // que es donde vive la preferencia.
+  useEffect(() => {
+    const factor = useSession.getState().viewportZoom
+    if (factor !== DEFAULT_ZOOM) void ipc.invoke('viewport:zoom', { action: 'set', factor })
+  }, [])
+
   // Al arrancar, ofrece continuar un borrador sin terminar (si lo hay).
   useEffect(() => {
     void ipc.invoke('draft:load').then((d) => {
@@ -80,9 +85,11 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     const offState = ipc.on('engine:state', applyEngineState)
     const offStep = ipc.on('recorder:step', onStep)
-    const offRegen = ipc.on('runner:progress', runnerProgressAdd)
     const offAi = ipc.on('ai:progress', setAiProgress)
     const offChecks = ipc.on('checks:progress', checksProgress)
+    // El zoom que se cambia con el teclado o la rueda dentro del visor lo aplica
+    // main; la barra se entera por aquí.
+    const offZoom = ipc.on('viewport:zoom-changed', setViewportZoom)
     void ipc.invoke('engine:get-state').then(applyEngineState)
     // La configuración de IA vive en el main (con la clave); la GUI solo sabe
     // qué proveedor está activo y si tiene clave.
@@ -90,11 +97,11 @@ export function App(): React.JSX.Element {
     return () => {
       offState()
       offStep()
-      offRegen()
       offAi()
       offChecks()
+      offZoom()
     }
-  }, [applyEngineState, onStep, runnerProgressAdd, setAiProgress, setAiStatus, checksProgress])
+  }, [applyEngineState, onStep, setAiProgress, setAiStatus, checksProgress, setViewportZoom])
 
   return (
     <div className="app">
@@ -123,9 +130,6 @@ export function App(): React.JSX.Element {
             setDraft(null)
           }}
         />
-      )}
-      {runnerPhase === 'done' && runnerReport && (
-        <RunnerReportModal report={runnerReport} onClose={runnerClose} />
       )}
     </div>
   )

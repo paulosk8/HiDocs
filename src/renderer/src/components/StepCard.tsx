@@ -55,6 +55,10 @@ export function StepCard({
 }: Props): React.JSX.Element {
   const updateStep = useSession((s) => s.updateStep)
   const removeStep = useSession((s) => s.removeStep)
+  // Quitar pasa por el store, no por `updateStep`: lo quitado va a la papelera
+  // (§19) con el paso al que hay que devolverlo.
+  const removeContent = useSession((s) => s.removeContent)
+  const removeNote = useSession((s) => s.removeNote)
   const focusStepId = useSession((s) => s.focusStepId)
   const clearFocus = useSession((s) => s.clearFocus)
   const setActiveStep = useSession((s) => s.setActiveStep)
@@ -77,8 +81,14 @@ export function StepCard({
   // La nota y el bloque de contenido se abren solos si el paso ya los trae
   // (borrador restaurado), y a petición con su botón; así no estorban en los
   // pasos que no los usan.
-  const [noteOpen, setNoteOpen] = useState(!!step.note?.body.trim())
-  const [contentOpen, setContentOpen] = useState(step.kind === 'content' || !!step.content?.trim())
+  const [noteOpen, setNoteOpen] = useState(!!step.note)
+  // Un paso creado como «nota destacada» no abre el editor de bloque: su
+  // contenido ES la nota, y abrir los dos editores daba una tarjeta con dos
+  // apartados donde se pidió uno solo (§14).
+  const isNoteStep = step.kind === 'content' && !!step.note && !step.content?.trim()
+  const [contentOpen, setContentOpen] = useState(
+    (step.kind === 'content' && !isNoteStep) || !!step.content?.trim()
+  )
 
   const isContent = step.kind === 'content'
   const isCapture = step.kind === 'capture'
@@ -164,7 +174,7 @@ export function StepCard({
         </button>
         {/* Recortar o señalar sobre la imagen que ya trae el paso. Solo en los
             pasos cuya imagen es del usuario: la de un paso grabado la produce el
-            motor y la rehace el runner. */}
+            motor. */}
         {(isImage || isCapture) && step.tempFile && (
           <button
             className="icon-btn"
@@ -297,10 +307,10 @@ export function StepCard({
             // En un paso que ES el bloque, quitarlo sería eliminar el paso: para
             // eso está su ✕, y ofrecer las dos cosas solo confundiría.
             onRemove={
-              isContent
+              isContent && !step.note
                 ? undefined
                 : () => {
-                    updateStep(step.id, { content: '' })
+                    removeContent(step.id)
                     setContentOpen(false)
                   }
             }
@@ -314,8 +324,12 @@ export function StepCard({
             value={step.note}
             onChange={(note) => updateStep(step.id, { note })}
             onRemove={() => {
-              updateStep(step.id, { note: undefined })
+              removeNote(step.id)
               setNoteOpen(false)
+              // En un paso que se creó COMO nota, quitarla dejaría una tarjeta sin
+              // nada dentro: pasa a ser un bloque de contenido normal, con su
+              // editor abierto, en vez de un hueco mudo que hay que eliminar.
+              if (isContent) setContentOpen(true)
             }}
           />
         </div>

@@ -2,6 +2,12 @@ import { useMemo, useRef, useState } from 'react'
 import { analyzeContent } from '../../../shared/mdx-content'
 import { htmlToMarkdown } from '../html-to-markdown'
 import { renderMarkdown } from '../markdown'
+import {
+  CODE_TEMPLATE,
+  DETAILS_TEMPLATE,
+  TABLE_TEMPLATE,
+  TABS_TEMPLATE
+} from '../content-templates'
 
 /**
  * Editor del bloque de contenido de un paso (§10).
@@ -36,37 +42,6 @@ interface Props {
   onRemove?: () => void
   autoFocus?: boolean
 }
-
-const TABLE_TEMPLATE = [
-  '| Campo | Descripción | Obligatorio |',
-  '| --- | --- | :---: |',
-  '| Nombre | Nombre completo de la persona | Sí |',
-  '| Correo | Correo institucional | No |'
-].join('\n')
-
-const CODE_TEMPLATE = ['```json title="ejemplo.json"', '{', '  "clave": "valor"', '}', '```'].join(
-  '\n'
-)
-
-const TABS_TEMPLATE = [
-  '<Tabs>',
-  '  <TabItem value="admin" label="Administrador">',
-  '  Lo que ve el rol Administrador.',
-  '  </TabItem>',
-  '  <TabItem value="docente" label="Docente">',
-  '  Lo que ve el rol Docente.',
-  '  </TabItem>',
-  '</Tabs>'
-].join('\n')
-
-const DETAILS_TEMPLATE = [
-  '<details>',
-  '  <summary>Ver el detalle</summary>',
-  '',
-  '  Contenido que se muestra al desplegar.',
-  '',
-  '</details>'
-].join('\n')
 
 export function ContentEditor({
   value,

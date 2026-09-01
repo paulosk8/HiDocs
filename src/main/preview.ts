@@ -7,7 +7,7 @@ import { buildDir, detectChecks, killTree, runChecks } from './checks'
 import type { CheckProgress, PreviewResult, PreviewStatus } from '../shared/types'
 
 /**
- * Vista previa del sitio compilado (§18).
+ * Vista previa del sitio compilado (§17).
  *
  * No vale `npm run start`: el buscador local (`@easyops-cn/docusaurus-search-local`
  * y equivalentes) solo indexa en una compilación de producción, así que en el

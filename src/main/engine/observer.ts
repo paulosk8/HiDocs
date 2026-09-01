@@ -535,8 +535,7 @@ export function observerScript(config: ObserverConfig): void {
     '[role=textbox],[role=searchbox],[role=spinbutton],[role=slider]'
 
   /** Elementos interactivos que NUNCA son un campo, aunque estén junto a uno. */
-  const NON_FIELD_SELECTOR =
-    'button,a,summary,[role=button],[role=link],[role=tab],[role=menuitem]'
+  const NON_FIELD_SELECTOR = 'button,a,summary,[role=button],[role=link],[role=tab],[role=menuitem]'
 
   /**
    * Envoltorio del widget de un campo: el ancestro más cercano (pocos niveles)
@@ -654,7 +653,11 @@ export function observerScript(config: ObserverConfig): void {
   }
 
   /** Emite el paso de un clic ya decidido (llegara o no el evento `click`). */
-  const emitClick = (target: Element, point: { x: number; y: number }, viaPointer: boolean): void => {
+  const emitClick = (
+    target: Element,
+    point: { x: number; y: number },
+    viaPointer: boolean
+  ): void => {
     lastClick = { el: target, at: Date.now(), viaPointer }
     flushPending()
     noteFormInteraction(target)
@@ -996,15 +999,13 @@ export function observerScript(config: ObserverConfig): void {
    *  - **Cada elemento puede haber cambiado de nodo.** Un formulario que se
    *    guarda, una tabla que se redibuja: el campo sigue en la pantalla, pero es
    *    otro nodo y la referencia guardada apunta al viejo. Por eso se acepta un
-   *    `fallback` que el motor localiza con los selectores del paso (los mismos
-   *    que usa el runner), y por eso se prueban TODAS las referencias del campo.
+   *    `fallback` que el motor localiza con los selectores del paso, y por eso se
+   *    prueban TODAS las referencias del campo.
    *  - **Hay que saber si lo marcado se ve.** Marcar cinco campos con un
    *    desplegable abierto encima documenta el desplegable, no los campos: quien
    *    pide la captura necesita saberlo para esperar y repetir.
    */
-  const highlightGroup = (payload: {
-    targets: GroupHighlightTarget[]
-  }): GroupHighlightResult => {
+  const highlightGroup = (payload: { targets: GroupHighlightTarget[] }): GroupHighlightResult => {
     removeOverlay()
 
     const container = newOverlay()

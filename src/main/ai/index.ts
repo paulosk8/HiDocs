@@ -70,7 +70,10 @@ async function buildParts(
   for (const step of chunk) {
     const shot = useScreenshot ? await readShot(step) : null
     // Si al final no hay imagen, no se le anuncia una que no va a recibir.
-    parts.push({ kind: 'text', text: stepText({ ...step, screenshot: shot ? step.screenshot : undefined }) })
+    parts.push({
+      kind: 'text',
+      text: stepText({ ...step, screenshot: shot ? step.screenshot : undefined })
+    })
     if (shot) parts.push(shot)
   }
   parts.push({
@@ -135,16 +138,19 @@ export async function draftSteps(
     try {
       const parts = await buildParts(request, chunk, settings.useScreenshot)
       if (process.env['DOCRECORDER_AI_FAKE']) {
-        const prompt = parts
-          .map((part) => (part.kind === 'text' ? part.text : ''))
-          .join('\n')
+        const prompt = parts.map((part) => (part.kind === 'text' ? part.text : '')).join('\n')
         drafts.push(...fakeDrafts(chunk, prompt))
       } else {
         const raw =
           settings.provider === 'anthropic'
             ? await draftWithClaude(apiKey, model, parts)
             : await draftWithGemini(apiKey, model, parts)
-        drafts.push(...parseDrafts(raw, chunk.map((step) => step.id)))
+        drafts.push(
+          ...parseDrafts(
+            raw,
+            chunk.map((step) => step.id)
+          )
+        )
       }
     } catch (err) {
       // Lo ya redactado se devuelve: en una grabación larga es preferible

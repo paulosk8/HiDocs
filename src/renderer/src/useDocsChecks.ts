@@ -3,7 +3,7 @@ import { ipc } from './ipc'
 import { useSession } from './store'
 
 /**
- * Mantiene en el store qué se puede comprobar en el proyecto de destino (§18).
+ * Mantiene en el store qué se puede comprobar en el proyecto de destino (§17).
  *
  * Como `useRepoInspection`, va en un componente SIEMPRE montado (App): guardar
  * consulta esto para saber si tiene que enseñar el diálogo de la comprobación, y

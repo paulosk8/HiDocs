@@ -7,7 +7,8 @@ import type { ElementSignals } from './observer'
  * utilidades Tailwind: nunca se usan como base de un selector.
  *
  * Se devuelve una lista ordenada por robustez; el primero es el preferido y el
- * resto queda guardado para que el runner futuro pueda hacer fallback.
+ * resto queda guardado como alternativa para volver a localizar el elemento
+ * cuando el framework reemplaza el nodo.
  */
 
 /** ids que un framework generó y que cambiarán en la siguiente ejecución. */

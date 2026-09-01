@@ -5,7 +5,12 @@ import type {
   GroupTarget,
   GroupedField,
   RecordedStep,
-  StepFamily
+  StepFamily,
+  TrashEntry,
+  TrashedContent,
+  TrashedField,
+  TrashedNote,
+  TrashedSteps
 } from '../../shared/ipc-contract'
 import {
   DEFAULT_VIEWPORT,
@@ -14,17 +19,17 @@ import {
   type BranchDocInfo,
   type CheckProgress,
   type ChecksResult,
-  type FlowAction,
+  type RecordedAction,
   type GitRepoInfo,
+  type DocCheck,
   type ProjectChecks,
   type EngineState,
   type RecorderStatus,
-  type RegenReport,
-  type RegenStepResult,
   type SelectorCandidate,
   type SessionMeta,
   type Viewport
 } from '../../shared/types'
+import { DEFAULT_ZOOM, clampZoom } from '../../shared/zoom'
 
 /**
  * De dónde salió la documentación que hay en el panel, cuando no la ha grabado
@@ -77,7 +82,7 @@ interface SessionState {
    */
   collapsedSections: string[]
   /**
-   * Documentación ya publicada que se trajo a la sesión para corregirla (§16), o
+   * Documentación ya publicada que se trajo a la sesión para corregirla (§15), o
    * `null` en una grabación normal.
    *
    * Existe para que la edición **se pueda cancelar**. Al cargar un commit, el
@@ -88,12 +93,28 @@ interface SessionState {
    */
   editing: EditingSource | null
 
+  /**
+   * Lo que se ha quitado de la guía y todavía se puede recuperar (§19).
+   *
+   * Es lo único del panel que sobrevive a un borrado, así que se guarda en el
+   * borrador junto a los pasos. La entrada más reciente va la primera, que es la
+   * que ofrece deshacer la franja del panel.
+   */
+  trash: TrashEntry[]
+  /**
+   * Entrada recién creada, mientras la franja «Deshacer» siga a la vista. Se
+   * limpia al deshacerla, al descartarla o sola a los pocos segundos: pasado ese
+   * momento, lo quitado sigue en la papelera, pero ya no interrumpe.
+   */
+  lastTrashId: string | null
+  trashOpen: boolean
+
   /** repositorio que contiene la carpeta de salida, o null si no hay ninguno */
   gitRepo: GitRepoInfo | null
   gitEnabled: boolean
   gitPush: boolean
   /**
-   * Comprobar el sitio antes de registrar en Git (§18). Preferencia del usuario,
+   * Comprobar el sitio antes de registrar en Git (§17). Preferencia del usuario,
    * persistida: compilar tarda, y hay tandas en las que se prefiere registrar y
    * revisar después.
    */
@@ -105,6 +126,16 @@ interface SessionState {
    * y guardar no se detiene a comprobar nada).
    */
   docsChecks: ProjectChecks | null
+  /**
+   * Comandos que el usuario ha desmarcado para el proyecto actual (§20). Se
+   * conocen y se enseñan, pero no se ejecutan: compilar el sitio entero tarda
+   * minutos y no siempre hace falta pagarlos en cada guardado.
+   */
+  checksSkip: string[]
+  /** ficha del proyecto de destino abierta (§20) */
+  requirementsOpen: boolean
+  /** enseñarla sola al estrenar guía; el usuario puede callarla para siempre */
+  requirementsOnStart: boolean
   /** tanda en marcha: qué comando va y qué lleva escrito */
   checksRun: {
     purpose: ChecksPurpose
@@ -171,12 +202,12 @@ interface SessionState {
    * DOM: si no, `about:blank` taparía ese onboarding con un rectángulo vacío.
    */
   viewportActive: boolean
-  /** estado del runner de regeneración de capturas */
-  runnerPhase: 'idle' | 'running' | 'done'
-  /** resultados por paso, según van llegando */
-  runnerProgress: RegenStepResult[]
-  /** informe final de la regeneración */
-  runnerReport: RegenReport | null
+  /**
+   * Escala del contenido del visor (§18). La aplica el proceso principal sobre
+   * el `WebContentsView`; aquí se guarda solo para enseñar el porcentaje y para
+   * recordarla entre usos.
+   */
+  viewportZoom: number
   /**
    * Fundir en un solo paso los controles seguidos del mismo tipo: los campos de
    * un formulario, las casillas de una columna de la tabla, las pestañas o los
@@ -231,16 +262,43 @@ interface SessionState {
     kind: 'capture' | 'image' | 'content' | 'section' | 'group'
     title: string
     tempFile?: string
-    /** cuerpo inicial del bloque, cuando viene pegado del portapapeles */
+    /** cuerpo inicial del bloque: lo pegado, o el esqueleto del tipo elegido */
     content?: string
+    /**
+     * Nota destacada inicial. Es lo que crea «＋ Añadir → 📝 Nota destacada»: un
+     * paso cuyo contenido ES la admonition, sin cuerpo de bloque que rellenar.
+     */
+    note?: RecordedStep['note']
   }) => void
   updateStep: (id: string, patch: Partial<RecordedStep>) => void
   removeStep: (id: string) => void
+  /**
+   * Quita el bloque de contenido de un paso (el 🗑 de su editor) y lo manda a la
+   * papelera. Un bloque vacío no deja entrada: no hay nada que recuperar.
+   */
+  removeContent: (stepId: string) => void
+  /** Quita la nota destacada de un paso y la manda a la papelera. */
+  removeNote: (stepId: string) => void
+
+  /**
+   * Devuelve a la guía lo que guarda una entrada de la papelera. Como
+   * `removeGroupField`, devuelve el paso resultante cuando lo restaurado cambia
+   * un grupo (hay que rehacer su captura con el elemento otra vez señalado); en
+   * cualquier otro caso, `null`.
+   */
+  restoreTrash: (entryId: string) => RecordedStep | null
+  /** Olvida una entrada de la papelera: eso ya no se puede recuperar. */
+  dropTrash: (entryId: string) => void
+  /** Vacía la papelera entera. */
+  clearTrash: () => void
+  /** Retira la franja «Deshacer» sin tocar la papelera. */
+  dismissUndo: () => void
+  setTrashOpen: (open: boolean) => void
 
   /** pliega o despliega una sección o una carpeta (solo afecta a la vista) */
   toggleSection: (id: string) => void
   /**
-   * Mete un paso en una carpeta de capturas (§17). Es el gesto de arrastrar una
+   * Mete un paso en una carpeta de capturas (§16). Es el gesto de arrastrar una
    * tarjeta hasta la zona de la carpeta: no exige que el paso esté al lado ni que
    * sea de ningún tipo concreto, que es justo lo que ⊞ Agrupar no permite.
    */
@@ -312,13 +370,15 @@ interface SessionState {
   togglePanel: () => void
   toggleTheme: () => void
   setViewportActive: (active: boolean) => void
+  /** guarda el zoom que devolvió main (no lo aplica: eso ya está hecho) */
+  setViewportZoom: (factor: number) => void
   setGroupConsecutive: (value: boolean) => void
-  runnerStart: () => void
-  runnerProgressAdd: (result: RegenStepResult) => void
-  runnerFinish: (report: RegenReport) => void
-  runnerClose: () => void
 
   setDocsChecks: (checks: ProjectChecks | null) => void
+  /** marca o desmarca un comando para el proyecto actual, y lo recuerda */
+  toggleCheck: (script: string) => void
+  setRequirementsOpen: (open: boolean) => void
+  setRequirementsOnStart: (on: boolean) => void
   /** empieza una tanda: el diálogo aparece antes de que llegue la primera línea */
   checksStart: (purpose: ChecksPurpose) => void
   checksProgress: (progress: CheckProgress) => void
@@ -341,6 +401,9 @@ interface SessionState {
 
 const GROUP_KEY = 'docrecorder.groupConsecutive'
 const VERIFY_KEY = 'docrecorder.verifyBeforeCommit'
+/** Comandos desmarcados, POR proyecto: cada repositorio tiene su ritmo (§20). */
+const SKIP_CHECKS_KEY = 'docrecorder.skipChecks'
+const REQUIREMENTS_KEY = 'docrecorder.requirementsOnStart'
 
 /** Líneas de salida que se guardan del comando en marcha, para enseñar el final. */
 const CHECK_LINES = 60
@@ -370,15 +433,66 @@ function initialVerify(): boolean {
   }
 }
 
+/**
+ * Comandos desmarcados por proyecto, tal como se guardan: raíz del proyecto →
+ * scripts que NO hay que ejecutar. Se guarda lo desmarcado y no lo elegido a
+ * propósito: así, un comando que el proyecto añada mañana entra solo, en vez de
+ * quedarse fuera para siempre por no estar en una lista de ayer.
+ */
+function readSkipChecks(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(SKIP_CHECKS_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : null
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string[]>) : {}
+  } catch {
+    return {}
+  }
+}
+
+function writeSkipChecks(projectRoot: string, scripts: string[]): void {
+  try {
+    const all = readSkipChecks()
+    if (scripts.length) all[projectRoot] = scripts
+    else delete all[projectRoot]
+    localStorage.setItem(SKIP_CHECKS_KEY, JSON.stringify(all))
+  } catch {
+    // Sin almacenamiento la elección vale solo para esta sesión, que es mejor
+    // que no poder elegir.
+  }
+}
+
+/**
+ * La ficha del proyecto se enseña al empezar una guía salvo que el usuario haya
+ * pedido no verla. Viene activada: el caso que la motivó es justo el de alguien
+ * que no sabía que el repositorio tenía reglas hasta que el commit se bloqueó.
+ */
+function initialRequirementsOnStart(): boolean {
+  try {
+    return localStorage.getItem(REQUIREMENTS_KEY) !== '0'
+  } catch {
+    return true
+  }
+}
+
+/**
+ * Los comandos que se van a ejecutar de verdad: los que el proyecto tiene, menos
+ * los que el usuario ha desmarcado. En un solo sitio porque de esto dependen
+ * tres decisiones que tienen que decir lo mismo: si hay algo que comprobar al
+ * guardar, qué enseña el progreso y qué promete la ficha.
+ */
+export function checksToRun(project: ProjectChecks | null, skip: string[]): DocCheck[] {
+  return project ? project.checks.filter((check) => !skip.includes(check.script)) : []
+}
+
 /** Nombre del campo de un paso `fill`/`select`/clic, del último «…» del título. */
 function fieldLabel(step: RecordedStep): string {
   const matches = [...step.title.matchAll(/«([^»]*)»/g)]
   return matches.length ? matches[matches.length - 1][1] : step.title
 }
 
-/** Acción reproducible de un paso, para el `flow.json` que usa el runner. */
-function toFlowAction(step: RecordedStep): FlowAction {
-  const action: FlowAction = {
+/** La interacción de un paso, tal como ocurrió (§6). */
+function toRecordedAction(step: RecordedStep): RecordedAction {
+  const action: RecordedAction = {
     order: 0, // se renumera al guardar
     action: step.action,
     selectorCandidates: step.selectorCandidates,
@@ -463,8 +577,7 @@ function sameScope(a: RecordedStep, b: RecordedStep): boolean {
  * entrada, y un valor real no lo pisa un clic vacío posterior.
  *
  * Las acciones y las referencias se acumulan siempre, aunque la entrada ya
- * exista: el runner debe reproducir la secuencia real (enfocar y luego escribir)
- * y el resaltado necesita todos los elementos implicados.
+ * exista: el resaltado necesita todos los elementos implicados.
  */
 function upsertItem(items: GroupedField[], incoming: GroupedField): GroupedField[] {
   const i = items.findIndex((f) => f.label === incoming.label)
@@ -561,7 +674,7 @@ function itemsOf(step: RecordedStep): GroupedField[] {
     {
       label: groupLabel(step),
       value: step.value ?? '',
-      actions: step.mergedActions?.length ? step.mergedActions : [toFlowAction(step)],
+      actions: step.mergedActions?.length ? step.mergedActions : [toRecordedAction(step)],
       refs: step.ref !== undefined ? [step.ref] : []
     }
   ]
@@ -572,10 +685,10 @@ function itemsOf(step: RecordedStep): GroupedField[] {
  * usa el panel para explicar el motivo en vez de dejar un botón apagado sin
  * explicación.
  *
- * Se exige que los pasos sean seguidos porque el grupo se reproduce como una
- * secuencia: fundir el paso 2 con el 7 reordenaría el flujo real y el runner
- * repetiría las acciones en un orden que nunca ocurrió. Para juntarlos, primero
- * se arrastran hasta ponerlos seguidos.
+ * Se exige que los pasos sean seguidos porque el grupo cuenta un tramo del
+ * flujo: fundir el paso 2 con el 7 juntaría en una tarjeta cosas que nunca
+ * ocurrieron seguidas. Para juntarlos, primero se arrastran hasta ponerlos
+ * seguidos.
  */
 export function selectionProblem(steps: RecordedStep[], selectedIds: string[]): string | null {
   const indexes = steps
@@ -622,8 +735,8 @@ function dedupeSelectors(candidates: SelectorCandidate[]): SelectorCandidate[] {
 
 /**
  * Vuelca los campos del grupo sobre el paso: `fields` es lo que se publica en el
- * manual y `mergedActions` lo que reproduce el runner. Se derivan siempre de
- * `groupItems`, para que quitar un campo no deje descuadrada su acción.
+ * manual y `mergedActions` con qué se vuelve a señalar cada elemento. Se derivan
+ * siempre de `groupItems`, para que quitar un campo no deje nada descuadrado.
  */
 function withGroupItems(step: RecordedStep, items: GroupedField[]): RecordedStep {
   return {
@@ -636,6 +749,20 @@ function withGroupItems(step: RecordedStep, items: GroupedField[]): RecordedStep
 
 const THEME_KEY = 'docrecorder.theme'
 const HIDE_INTRO_KEY = 'docrecorder.hideDocusaurusIntro'
+const ZOOM_KEY = 'docrecorder.viewportZoom'
+
+/**
+ * Zoom recordado del visor. Se persiste porque documentar el mismo sistema al
+ * 80 % durante una tarde y tener que volver a bajarlo en cada arranque sería un
+ * incordio; un valor ilegible vuelve al 100 %.
+ */
+function initialZoom(): number {
+  try {
+    return clampZoom(Number(localStorage.getItem(ZOOM_KEY)))
+  } catch {
+    return DEFAULT_ZOOM
+  }
+}
 
 /** El aviso inicial se muestra salvo que el usuario haya pedido no verlo más. */
 function initialIntroOpen(): boolean {
@@ -658,7 +785,7 @@ function initialTheme(): 'light' | 'dark' {
   return 'light'
 }
 
-/** El paso es una carpeta de capturas (§17). */
+/** El paso es una carpeta de capturas (§16). */
 function isFolder(step: RecordedStep): boolean {
   return step.kind === 'group'
 }
@@ -766,6 +893,84 @@ export function sectionIdAt(steps: RecordedStep[], index: number): string | null
   return null
 }
 
+/**
+ * Cuántas entradas guarda la papelera. Es un tope generoso —quitar diez cosas
+ * seguidas y arrepentirse de la primera entra de sobra— pero tope al fin: cada
+ * paso guardado arrastra su captura al borrador, y una papelera sin límite haría
+ * crecer el borrador sin que nadie lo pidiera.
+ */
+const TRASH_MAX = 25
+
+/** Una entrada de la papelera antes de sellarla con su id y su fecha. */
+type NewTrashEntry =
+  | Omit<TrashedSteps, 'id' | 'at'>
+  | Omit<TrashedContent, 'id' | 'at'>
+  | Omit<TrashedNote, 'id' | 'at'>
+  | Omit<TrashedField, 'id' | 'at'>
+
+/**
+ * Añade la entrada a la papelera y la deja como la última quitada, que es de la
+ * que habla la franja «Deshacer». Devuelve el trozo de estado a fusionar, para
+ * que cada acción de quitar siga siendo un solo `set`.
+ */
+function pushTrash(
+  trash: TrashEntry[],
+  entry: NewTrashEntry
+): { trash: TrashEntry[]; lastTrashId: string } {
+  const id = crypto.randomUUID()
+  const full = { ...entry, id, at: new Date().toISOString() } as TrashEntry
+  return { trash: [full, ...trash].slice(0, TRASH_MAX), lastTrashId: id }
+}
+
+/** Cómo se nombra un paso cuando hay que hablar de él fuera de su tarjeta. */
+function stepName(step: RecordedStep): string {
+  const title = step.title.trim()
+  if (title) return title
+  return step.kind === 'section' ? 'sección sin título' : `paso ${step.order}`
+}
+
+/** Qué es la tarjeta, para que la papelera no sea una lista de títulos sueltos. */
+function kindName(step: RecordedStep): string {
+  if (step.kind === 'section') return 'Sección'
+  if (step.kind === 'group') return 'Carpeta'
+  if (step.kind === 'capture') return 'Captura'
+  if (step.kind === 'image') return 'Imagen'
+  // Un paso creado COMO nota no tiene cuerpo de bloque (§14): llamarlo «bloque»
+  // en la papelera sería describirlo por lo que no es.
+  if (step.kind === 'content') return step.content === undefined && step.note ? 'Nota' : 'Bloque'
+  return `Paso ${step.order}`
+}
+
+/**
+ * Qué capturas colgaban de cada carpeta de las que se van, para poder volver a
+ * meterlas si se restauran. Las que se quitan a la vez que su carpeta no cuentan:
+ * vuelven ellas mismas, con su `groupId` intacto. `undefined` = ninguna carpeta.
+ */
+function folderMembers(
+  steps: RecordedStep[],
+  removed: RecordedStep[],
+  alsoRemoved: string[] = []
+): Record<string, string[]> | undefined {
+  const folders = removed.filter(isFolder).map((step) => step.id)
+  if (!folders.length) return undefined
+  const members: Record<string, string[]> = {}
+  for (const id of folders) {
+    const ids = steps
+      .filter((step) => step.groupId === id && !alsoRemoved.includes(step.id))
+      .map((step) => step.id)
+    if (ids.length) members[id] = ids
+  }
+  return Object.keys(members).length ? members : undefined
+}
+
+/** Cómo se lee en la papelera lo que se acaba de quitar. */
+function trashLabel(steps: RecordedStep[]): string {
+  if (steps.length > 1) return `${steps.length} tarjetas`
+  const [step] = steps
+  const title = step.title.trim()
+  return title ? `${kindName(step)}: ${title}` : `${kindName(step)} sin título`
+}
+
 export const useSession = create<SessionState>((set) => ({
   sessionId: crypto.randomUUID(),
   createdAt: new Date().toISOString(),
@@ -790,11 +995,17 @@ export const useSession = create<SessionState>((set) => ({
   selectedIds: [],
   collapsedSections: [],
   editing: null,
+  trash: [],
+  lastTrashId: null,
+  trashOpen: false,
   gitRepo: null,
   gitEnabled: false,
   gitPush: false,
   gitVerify: initialVerify(),
   docsChecks: null,
+  checksSkip: [],
+  requirementsOpen: false,
+  requirementsOnStart: initialRequirementsOnStart(),
   checksRun: null,
   checksReport: null,
   previewUrl: null,
@@ -810,9 +1021,7 @@ export const useSession = create<SessionState>((set) => ({
   theme: initialTheme(),
   panelCollapsed: false,
   viewportActive: false,
-  runnerPhase: 'idle',
-  runnerProgress: [],
-  runnerReport: null,
+  viewportZoom: initialZoom(),
   groupConsecutive: initialGroupConsecutive(),
   aiStatus: null,
   aiOpen: false,
@@ -879,14 +1088,14 @@ export const useSession = create<SessionState>((set) => ({
           {
             label: fieldLabel(last),
             value: last.value ?? '',
-            actions: [toFlowAction(last)],
+            actions: [toRecordedAction(last)],
             refs: last.ref !== undefined ? [last.ref] : []
           }
         ]
         const items = upsertItem(seeded, {
           label: fieldLabel(step),
           value: step.value ?? '',
-          actions: [toFlowAction(step)],
+          actions: [toRecordedAction(step)],
           refs: step.ref !== undefined ? [step.ref] : []
         })
         // Los pasos originales se conservan siempre (también al fundir solo), y
@@ -957,12 +1166,25 @@ export const useSession = create<SessionState>((set) => ({
       if (kept.length === items.length || !kept.length) return {}
       // Quitar un elemento a mano deja de casar con los pasos originales, así que
       // el grupo pierde la opción de deshacerse: restaurar lo que el usuario
-      // acaba de quitar sería justo lo contrario de lo que pidió.
+      // acaba de quitar sería justo lo contrario de lo que pidió. Los pasos se
+      // guardan en la papelera con el elemento, de modo que recuperarlo devuelve
+      // el grupo entero a como estaba, «⊟ Deshacer» incluido.
       const base = { ...target }
       delete base.groupSources
       const updated = withGroupItems(base, kept)
       result.updated = updated
-      return { steps: s.steps.map((step) => (step.id === stepId ? updated : step)) }
+      const index = items.findIndex((item) => item.label === label)
+      return {
+        steps: s.steps.map((step) => (step.id === stepId ? updated : step)),
+        ...pushTrash(s.trash, {
+          kind: 'field',
+          label: `Elemento «${label}» de «${stepName(target)}»`,
+          stepId,
+          item: items[index],
+          index,
+          ...(target.groupSources?.length ? { sources: target.groupSources } : {})
+        })
+      }
     })
     return result.updated
   },
@@ -970,7 +1192,7 @@ export const useSession = create<SessionState>((set) => ({
   // Un paso manual comparte el modelo con los grabados —así viaja por el mismo
   // camino: panel, borrador, MDX y Git— pero sin selector ni acción que
   // reproducir. La URL se anota igual, porque sitúa dónde estaba el usuario.
-  addManualStep: ({ kind, title, tempFile, content }) =>
+  addManualStep: ({ kind, title, tempFile, content, note }) =>
     set((s) => {
       // Trabajando dentro de una carpeta —se acaba de crear, o se está mirando
       // una de sus capturas—, lo que se añade entra DENTRO: es lo que se estaba
@@ -998,7 +1220,11 @@ export const useSession = create<SessionState>((set) => ({
         timestamp: new Date().toISOString(),
         tempFile: tempFile ?? '',
         ...(owner ? { groupId: owner } : {}),
-        ...(kind === 'content' ? { content: content ?? '' } : {}),
+        // Un paso de nota no lleva cuerpo de bloque: si se le pusiera cadena
+        // vacía, la tarjeta abriría también el editor de contenido y publicaría
+        // dos apartados donde se pidió uno.
+        ...(kind === 'content' && !note ? { content: content ?? '' } : {}),
+        ...(note ? { note } : {}),
         // Una imagen o una captura también admiten bloque de contenido, pero solo
         // si viene dado: abrir el editor vacío en cada imagen sería estorbo.
         ...(kind !== 'content' && content ? { content } : {})
@@ -1035,12 +1261,180 @@ export const useSession = create<SessionState>((set) => ({
   // pasan al apartado anterior. Es lo contrario de lo que haría un borrado en
   // cascada, y es lo que se espera de un separador: deshacer la división, no
   // perder media grabación de un clic.
+  //
+  // La tarjeta se va a la papelera (§19) con la posición que ocupaba: quitar es
+  // lo único del panel que se llevaba por delante una captura irrepetible sin
+  // ofrecer marcha atrás.
   removeStep: (id) =>
+    set((s) => {
+      const index = s.steps.findIndex((step) => step.id === id)
+      if (index < 0) return {}
+      const removed = s.steps[index]
+      // Las capturas de una carpeta no se borran con ella, pero se anota cuáles
+      // eran: al restaurarla vuelven dentro, en vez de dejarla vacía.
+      const members = folderMembers(s.steps, [removed])
+      return {
+        steps: renumber(s.steps.filter((step) => step.id !== id)),
+        selectedIds: s.selectedIds.filter((selected) => selected !== id),
+        collapsedSections: s.collapsedSections.filter((section) => section !== id),
+        ...pushTrash(s.trash, {
+          kind: 'steps',
+          label: trashLabel([removed]),
+          steps: [removed],
+          indexes: [index],
+          ...(members ? { members } : {})
+        })
+      }
+    }),
+
+  removeContent: (stepId) =>
+    set((s) => {
+      const step = s.steps.find((existing) => existing.id === stepId)
+      if (!step) return {}
+      const content = step.content ?? ''
+      return {
+        steps: s.steps.map((existing) =>
+          existing.id === stepId ? { ...existing, content: '' } : existing
+        ),
+        // Un bloque en blanco no deja entrada: la papelera es para lo que se
+        // puede echar de menos, no para el editor que se abrió y no se usó.
+        ...(content.trim()
+          ? pushTrash(s.trash, {
+              kind: 'content',
+              label: `Bloque de «${stepName(step)}»`,
+              stepId,
+              content
+            })
+          : {})
+      }
+    }),
+
+  removeNote: (stepId) =>
+    set((s) => {
+      const step = s.steps.find((existing) => existing.id === stepId)
+      if (!step) return {}
+      const note = step.note
+      const cleaned = { ...step }
+      delete cleaned.note
+      return {
+        steps: s.steps.map((existing) => (existing.id === stepId ? cleaned : existing)),
+        ...(note && (note.body.trim() || note.title?.trim())
+          ? pushTrash(s.trash, {
+              kind: 'note',
+              label: `Nota de «${stepName(step)}»`,
+              stepId,
+              note
+            })
+          : {})
+      }
+    }),
+
+  /**
+   * Devuelve a la guía lo que guarda una entrada, y la saca de la papelera.
+   *
+   * Cada tipo vuelve a su sitio de la manera que le corresponde: las tarjetas a
+   * la posición que ocupaban (y dentro de su carpeta, si sigue existiendo), y lo
+   * que se quitó DENTRO de una tarjeta, a esa tarjeta. Si el paso al que
+   * pertenecía ya no está, la entrada no se puede restaurar y se queda donde
+   * está: la papelera lo dice en la lista en vez de fallar en silencio.
+   */
+  restoreTrash: (entryId) => {
+    const result: { updated: RecordedStep | null } = { updated: null }
+    set((s) => {
+      const entry = s.trash.find((item) => item.id === entryId)
+      if (!entry) return {}
+      const without = s.trash.filter((item) => item.id !== entryId)
+      const done = { trash: without, lastTrashId: null }
+
+      if (entry.kind === 'steps') {
+        const next = [...s.steps]
+        // En orden ascendente, cada una en su hueco: reinsertadas así, una lista
+        // que no ha cambiado queda exactamente como estaba.
+        entry.steps.forEach((step, i) => {
+          const at = Math.min(entry.indexes[i] ?? next.length, next.length)
+          next.splice(at, 0, step)
+        })
+        // Cada captura vuelve a SU carpeta (de una vez se pueden haber quitado
+        // varias). Solo se readopta lo que sigue suelto: si mientras tanto se
+        // metió en otra carpeta, manda lo último que pidió el usuario.
+        const owner = new Map<string, string>()
+        for (const [folderId, ids] of Object.entries(entry.members ?? {})) {
+          for (const id of ids) owner.set(id, folderId)
+        }
+        const folders = new Set(entry.steps.filter(isFolder).map((step) => step.id))
+        const restored = owner.size
+          ? next.map((step) =>
+              owner.has(step.id) && !step.groupId ? { ...step, groupId: owner.get(step.id) } : step
+            )
+          : next
+        return {
+          ...done,
+          steps: renumber(restored),
+          // La tarjeta recuperada se trae a la vista y pasa a ser la activa: es
+          // donde está mirando quien acaba de deshacer.
+          focusStepId: entry.steps[0].id,
+          activeStepId: entry.steps[0].id,
+          // Una carpeta vuelve desplegada, para ver que sus capturas volvieron
+          // con ella.
+          collapsedSections: s.collapsedSections.filter((id) => !folders.has(id))
+        }
+      }
+
+      const target = s.steps.find((step) => step.id === entry.stepId)
+      if (!target) return {}
+
+      if (entry.kind === 'content') {
+        return {
+          ...done,
+          steps: s.steps.map((step) =>
+            step.id === entry.stepId ? { ...step, content: entry.content } : step
+          ),
+          focusStepId: target.id,
+          activeStepId: target.id
+        }
+      }
+
+      if (entry.kind === 'note') {
+        return {
+          ...done,
+          steps: s.steps.map((step) =>
+            step.id === entry.stepId ? { ...step, note: entry.note } : step
+          ),
+          focusStepId: target.id,
+          activeStepId: target.id
+        }
+      }
+
+      // Un elemento vuelve a su posición dentro del grupo. Si mientras tanto se
+      // volvió a agrupar algo con esa misma etiqueta, no se duplica.
+      const items = target.groupItems ?? []
+      if (items.some((item) => item.label === entry.item.label)) return { ...done }
+      const next = items.slice()
+      next.splice(Math.min(entry.index, next.length), 0, entry.item)
+      const restored = withGroupItems(
+        { ...target, ...(entry.sources ? { groupSources: entry.sources } : {}) },
+        next
+      )
+      result.updated = restored
+      return {
+        ...done,
+        steps: s.steps.map((step) => (step.id === entry.stepId ? restored : step)),
+        focusStepId: target.id,
+        activeStepId: target.id
+      }
+    })
+    return result.updated
+  },
+
+  dropTrash: (entryId) =>
     set((s) => ({
-      steps: renumber(s.steps.filter((step) => step.id !== id)),
-      selectedIds: s.selectedIds.filter((selected) => selected !== id),
-      collapsedSections: s.collapsedSections.filter((section) => section !== id)
+      trash: s.trash.filter((entry) => entry.id !== entryId),
+      lastTrashId: s.lastTrashId === entryId ? null : s.lastTrashId
     })),
+
+  clearTrash: () => set({ trash: [], lastTrashId: null }),
+  dismissUndo: () => set({ lastTrashId: null }),
+  setTrashOpen: (trashOpen) => set({ trashOpen }),
 
   toggleSection: (id) =>
     set((s) => ({
@@ -1058,11 +1452,28 @@ export const useSession = create<SessionState>((set) => ({
 
   clearSelection: () => set({ selectedIds: [] }),
 
+  // Las marcadas se van juntas a UNA entrada de la papelera: se quitaron de un
+  // gesto y se recuperan de otro. Cada una recuerda su posición, así que volver
+  // atrás no las amontona al final aunque estuvieran repartidas por la lista.
   removeSelected: () =>
-    set((s) => ({
-      steps: renumber(s.steps.filter((step) => !s.selectedIds.includes(step.id))),
-      selectedIds: []
-    })),
+    set((s) => {
+      const removed = s.steps.filter((step) => s.selectedIds.includes(step.id))
+      if (!removed.length) return { selectedIds: [] }
+      const indexes = removed.map((step) => s.steps.indexOf(step))
+      const members = folderMembers(s.steps, removed, s.selectedIds)
+      return {
+        steps: renumber(s.steps.filter((step) => !s.selectedIds.includes(step.id))),
+        selectedIds: [],
+        collapsedSections: s.collapsedSections.filter((id) => !s.selectedIds.includes(id)),
+        ...pushTrash(s.trash, {
+          kind: 'steps',
+          label: trashLabel(removed),
+          steps: removed,
+          indexes,
+          ...(members ? { members } : {})
+        })
+      }
+    }),
 
   // Agrupar a mano es la respuesta a lo que el motor no puede adivinar: que dos
   // botones, o un selector y su opción, o varias filas de una tabla, son UN paso
@@ -1194,7 +1605,11 @@ export const useSession = create<SessionState>((set) => ({
       activeStepId: null,
       selectedIds: [],
       collapsedSections: [],
-      editing: null
+      editing: null,
+      // La papelera es de ESTA guía: conservarla al vaciar el panel ofrecería
+      // devolver pasos de una grabación a otra que no tiene nada que ver.
+      trash: [],
+      lastTrashId: null
     }),
 
   // Descartar deja la sesión como estaba antes de cargar el commit en lo que se
@@ -1209,6 +1624,8 @@ export const useSession = create<SessionState>((set) => ({
       selectedIds: [],
       collapsedSections: [],
       editing: null,
+      trash: [],
+      lastTrashId: null,
       sessionId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       meta: { ...s.meta, feature: '', title: '' },
@@ -1229,6 +1646,11 @@ export const useSession = create<SessionState>((set) => ({
       // información que merezca sobrevivir al cierre de la aplicación.
       collapsedSections: [],
       editing: null,
+      // La papelera sí sobrevive: lo que se quitó ayer por error se sigue
+      // pudiendo recuperar hoy. Los borradores de antes de la papelera no la
+      // traen, y entonces llega vacía.
+      trash: draft.trash ?? [],
+      lastTrashId: null,
       gitEnabled: draft.git.enabled,
       gitPush: draft.git.push,
       gitBranchOverride: draft.git.branchOverride,
@@ -1259,6 +1681,8 @@ export const useSession = create<SessionState>((set) => ({
       activeStepId: null,
       selectedIds: [],
       collapsedSections: [],
+      trash: [],
+      lastTrashId: null,
       // El panel lo dice y ofrece cancelarlo: estos pasos no los ha grabado
       // nadie en esta sesión, y sin decirlo la única salida visible sería ■.
       editing: {
@@ -1287,6 +1711,8 @@ export const useSession = create<SessionState>((set) => ({
       selectedIds: [],
       collapsedSections: [],
       editing: null,
+      trash: [],
+      lastTrashId: null,
       sessionId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       gitMessageOverride: null
@@ -1408,6 +1834,15 @@ export const useSession = create<SessionState>((set) => ({
       return { theme }
     }),
   setViewportActive: (viewportActive) => set({ viewportActive }),
+  setViewportZoom: (factor) => {
+    const viewportZoom = clampZoom(factor)
+    try {
+      localStorage.setItem(ZOOM_KEY, String(viewportZoom))
+    } catch {
+      // sin persistencia el zoom vale para esta sesión igualmente
+    }
+    set({ viewportZoom })
+  },
   setGroupConsecutive: (groupConsecutive) => {
     try {
       localStorage.setItem(GROUP_KEY, groupConsecutive ? '1' : '0')
@@ -1417,12 +1852,35 @@ export const useSession = create<SessionState>((set) => ({
     set({ groupConsecutive })
   },
 
-  runnerStart: () => set({ runnerPhase: 'running', runnerProgress: [], runnerReport: null }),
-  runnerProgressAdd: (result) => set((s) => ({ runnerProgress: [...s.runnerProgress, result] })),
-  runnerFinish: (report) => set({ runnerPhase: 'done', runnerReport: report }),
-  runnerClose: () => set({ runnerPhase: 'idle', runnerProgress: [], runnerReport: null }),
+  // Al cambiar de proyecto se recupera SU elección de comandos: cada repositorio
+  // tiene su ritmo (uno compila en tres segundos y otro en dos minutos), y
+  // arrastrar la elección de uno al siguiente sorprendería en el peor momento.
+  setDocsChecks: (docsChecks) =>
+    set({
+      docsChecks,
+      checksSkip: docsChecks ? (readSkipChecks()[docsChecks.projectRoot] ?? []) : []
+    }),
 
-  setDocsChecks: (docsChecks) => set({ docsChecks }),
+  toggleCheck: (script) =>
+    set((s) => {
+      const skip = s.checksSkip.includes(script)
+        ? s.checksSkip.filter((item) => item !== script)
+        : [...s.checksSkip, script]
+      if (s.docsChecks) writeSkipChecks(s.docsChecks.projectRoot, skip)
+      return { checksSkip: skip }
+    }),
+
+  setRequirementsOpen: (requirementsOpen) => set({ requirementsOpen }),
+
+  setRequirementsOnStart: (on) => {
+    try {
+      localStorage.setItem(REQUIREMENTS_KEY, on ? '1' : '0')
+    } catch {
+      // Sin almacenamiento la preferencia dura lo que la sesión.
+    }
+    set({ requirementsOnStart: on })
+  },
+
 
   checksStart: (purpose) =>
     set((s) => ({
@@ -1431,7 +1889,12 @@ export const useSession = create<SessionState>((set) => ({
         purpose,
         label: 'Preparando…',
         index: 0,
-        total: s.docsChecks?.checks.length ?? 1,
+        // Los desmarcados no se ejecutan, así que tampoco cuentan: un «1 de 3»
+        // que en realidad son dos haría esperar un comando que no va a venir.
+        // La vista previa siempre compila y sirve, pase lo que pase aquí.
+        total: (purpose === 'preview'
+          ? s.docsChecks?.checks.length
+          : checksToRun(s.docsChecks, s.checksSkip).length) || 1,
         lines: []
       }
     })),

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ipc } from '../ipc'
 import { useSession } from '../store'
 import { slug } from '../../../shared/naming'
+import { DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM, zoomPercent } from '../../../shared/zoom'
 import type { RecorderStatus } from '../../../shared/types'
 
 const STATUS_LABEL: Record<RecorderStatus, string> = {
@@ -35,10 +36,8 @@ export function TopBar(): React.JSX.Element {
     theme,
     toggleTheme,
     setViewportActive,
-    runnerPhase,
-    runnerProgress,
-    runnerStart,
-    runnerFinish,
+    viewportZoom,
+    setViewportZoom,
     branchDocs
   } = useSession()
   const [opening, setOpening] = useState(false)
@@ -56,16 +55,13 @@ export function TopBar(): React.JSX.Element {
     )
   ].sort()
 
-  // Regenera las capturas de una funcionalidad: pide la carpeta y re-ejecuta el
-  // flujo en el visor autenticado. El progreso llega por evento (lo escucha App).
-  const regenerate = async (): Promise<void> => {
-    runnerStart()
-    const report = await ipc.invoke('runner:regenerate')
-    if (report.canceled) {
-      useSession.getState().runnerClose()
-      return
-    }
-    runnerFinish(report)
+  /**
+   * Zoom del visor (§18). Lo aplica el proceso principal sobre la vista nativa y
+   * devuelve el factor que quedó: la GUI solo guarda ese número para enseñarlo,
+   * así que teclado, rueda y botones no pueden acabar diciendo cosas distintas.
+   */
+  const zoom = async (action: 'in' | 'out' | 'reset'): Promise<void> => {
+    setViewportZoom(await ipc.invoke('viewport:zoom', { action }))
   }
 
   const open = async (): Promise<void> => {
@@ -169,6 +165,31 @@ export function TopBar(): React.JSX.Element {
             ⟳
           </button>
         </div>
+        <div className="zoom-buttons" role="group" aria-label="Zoom del visor">
+          <button
+            title="Alejar el visor (⌘/Ctrl y −)"
+            aria-label="Alejar el visor"
+            disabled={viewportZoom <= MIN_ZOOM}
+            onClick={() => void zoom('out')}
+          >
+            −
+          </button>
+          <button
+            className={`zoom-level${viewportZoom === DEFAULT_ZOOM ? '' : ' zoom-level-set'}`}
+            title="Zoom del visor: púlsalo para volver al 100 % (⌘/Ctrl y 0). Las capturas salen a esta escala."
+            onClick={() => void zoom('reset')}
+          >
+            {zoomPercent(viewportZoom)}%
+          </button>
+          <button
+            title="Acercar el visor (⌘/Ctrl y +)"
+            aria-label="Acercar el visor"
+            disabled={viewportZoom >= MAX_ZOOM}
+            onClick={() => void zoom('in')}
+          >
+            +
+          </button>
+        </div>
         <label className="field field-grow">
           <span>URL base</span>
           <input
@@ -203,14 +224,6 @@ export function TopBar(): React.JSX.Element {
           title="Repositorios ya usados, sus ramas y su historial"
         >
           Proyectos…
-        </button>
-        <button
-          className="btn"
-          disabled={runnerPhase === 'running'}
-          onClick={() => void regenerate()}
-          title="Re-ejecuta el flujo de una funcionalidad y actualiza sus capturas (reutiliza tu sesión iniciada)"
-        >
-          {runnerPhase === 'running' ? `Regenerando ${runnerProgress.length}…` : 'Regenerar…'}
         </button>
         <button
           className="btn btn-ai-settings"

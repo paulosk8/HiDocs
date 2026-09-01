@@ -259,6 +259,55 @@ try {
   }
   check(state.attached, 'Etapa 2: Playwright adjunto al viewport vía CDP', state.error ?? '')
 
+  // --- Etapa 2 bis: zoom del visor (§18) ---
+  // Se prueba antes de grabar y se deja el visor al 100 %: las capturas de las
+  // etapas siguientes deben salir a la escala de siempre.
+  const zoomPct = async () => (await gui.locator('.zoom-level').textContent()).trim()
+  // El ancho se pide con reintento: justo tras una recarga el contexto de la
+  // página puede estar destruyéndose y `evaluate` lanzaría.
+  const anchoCss = async () => {
+    for (let i = 0; i < 20; i++) {
+      try {
+        return await target.evaluate(() => window.innerWidth)
+      } catch {
+        await new Promise((r) => setTimeout(r, 250))
+      }
+    }
+    return -1
+  }
+  const esperaZoom = (pct) =>
+    gui.waitForFunction(
+      (esperado) => document.querySelector('.zoom-level')?.textContent === esperado,
+      pct,
+      { timeout: 5000 }
+    )
+  const ancho100 = await anchoCss()
+  await gui.click('.zoom-buttons button[aria-label="Acercar el visor"]')
+  await gui.click('.zoom-buttons button[aria-label="Acercar el visor"]')
+  await esperaZoom('125%')
+  const ancho125 = await anchoCss()
+  check(
+    ancho125 < ancho100,
+    'Etapa 2: el zoom amplía de verdad el visor y la barra dice a qué porcentaje',
+    `${await zoomPct()} · ${ancho100} → ${ancho125} px CSS`
+  )
+  // El zoom de Chromium es por origen: sin reaplicarlo, la recarga lo perdería.
+  await Promise.all([
+    target.waitForEvent('load', { timeout: 15000 }),
+    gui.click('.nav-buttons button[title="Recargar"]')
+  ])
+  check(
+    (await zoomPct()) === '125%' && (await anchoCss()) === ancho125,
+    'Etapa 2: el zoom del visor sobrevive a la recarga'
+  )
+  check(
+    (await gui.evaluate(() => localStorage.getItem('docrecorder.viewportZoom'))) === '1.25',
+    'Etapa 2: el zoom se recuerda entre usos'
+  )
+  await gui.click('.zoom-level')
+  await esperaZoom('100%')
+  check((await anchoCss()) === ancho100, 'Etapa 2: pulsar el porcentaje devuelve el visor al 100 %')
+
   // --- Etapas 3 y 4: grabar interacciones reales sobre la página de prueba ---
   await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
   await gui.fill('.topbar input[placeholder="crear-matricula"]', 'crear-matricula')
@@ -383,6 +432,64 @@ try {
     ordersAfterDelete.join(',')
   )
 
+  // --- Papelera: quitar una tarjeta deja de ser definitivo (§19) ---
+  //
+  // Un paso grabado se lleva consigo su captura y su selector, así que quitarlo
+  // por error costaba repetir el proceso en el sistema real. Se comprueban los
+  // dos caminos de vuelta: la franja de deshacer (el arrepentimiento inmediato)
+  // y la papelera (el de un rato después).
+  const undoLabel = await gui.locator('.undo-strip .undo-what').textContent()
+  await gui.locator('.undo-strip .btn').click()
+  await gui.waitForFunction((n) => document.querySelectorAll('.step-card').length === n, before, {
+    timeout: 5000
+  })
+  const undoneOrders = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-badge')].map((b) => b.textContent)
+  )
+  check(
+    /Quitado:/.test(undoLabel ?? '') && undoneOrders.join(',') === '1,2,3,4,5',
+    'Papelera: la franja «Deshacer» devuelve el paso a su sitio y renumera',
+    `${undoLabel} → ${undoneOrders.join(',')}`
+  )
+
+  // Y otra vez, ahora recuperándolo desde la papelera: es el mismo material,
+  // pero pasado el momento de la franja.
+  await gui.locator('.step-card').last().locator('.icon-btn.danger').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    before,
+    { timeout: 5000 }
+  )
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  const trashEntry = await gui.locator('.trash-list > li b').first().textContent()
+  const trashShots = await gui.locator('.trash-list > li img').count()
+  await gui.locator('.trash-list > li').first().getByRole('button', { name: 'Restaurar' }).click()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  const backFromTrash = await gui.locator('.step-card').count()
+  check(
+    backFromTrash === before && /^Paso 5/.test(trashEntry ?? '') && trashShots >= 1,
+    'Papelera: la lista enseña lo quitado con su captura y lo restaura',
+    `${trashEntry} · ${backFromTrash} tarjetas · ${trashShots} miniatura(s)`
+  )
+
+  // Se vuelve a dejar como esperan las comprobaciones siguientes (cuatro pasos),
+  // y se retira la franja: si desapareciera sola en mitad del arrastre de abajo,
+  // la lista se desplazaría bajo el ratón.
+  await gui.locator('.step-card').last().locator('.icon-btn.danger').click()
+  await gui.waitForFunction(
+    (n) => document.querySelectorAll('.step-card').length === n - 1,
+    before,
+    { timeout: 5000 }
+  )
+  await gui.locator('.undo-strip .icon-btn').click()
+  await gui.waitForSelector('.undo-strip', { state: 'detached', timeout: 5000 })
+  check(
+    (await gui.locator('.panel-toolbar .btn-trash .trash-count').textContent()) === '1',
+    'Papelera: cerrar la franja no vacía la papelera'
+  )
+
   // Reordenar arrastrando la tarjeta 1 por debajo de la 2.
   const titlesBefore = await gui.evaluate(() =>
     [...document.querySelectorAll('.step-title')].map((i) => i.value)
@@ -481,6 +588,18 @@ try {
     !!draftBefore && draftBefore.steps.every((s) => /\/draft\/img\//.test(s.tempFile)),
     'Borrador: las capturas se guardan en una carpeta durable'
   )
+  // La papelera viaja con el borrador (§19), y la captura de lo quitado va a la
+  // misma carpeta durable: una papelera que mañana devolviera una tarjeta sin
+  // imagen no serviría para lo único que justifica que exista.
+  const draftTrash = draftBefore?.trash ?? []
+  check(
+    draftTrash.length >= 1 &&
+      draftTrash.every(
+        (e) => e.kind !== 'steps' || e.steps.every((s) => /\/draft\/img\//.test(s.tempFile))
+      ),
+    'Borrador: la papelera se guarda con él, con la captura de lo quitado ya durable',
+    draftTrash.map((e) => e.label).join(' · ') || '(papelera vacía)'
+  )
 
   await gui.click('.ctrl:nth-child(3)')
   await gui.waitForSelector('.dialog', { timeout: 20000 })
@@ -522,11 +641,9 @@ try {
 
   const dir = join(outDir, 'matriculas', 'crear-matricula')
   const session = JSON.parse(readFileSync(join(dir, 'session.json'), 'utf8'))
-  const flow = JSON.parse(readFileSync(join(dir, 'flow.json'), 'utf8'))
   const images = readdirSync(join(dir, 'img')).sort()
 
   check(existsSync(join(dir, 'session.json')), 'Etapa 6: session.json escrito')
-  check(existsSync(join(dir, 'flow.json')), 'Etapa 6: flow.json escrito')
   check(
     images.join(',') === 'paso-01.png,paso-02.png,paso-03.png,paso-04.png',
     'Etapa 6: imágenes renumeradas según el orden final',
@@ -544,10 +661,6 @@ try {
   check(
     session.steps[1]?.description === 'Desde el listado, pulsa «Nueva matrícula».',
     'Etapa 6: la descripción editada se persiste'
-  )
-  check(
-    flow.actions.length === session.steps.length,
-    'Etapa 6: flow.json refleja las mismas acciones'
   )
   check(
     session.steps.every((s) => s.selectorCandidates.length >= 1),
@@ -581,9 +694,8 @@ try {
     .sort()
   check(
     committed.includes('matriculas/crear-matricula/session.json') &&
-      committed.includes('matriculas/crear-matricula/flow.json') &&
       committed.filter((f) => f.endsWith('.png')).length === 4,
-    'Git: el commit contiene session.json, flow.json y las 4 capturas',
+    'Git: el commit contiene session.json y las 4 capturas',
     committed.join(' ')
   )
   check(
@@ -873,7 +985,6 @@ try {
       'inventario/_category_.json',
       'inventario/dar-de-baja/index.mdx',
       'inventario/dar-de-baja/session.json',
-      'inventario/dar-de-baja/flow.json',
       'inventario/dar-de-baja/img/paso-01.png'
     ].every((f) => pendingFilesCommitted.includes(f)),
     'Sin registrar: viaja el paquete entero, con su img/ y su _category_.json',
@@ -1031,9 +1142,8 @@ try {
     dataUri ? `${dataUri.slice(0, 24)}… (${dataUri.length} b)` : 'null'
   )
 
-  // --- Runner de regeneración: re-ejecutar el flujo y actualizar capturas ---
-  // El diálogo de resultado de la Etapa 6 sigue abierto y oculta el visor; el
-  // runner necesita el visor VISIBLE para capturar, así que se cierra primero.
+  // El diálogo de resultado de la Etapa 6 sigue abierto y oculta el visor, así
+  // que se cierra antes de seguir manejando la GUI.
   await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
 
@@ -1083,7 +1193,7 @@ try {
   )
 
   // Retomar una funcionalidad concreta sí carga sus cuatro campos: se va a
-  // ampliar o regrabar, y debe caer en su misma carpeta.
+  // ampliar o volver a grabar, y debe caer en su misma carpeta.
   await gui.waitForSelector('.branch-docs .row[data-feature="crear-matricula"]', { timeout: 5000 })
   await gui.click('.branch-docs .row[data-feature="crear-matricula"]')
   await gui.waitForSelector('.branch-picker', { state: 'detached', timeout: 5000 })
@@ -1096,82 +1206,12 @@ try {
     'Rama de trabajo: retomar una funcionalidad carga sus metadatos completos',
     JSON.stringify(reloaded)
   )
-  // Se escribe una funcionalidad con dos pasos: uno con selector válido (el botón
-  // del fixture) y otro con selector inexistente, para probar ok + fallo marcado.
-  // El visor sigue adjunto al fixture, así que el runner reutiliza esa sesión.
-  const regenDir = mkdtempSync(join(tmpdir(), 'regen-'))
-  const featureDir = join(regenDir, 'pruebas', 'regenerar')
-  mkdirSync(join(featureDir, 'img'), { recursive: true })
-  writeFileSync(
-    join(featureDir, 'session.json'),
-    JSON.stringify({
-      id: 'r1',
-      module: 'pruebas',
-      feature: 'regenerar',
-      title: 'Regenerar',
-      role: '',
-      baseUrl: fixture.url,
-      viewport: { width: 800, height: 600 },
-      createdAt: new Date().toISOString(),
-      steps: [
-        {
-          id: 'a',
-          order: 1,
-          action: 'click',
-          title: 'Abrir «Nueva matrícula»',
-          description: '',
-          selectorCandidates: [
-            { strategy: 'testid', value: '[data-testid="nueva-matricula"]', score: 100 }
-          ],
-          url: fixture.url,
-          screenshot: 'img/paso-01.png',
-          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
-          includeInDocs: true,
-          timestamp: 't'
-        },
-        {
-          id: 'b',
-          order: 2,
-          action: 'click',
-          title: 'Elemento que ya no existe',
-          description: '',
-          selectorCandidates: [{ strategy: 'css', value: '#no-existe-jamas', score: 10 }],
-          url: fixture.url,
-          screenshot: 'img/paso-02.png',
-          boundingRect: { x: 0, y: 0, width: 1, height: 1 },
-          includeInDocs: true,
-          timestamp: 't'
-        }
-      ]
-    }),
-    'utf8'
-  )
-  const regen = await gui.evaluate(
-    (dir) => window.docrecorder.invoke('runner:regenerate', dir),
-    featureDir
-  )
-  check(
-    !regen.error && regen.results.length === 2,
-    'Runner: re-ejecuta el flujo de la funcionalidad',
-    regen.error ?? `${regen.results.length} paso(s)`
-  )
-  check(
-    regen.results[0]?.status === 'ok' && existsSync(join(featureDir, 'img', 'paso-01.png')),
-    'Runner: regenera la captura del paso con selector válido'
-  )
-  check(
-    regen.results[1]?.status === 'failed',
-    'Runner: marca el paso cuyo elemento no se encuentra (no aborta)',
-    regen.results[1]?.detail
-  )
-  rmSync(regenDir, { recursive: true, force: true })
-
   // --- Renderizado del modal (lo que los checks IPC de arriba NO cubren) ---
   // Un fallo de React —JSX roto, onClick sin cablear, columnas colapsadas—
   // pasaría todos los checks anteriores y aun así dejaría la ventana inservible.
   // Aquí se maneja el DOM real, con esperas web-first en vez de tiempos fijos.
 
-  // El diálogo de resultado ya se cerró antes del runner; se abre el explorador.
+  // El diálogo de resultado ya se cerró más arriba; se abre el explorador.
   await gui.getByRole('button', { name: 'Proyectos…', exact: true }).click()
   await gui.waitForSelector('.projects-modal', { timeout: 5000 })
   check(
@@ -1932,8 +1972,8 @@ try {
   )
   await moduleInput.fill(savedModule)
 
-  // Quitar un campo del grupo debe llevarse también su acción del `flow.json`:
-  // si no, el runner reproduciría un campo que el manual ya no documenta.
+  // Quitar un campo del grupo debe llevarse también su acción: si no, el paso
+  // seguiría señalando un elemento que el manual ya no documenta.
   const groupedCard = gui.locator('.step-card').last()
   const removedLabel = await groupedCard
     .locator('.field-list li .field-label')
@@ -2510,9 +2550,58 @@ try {
     { timeout: 5000 }
   )
 
+  // Qué clase de bloque se añade se pregunta ANTES de crear la tarjeta: el menú
+  // tiene un segundo nivel con los tipos, cada uno con su esqueleto ya escrito.
+  // Sin esa pregunta, quien quería una nota creaba un bloque genérico y acababa
+  // con dos apartados en la misma tarjeta.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  const tipos = await gui.locator('.add-menu-list button').allInnerTexts()
+  check(
+    /Volver/.test(tipos[0] ?? '') &&
+      ['Tabla', 'Código', 'Pestañas', 'Detalle', 'Texto libre'].every((t) =>
+        tipos.some((opcion) => opcion.includes(t))
+      ),
+    'Contenido: el menú pregunta qué clase de bloque antes de crearlo',
+    tipos.map((t) => t.split('\n')[0]).join(' · ')
+  )
+  await gui.locator('.add-menu-list button:has-text("Tabla")').click()
+  await gui.waitForSelector('.step-card.kind-content', { timeout: 5000 })
+  const sembrado = await gui
+    .locator('.step-card.kind-content')
+    .last()
+    .locator('.content-body')
+    .inputValue()
+  check(
+    /^\| Campo \| Descripción \| Obligatorio \|/.test(sembrado),
+    'Contenido: elegir «Tabla» siembra la tarjeta con el esqueleto de la tabla',
+    sembrado.split('\n')[0]
+  )
+  await gui.locator('.step-card.kind-content').last().locator('.icon-btn.danger').click()
+
+  // Una nota es un paso propio: se crea con SU editor y sin el del bloque, que
+  // es lo que generaba dos apartados donde se pedía uno.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Nota destacada")').click()
+  await gui.waitForSelector('.step-card.kind-content', { timeout: 5000 })
+  const notaSola = await gui.evaluate(() => {
+    const card = [...document.querySelectorAll('.step-card.kind-content')].pop()
+    return {
+      nota: !!card?.querySelector('.step-note'),
+      bloque: !!card?.querySelector('.step-content')
+    }
+  })
+  check(
+    notaSola.nota && !notaSola.bloque,
+    'Contenido: «Nota destacada» abre solo el editor de la nota, no el del bloque',
+    `nota ${notaSola.nota} · bloque ${notaSola.bloque}`
+  )
+  await gui.locator('.step-card.kind-content').last().locator('.icon-btn.danger').click()
+
   // Bloque de contenido: se escribe sintaxis de Docusaurus y se previsualiza.
   await gui.locator('.add-menu > button').click()
   await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  await gui.locator('.add-menu-list button:has-text("Texto libre")').click()
   await gui.waitForSelector('.step-card.kind-content', { timeout: 5000 })
   const contentCard = gui.locator('.step-card.kind-content').last()
   await contentCard.locator('.step-title').fill('Estados de una matrícula')
@@ -2634,7 +2723,7 @@ try {
     captureCard.title
   )
 
-  // --- Pegar del portapapeles (§15) ---
+  // --- Pegar del portapapeles (§14) ---
   //
   // El pegado se prueba por su camino real, el evento del teclado: se construye
   // un `ClipboardEvent` con lo que llevaría el portapapeles (una imagen, o una
@@ -2851,6 +2940,56 @@ try {
     JSON.stringify(cleaned)
   )
 
+  // Lo quitado dentro de una tarjeta también se recupera: vuelve al mismo paso,
+  // con su texto (§19). La papelera lista lo más reciente primero.
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  const innerLabels = await gui.evaluate(() =>
+    [...document.querySelectorAll('.trash-list > li')].map(
+      (li) => li.querySelector('b')?.textContent ?? ''
+    )
+  )
+  const notePreview = await gui
+    .locator('.trash-list > li')
+    .nth(1)
+    .locator('.trash-preview')
+    .textContent()
+  await gui.locator('.trash-list > li').nth(1).getByRole('button', { name: 'Restaurar' }).click()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  await removable.locator('.note-btn.has-note').waitFor({ timeout: 5000 })
+  await removable.locator('.note-btn').click()
+  const noteBack = await removable.locator('.note-body').inputValue()
+  // La papelera trae ya lo quitado en etapas anteriores (un elemento de un grupo,
+  // pasos de prueba): lo que se comprueba aquí es que estos dos van los primeros,
+  // que es el orden de la lista.
+  check(
+    innerLabels.length >= 2 &&
+      /^Bloque de «/.test(innerLabels[0]) &&
+      /^Nota de «/.test(innerLabels[1]) &&
+      /Nota que se va a quitar/.test(notePreview ?? '') &&
+      noteBack === 'Nota que se va a quitar.',
+    'Papelera: el bloque y la nota quitados vuelven al mismo paso con su texto',
+    `${innerLabels.join(' · ')} → nota restaurada: «${noteBack}»`
+  )
+
+  // Se vuelve a quitar (el resto de la etapa comprueba que lo quitado NO llega
+  // al manual) y se vacía la papelera, que es la única salida definitiva.
+  await removable.locator('.step-note .editor-remove').click()
+  await removable.locator('.step-note .editor-remove-confirm button.danger').click()
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  await gui.locator('.trash-modal footer .btn.danger').click()
+  await gui.locator('.trash-confirm .btn.danger').click()
+  const emptied = await gui.locator('.trash-list > li').count()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  check(
+    emptied === 0 && (await gui.locator('.panel-toolbar .btn-trash').count()) === 0,
+    'Papelera: vaciarla la deja sin entradas y retira su botón de la barra',
+    `${emptied} entrada(s)`
+  )
+
   // Guardado: el MDX debe llevar tabla, código, pestañas (con sus imports), la
   // captura externa y las imágenes pegadas, y NO numerar el bloque de contenido
   // como un paso más.
@@ -2896,7 +3035,6 @@ try {
   const extrasDir = join(outDir, 'matriculas', 'extras-de-matricula')
   const extrasMdx = readFileSync(join(extrasDir, 'index.mdx'), 'utf8')
   const extrasSession = JSON.parse(readFileSync(join(extrasDir, 'session.json'), 'utf8'))
-  const extrasFlow = JSON.parse(readFileSync(join(extrasDir, 'flow.json'), 'utf8'))
 
   check(
     !/se va a quitar/i.test(extrasMdx) && !JSON.stringify(extrasSession).includes('se va a quitar'),
@@ -2963,30 +3101,13 @@ try {
     'Pegar: la imagen pegada se numera como paso y publica su nota en el MDX'
   )
   check(
-    !extrasFlow.actions.some(
-      (a) => a.action === 'capture' || a.action === 'content' || a.action === 'image'
-    ),
-    'Flujo: nada de lo añadido a mano (captura, imagen o contenido) entra en flow.json'
+    !existsSync(join(extrasDir, 'flow.json')),
+    'Paquete: solo se escribe session.json junto al MDX y las capturas'
   )
   check(
     extrasSession.steps.some((s) => s.fields?.length === 2 && s.mergedActions?.length === 2),
-    'Agrupar a mano: el paso agrupado se guarda con sus dos acciones para el runner'
+    'Agrupar a mano: el paso agrupado guarda las acciones de sus dos elementos'
   )
-
-  // El runner salta lo que no sale del navegador en vez de darlo por fallido.
-  const extrasRegen = await gui.evaluate(
-    (dir) => window.docrecorder.invoke('runner:regenerate', dir),
-    extrasDir
-  )
-  const skipped = extrasRegen.results.filter((r) => r.status === 'skipped')
-  check(
-    skipped.length === 5 && skipped.filter((r) => /Imagen pegada/.test(r.detail)).length === 2,
-    'Runner: lo añadido a mano se salta (captura, imágenes pegadas y contenido), no cuenta como fallo',
-    skipped.map((r) => r.detail).join(' | ')
-  )
-  if (await gui.locator('.runner-report').count()) {
-    await gui.getByRole('button', { name: 'Entendido' }).click()
-  }
 
   // --- Secciones: apartados dentro de una grabación (§8/§10) ---
   //
@@ -3133,7 +3254,6 @@ try {
   const sectionsDir = join(outDir, 'matriculas', 'con-secciones')
   const sectionsMdx = readFileSync(join(sectionsDir, 'index.mdx'), 'utf8')
   const sectionsSession = JSON.parse(readFileSync(join(sectionsDir, 'session.json'), 'utf8'))
-  const sectionsFlow = JSON.parse(readFileSync(join(sectionsDir, 'flow.json'), 'utf8'))
   check(
     /^## Registro del alumno$/m.test(sectionsMdx) &&
       (sectionsMdx.match(/^### \d+\./gm) ?? []).length === 4 &&
@@ -3151,10 +3271,6 @@ try {
     !!sectionStep && sectionStep.screenshot === '',
     'Secciones: el separador se guarda como paso sin captura',
     sectionStep?.title
-  )
-  check(
-    !sectionsFlow.actions.some((a) => a.action === 'section'),
-    'Secciones: el separador no entra en flow.json (no hay nada que reproducir)'
   )
 
   // --- Descartar documentación que Git no tiene registrada ---
@@ -3347,7 +3463,7 @@ try {
     `${commitsBefore} → ${g('rev-list --count docs/matriculas')} commits · ${reeditReport.replace(/\n/g, ' ')}`
   )
 
-  // --- Carpetas de capturas (§17) ---
+  // --- Carpetas de capturas (§16) ---
   //
   // Un paso del manual que necesita VARIAS imágenes: las pantallas de un
   // asistente, lo que se ve antes y después. Se comprueba el circuito entero:
@@ -3429,6 +3545,7 @@ try {
   await gui.locator('.group-card .group-title').click()
   await gui.locator('.add-menu > button').click()
   await gui.locator('.add-menu-list button:has-text("Bloque de contenido")').click()
+  await gui.locator('.add-menu-list button:has-text("Texto libre")').click()
   await gui.waitForFunction(
     () => document.querySelectorAll('.step-card.in-group').length === 2,
     null,
@@ -3466,6 +3583,38 @@ try {
     afterOut.join(' ')
   )
 
+  // Papelera: quitar la carpeta LIBERA sus capturas en vez de borrarlas, así que
+  // restaurarla tiene que volver a meterlas dentro (§19). Es el caso que obliga a
+  // recordar quién colgaba de ella: sin eso volvería vacía.
+  await gui.locator('.group-card .icon-btn.danger').click()
+  await gui.waitForFunction(() => document.querySelectorAll('.group-card').length === 0, null, {
+    timeout: 5000
+  })
+  const freed = await gui.locator('.step-card.in-group').count()
+  await gui.locator('.panel-toolbar .btn-trash').click()
+  await gui.waitForSelector('.trash-modal', { timeout: 5000 })
+  const folderEntry = await gui.locator('.trash-list > li b').first().textContent()
+  await gui.locator('.trash-list > li').first().getByRole('button', { name: 'Restaurar' }).click()
+  await gui.locator('.trash-modal footer').getByRole('button', { name: 'Cerrar' }).click()
+  await gui.waitForSelector('.trash-modal', { state: 'detached', timeout: 5000 })
+  await gui.waitForFunction(() => document.querySelectorAll('.group-card').length === 1, null, {
+    timeout: 5000
+  })
+  const backInFolder = await gui.evaluate(() =>
+    [...document.querySelectorAll('.step-card, .group-card')].map((n) =>
+      n.classList.contains('group-card')
+        ? '📁'
+        : n.classList.contains('in-group')
+          ? '·'
+          : n.querySelector('.step-badge')?.textContent
+    )
+  )
+  check(
+    freed === 0 && backInFolder.join('') === '1📁·3' && /^Carpeta/.test(folderEntry ?? ''),
+    'Papelera: restaurar una carpeta la devuelve con las capturas que colgaban de ella',
+    `${folderEntry} · sueltas al quitarla: ${freed} · ${backInFolder.join(' ')}`
+  )
+
   await gui.fill('.topbar input[placeholder="matriculas"]', 'matriculas')
   await gui.fill('.topbar input[placeholder="institucion"]', '')
   await gui.fill('.topbar input[placeholder="crear-matricula"]', 'con-carpeta')
@@ -3485,7 +3634,6 @@ try {
   const folderDir = join(outDir, 'matriculas', 'con-carpeta')
   const folderMdx = readFileSync(join(folderDir, 'index.mdx'), 'utf8')
   const folderSession = JSON.parse(readFileSync(join(folderDir, 'session.json'), 'utf8'))
-  const folderFlow = JSON.parse(readFileSync(join(folderDir, 'flow.json'), 'utf8'))
   const folderStep = folderSession.steps.find((s) => s.kind === 'group')
   const member = folderSession.steps.find((s) => s.groupId === folderStep?.id)
   check(
@@ -3503,16 +3651,10 @@ try {
     'Carpetas: la carpeta sale como UN paso numerado y su captura se publica dentro',
     (folderMdx.match(/^## .*/gm) ?? []).join(' / ')
   )
-  check(
-    !folderFlow.actions.some((a) => a.action === 'group') &&
-      folderFlow.actions.some((a) => a.url && a.action === 'click'),
-    'Carpetas: la carpeta no entra en flow.json, pero el paso que contiene sí',
-    `${folderFlow.actions.length} acción(es)`
-  )
 
   await gui.evaluate(() => window.docrecorder.invoke('draft:clear'))
 
-  // --- Etapa 12: comprobar el sitio antes de registrar y vista previa (§18) ---
+  // --- Etapa 12: comprobar el sitio antes de registrar y vista previa (§17) ---
   //
   // El repositorio de la prueba no es un proyecto npm, así que hasta aquí no
   // había nada que comprobar (y guardar no se detenía). Se monta uno con la
@@ -3533,7 +3675,7 @@ try {
       "import { join } from 'node:path'",
       'const walk = (dir) =>',
       '  readdirSync(dir, { withFileTypes: true }).flatMap((e) =>',
-      "    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]",
+      '    e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)]',
       '  )',
       "const pages = existsSync('docs') ? walk('docs').filter((f) => f.endsWith('.mdx')) : []",
       "const roto = pages.find((f) => readFileSync(f, 'utf8').includes('ROMPEME'))",
@@ -3581,6 +3723,11 @@ try {
         scripts: {
           typecheck: 'node -e "process.exit(0)"',
           'lint:docs': 'node -e "process.exit(0)"',
+          // Una comprobación propia del repositorio, de las que la app no
+          // conoce por su nombre pero su CI sí ejecuta (§20).
+          'lint:extra': 'node -e "process.exit(0)"',
+          // Y una que ESCRIBE: no debe ejecutarse nunca, aunque se llame lint.
+          'lint:fix': 'node -e "process.exit(1)"',
           build: 'node scripts/compilar.mjs',
           serve: 'node scripts/servir.mjs'
         }
@@ -3589,6 +3736,27 @@ try {
       2
     )
   )
+  // La guía de estilo del repositorio: lo que la ficha del proyecto tiene que
+  // leer y enseñar ANTES de escribir la guía siguiente (§20).
+  writeFileSync(
+    join(site, 'CONTRIBUTING.md'),
+    [
+      '# Guía de estilo del sitio de prueba',
+      '',
+      'Las convenciones que sigue toda guía de este repositorio.',
+      '',
+      '## Redacción',
+      '',
+      '- Sin guion largo: usa dos puntos, paréntesis o coma.',
+      '- Sin emojis en ninguna parte.',
+      '',
+      '## Imágenes',
+      '',
+      '- El alt de cada imagen repite el título del paso.',
+      ''
+    ].join('\n')
+  )
+
   const gs = (args) => execSync(`git ${args}`, { cwd: site, encoding: 'utf8' }).trim()
   execSync('git init -q -b main', { cwd: site })
   gs('config user.email prueba@ejemplo.com')
@@ -3602,11 +3770,16 @@ try {
   )
   check(
     comandos !== null &&
-      comandos.checks.map((c) => c.script).join(',') === 'typecheck,lint:docs,build' &&
+      comandos.checks.map((c) => c.script).join(',') === 'typecheck,lint:docs,lint:extra,build' &&
       comandos.canServe === true &&
       comandos.projectRoot.endsWith(site.split('/').pop()),
-    'Comprobación: se detectan los comandos del proyecto de destino, del más barato al más caro',
+    'Comprobación: se detectan los comandos del proyecto, los suyos propios incluidos y el build al final',
     comandos ? comandos.checks.map((c) => c.script).join(' → ') : '(ninguno)'
+  )
+  check(
+    !comandos?.checks.some((c) => c.script === 'lint:fix'),
+    'Comprobación: lo que ESCRIBE no se ofrece nunca, aunque se llame «lint»',
+    comandos?.checks.map((c) => c.script).join(' → ') ?? '(ninguno)'
   )
   const sinProyecto = await gui.evaluate(
     (dir) => window.docrecorder.invoke('checks:detect', dir),
@@ -3619,9 +3792,9 @@ try {
   )
 
   /** Guarda una guía en el sitio de prueba, con el título (y el commit) que se pidan. */
-  const saveToSite = (feature, title, verify) =>
+  const saveToSite = (feature, title, verify, skipChecks = []) =>
     gui.evaluate(
-      ([dir, feature, title, verify]) =>
+      ([dir, feature, title, verify, skipChecks]) =>
         window.docrecorder.invoke('session:save', {
           meta: {
             module: 'publicacion',
@@ -3655,19 +3828,23 @@ try {
             branch: 'docs/publicacion',
             message: `docs(publicacion): ${feature}`,
             push: false,
-            verify
+            verify,
+            skipChecks
           }
         }),
-      [siteDocs, feature, title, verify]
+      [siteDocs, feature, title, verify, skipChecks]
     )
 
   const okSave = await saveToSite('guia-buena', 'Abrir el listado', true)
   check(
     okSave.checks?.ok === true &&
-      okSave.checks.runs.map((r) => r.script).join(',') === 'typecheck,lint:docs,build' &&
+      okSave.checks.runs.map((r) => r.script).join(',') ===
+        'typecheck,lint:docs,lint:extra,build' &&
       !!okSave.git,
     'Comprobación: si los tres comandos pasan, el commit se hace como siempre',
-    okSave.checks ? okSave.checks.runs.map((r) => `${r.script} ${r.ms}ms`).join(' · ') : '(sin datos)'
+    okSave.checks
+      ? okSave.checks.runs.map((r) => `${r.script} ${r.ms}ms`).join(' · ')
+      : '(sin datos)'
   )
 
   // Vista previa: compila y sirve el sitio, y devuelve la dirección de ESTA guía
@@ -3717,6 +3894,31 @@ try {
     existsSync(join(siteDocs, 'publicacion', 'guia-rota', 'index.mdx')),
     'Comprobación: el paquete sí queda escrito en disco, para poder corregirlo y reintentar'
   )
+  check(
+    fallo?.ownFiles?.some((f) => f.includes('guia-rota')) && !fallo?.otherFiles?.length,
+    'Comprobación: el fallo se atribuye a la guía que se acaba de guardar',
+    `propios: ${fallo?.ownFiles?.join(' ') ?? '(ninguno)'} · ajenos: ${fallo?.otherFiles?.join(' ') ?? '(ninguno)'}`
+  )
+
+  // Lo que motivó repartir la culpa: los comandos miran TODA la documentación,
+  // así que una página ajena a medio escribir bloquea el commit de una guía que
+  // no tiene nada malo. Hay que poder verlo y registrar igualmente con criterio.
+  mkdirSync(join(siteDocs, 'otro-modulo', 'pagina-ajena'), { recursive: true })
+  writeFileSync(
+    join(siteDocs, 'otro-modulo', 'pagina-ajena', 'index.mdx'),
+    '# Página de otro\n\nROMPEME\n'
+  )
+  const saveAjeno = await saveToSite('guia-limpia', 'Abrir el panel', true)
+  const falloAjeno = saveAjeno.checks?.runs.find((r) => !r.ok)
+  check(
+    saveAjeno.checks?.ok === false &&
+      !saveAjeno.git &&
+      falloAjeno?.otherFiles?.some((f) => f.includes('pagina-ajena')) &&
+      !falloAjeno?.ownFiles?.length,
+    'Comprobación: si lo roto es de otra página, se dice que no es de tu guía',
+    `ajenos: ${falloAjeno?.otherFiles?.join(' ') ?? '(ninguno)'}`
+  )
+  rmSync(join(siteDocs, 'otro-modulo'), { recursive: true, force: true })
   // Las comprobaciones se saltan antes de fallar la primera: es lo que hace
   // «Registrar de todos modos» desde el aviso.
   const forzado = await saveToSite('guia-rota', 'Paso ROMPEME', false)
@@ -3726,20 +3928,141 @@ try {
     forzado.git?.message ?? forzado.gitError ?? '(sin commit)'
   )
 
+  // Lo desmarcado no se ejecuta (§20). Es el caso que lo motivó: compilar tarda
+  // y no siempre hace falta pagarlo en cada guardado, mientras que el estilo sí
+  // conviene comprobarlo siempre. Con «build» fuera, la guía que NO compila se
+  // registra igual: se ejecuta lo demás y el commit sale.
+  const commitsAntesDeSaltar = Number(gs('rev-list --count --all'))
+  const saltando = await saveToSite('guia-rota', 'Paso ROMPEME', true, ['build'])
+  check(
+    saltando.checks?.ok === true &&
+      saltando.checks.runs.map((r) => r.script).join(',') === 'typecheck,lint:docs,lint:extra' &&
+      !!saltando.git &&
+      Number(gs('rev-list --count --all')) === commitsAntesDeSaltar + 1,
+    'Requisitos: el comando desmarcado no se ejecuta y el resto sí',
+    saltando.checks?.runs.map((r) => r.script).join(' → ') ?? '(sin comprobaciones)'
+  )
+
   // Y la sección del panel, que es donde se ve y se desactiva.
   await gui.fill('.topbar input[placeholder="Sin seleccionar"]', siteDocs)
   await gui.waitForSelector('.git-preview button', { timeout: 15000 })
+  await gui.waitForSelector('.git-checks li', { timeout: 15000 })
   const seccion = await gui.evaluate(() => ({
-    comandos: document.querySelector('.git-preview')?.previousElementSibling
-      ? [...document.querySelectorAll('.git-section .git-toggle em')].map((n) => n.textContent)
-      : [],
-    previa: document.querySelector('.git-preview button')?.textContent ?? ''
+    comandos: [...document.querySelectorAll('.git-checks li code')].map((n) => n.textContent),
+    resumen: [...document.querySelectorAll('.git-section .git-toggle em')].map(
+      (n) => n.textContent
+    ),
+    previa: [...document.querySelectorAll('.git-preview button')].map((n) => n.textContent)
   }))
   check(
-    seccion.comandos.some((t) => t.includes('npm run build')) &&
-      seccion.previa === 'Vista previa del sitio',
+    seccion.comandos.join(' · ') ===
+      'npm run typecheck · npm run lint:docs · npm run lint:extra · npm run build' &&
+      seccion.previa.includes('Vista previa del sitio'),
     'Comprobación: el panel enumera los comandos del proyecto y ofrece la vista previa',
     seccion.comandos.join(' | ')
+  )
+
+  // --- Requisitos del proyecto: la ficha antes de escribir (§20) ---
+  //
+  // El fallo real que lo motivó: el commit se bloqueaba una y otra vez porque
+  // `lint:docs` aplica reglas de redacción escritas en el CONTRIBUTING.md del
+  // repositorio, fuera de esta aplicación. Aquí se comprueba que la app las lee
+  // de ese repositorio, las enseña y deja elegir qué comandos se ejecutan.
+  const desmarcar = gui.locator('.git-checks li', { hasText: 'npm run build' }).locator('input')
+  await desmarcar.uncheck()
+  await gui.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.git-section .git-toggle em')].some((n) =>
+        /3 de 4/.test(n.textContent ?? '')
+      ),
+    null,
+    { timeout: 5000 }
+  )
+  const recordado = await gui.evaluate(() => localStorage.getItem('docrecorder.skipChecks'))
+  check(
+    recordado !== null && JSON.parse(recordado)[site]?.join(',') === 'build',
+    'Requisitos: desmarcar un comando se recuerda para ese proyecto',
+    recordado ?? '(nada guardado)'
+  )
+
+  await gui.getByRole('button', { name: 'Requisitos del proyecto' }).click()
+  await gui.waitForSelector('.requirements-modal', { timeout: 5000 })
+  await gui.waitForSelector('.req-guide', { timeout: 5000 })
+  const ficha = await gui.evaluate(() => ({
+    datos: [...document.querySelectorAll('.req-facts dd')].map((n) => n.textContent.trim()),
+    marcados: [...document.querySelectorAll('.requirements-modal .req-checks input')].map(
+      (i) => i.checked
+    ),
+    reglas: document.querySelector('.req-guide')?.textContent ?? '',
+    apartados: document.querySelector('.req-search .muted')?.textContent ?? ''
+  }))
+  check(
+    ficha.datos[0].endsWith(site.split('/').pop()) &&
+      ficha.datos[1] === 'docs' &&
+      ficha.datos[2] === 'docs/publicacion' &&
+      ficha.marcados.join(',') === 'true,true,true,false',
+    'Requisitos: la ficha dice proyecto, carpeta, rama y qué se ejecutará',
+    `${ficha.datos.join(' · ')} · marcados ${ficha.marcados.join(',')}`
+  )
+  check(
+    /Sin guion largo/.test(ficha.reglas) && /3 apartado/.test(ficha.apartados),
+    'Requisitos: la guía de estilo se lee del repositorio y se enseña dentro de la app',
+    ficha.apartados
+  )
+
+  // Buscar deja solo el apartado que habla de eso: cuatrocientas líneas de guía
+  // se consultan, no se leen enteras.
+  await gui.fill('.req-search input', 'emoji')
+  await gui.waitForFunction(
+    () => /1 de 3/.test(document.querySelector('.req-search .muted')?.textContent ?? ''),
+    null,
+    { timeout: 5000 }
+  )
+  const filtrado = await gui.evaluate(() => document.querySelector('.req-guide')?.textContent ?? '')
+  check(
+    /Sin emojis/.test(filtrado) && !/alt de cada imagen/.test(filtrado),
+    'Requisitos: buscar en las reglas deja solo los apartados que las mencionan',
+    filtrado.replace(/\s+/g, ' ').slice(0, 80)
+  )
+  await gui.getByRole('button', { name: 'Entendido' }).click()
+  await gui.waitForSelector('.requirements-modal', { state: 'detached', timeout: 5000 })
+
+  // Y sale sola al estrenar guía, que es el momento en el que sirve de algo:
+  // justo antes de escribir la siguiente, no cuando el commit ya falló.
+  await gui.locator('.add-menu > button').click()
+  await gui.locator('.add-menu-list button:has-text("Nota destacada")').click()
+  await gui.waitForSelector('.step-card', { timeout: 5000 })
+  await gui.fill('.topbar input[placeholder="matriculas"]', 'publicacion')
+  await gui.fill('.topbar input[placeholder="institucion"]', '')
+  await gui.fill('.topbar input[placeholder="crear-matricula"]', 'guia-desde-la-gui')
+  await gui.fill('.topbar input[placeholder="Crear una matrícula"]', 'Guía escrita desde la GUI')
+  await gui.locator('.panel-header .controls .ctrl').nth(2).click()
+  await gui.waitForSelector('.dialog', { timeout: 10000 })
+  if (await gui.getByRole('button', { name: 'Registrar en Git' }).count()) {
+    await gui.getByRole('button', { name: 'Registrar en Git' }).click()
+  }
+  if (await gui.getByRole('button', { name: 'Guardar de todos modos' }).count()) {
+    await gui.getByRole('button', { name: 'Guardar de todos modos' }).click()
+  }
+  await gui.waitForFunction(
+    () => /Documentación guardada/.test(document.querySelector('.dialog h3')?.textContent ?? ''),
+    null,
+    { timeout: 30000 }
+  )
+  await gui.getByRole('button', { name: 'Cerrar' }).click()
+  const salioSola = await gui
+    .waitForSelector('.requirements-modal', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false)
+  check(salioSola, 'Requisitos: la ficha sale sola al estrenar guía, detrás del aviso de guardado')
+  // Y se puede callar para siempre sin perder el botón.
+  await gui.locator('.intro-remember input').check()
+  await gui.getByRole('button', { name: 'Entendido' }).click()
+  await gui.waitForSelector('.requirements-modal', { state: 'detached', timeout: 5000 })
+  check(
+    (await gui.evaluate(() => localStorage.getItem('docrecorder.requirementsOnStart'))) === '0' &&
+      (await gui.getByRole('button', { name: 'Requisitos del proyecto' }).count()) === 1,
+    'Requisitos: «no mostrarla al empezar» se recuerda y deja el botón donde estaba'
   )
 
   // Restaura la preferencia de agrupar para no dejarla desactivada en la app real.

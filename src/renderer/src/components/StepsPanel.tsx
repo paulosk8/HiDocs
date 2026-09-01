@@ -19,7 +19,8 @@ import {
 import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
-import { groupSize, sectionSize, selectionProblem, useSession } from '../store'
+import { CONTENT_KINDS } from '../content-templates'
+import { checksToRun, groupSize, sectionSize, selectionProblem, useSession } from '../store'
 import { invalidateBranches } from '../useBranches'
 import { GROUP_DROP_PREFIX, GroupCard } from './GroupCard'
 import { SectionCard } from './SectionCard'
@@ -27,6 +28,8 @@ import { StepCard } from './StepCard'
 import { ShotModal } from './ShotModal'
 import { CaptureModal } from './CaptureModal'
 import { ContentModal } from './ContentModal'
+import { TrashModal } from './TrashModal'
+import { RequirementsModal } from './RequirementsModal'
 import { ConfirmDialog } from './ConfirmDialog'
 import { ChecksModal } from './ChecksModal'
 import { GitSection } from './GitSection'
@@ -55,9 +58,6 @@ export function StepsPanel(): React.JSX.Element {
   const branchPickerOpen = useSession((s) => s.branchPickerOpen)
   const helpOpen = useSession((s) => s.helpOpen)
   const docusaurusIntroOpen = useSession((s) => s.docusaurusIntroOpen)
-  // El informe del runner se muestra al terminar; durante el replay el visor
-  // debe quedar VISIBLE (se ve la reproducción y las capturas salen con tamaño).
-  const runnerReportOpen = useSession((s) => s.runnerPhase === 'done')
   const groupConsecutive = useSession((s) => s.groupConsecutive)
   const setGroupConsecutive = useSession((s) => s.setGroupConsecutive)
   const aiOpen = useSession((s) => s.aiOpen)
@@ -73,6 +73,12 @@ export function StepsPanel(): React.JSX.Element {
   const clearSelection = useSession((s) => s.clearSelection)
   const groupSelected = useSession((s) => s.groupSelected)
   const removeSelected = useSession((s) => s.removeSelected)
+  const trash = useSession((s) => s.trash)
+  const lastTrashId = useSession((s) => s.lastTrashId)
+  const trashOpen = useSession((s) => s.trashOpen)
+  const setTrashOpen = useSession((s) => s.setTrashOpen)
+  const restoreTrash = useSession((s) => s.restoreTrash)
+  const dismissUndo = useSession((s) => s.dismissUndo)
   const addManualStep = useSession((s) => s.addManualStep)
   const addToGroup = useSession((s) => s.addToGroup)
   const setMeta = useSession((s) => s.setMeta)
@@ -85,6 +91,8 @@ export function StepsPanel(): React.JSX.Element {
   const discardEditing = useSession((s) => s.discardEditing)
   const checksRun = useSession((s) => s.checksRun)
   const checksReport = useSession((s) => s.checksReport)
+  const requirementsOpen = useSession((s) => s.requirementsOpen)
+  const setRequirementsOpen = useSession((s) => s.setRequirementsOpen)
   const { draft } = useAiDraft()
   const recaptureGroup = useGroupCapture()
   const {
@@ -95,6 +103,11 @@ export function StepsPanel(): React.JSX.Element {
   } = usePasteStep()
 
   const [addOpen, setAddOpen] = useState(false)
+  // El menú «＋ Añadir» tiene dos niveles: al elegir «Bloque de contenido» la
+  // lista se sustituye por los tipos concretos. Preguntar el tipo evita el caso
+  // que lo motivó: crear un bloque genérico, querer en realidad una nota y
+  // acabar con dos apartados en la misma tarjeta.
+  const [addView, setAddView] = useState<'main' | 'content'>('main')
   /**
    * El diálogo de la imagen, en sus tres formas: elegir una fuente que capturar,
    * ajustar lo que se acaba de pegar antes de crear la tarjeta, o retocar la
@@ -127,6 +140,12 @@ export function StepsPanel(): React.JSX.Element {
    * preguntar si sigue valiendo. Ver el diálogo, más abajo.
    */
   const [askContext, setAskContext] = useState(false)
+  /**
+   * Hay que enseñar la ficha del proyecto en cuanto el usuario termine con los
+   * avisos de haber guardado (§20). No se abre a la vez que ellos: se encadena,
+   * o serían tres superposiciones apiladas sobre el mismo momento.
+   */
+  const [pendingRequirements, setPendingRequirements] = useState(false)
   const [result, setResult] = useState<SaveResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -253,7 +272,7 @@ export function StepsPanel(): React.JSX.Element {
         s.gitEnabled &&
         s.gitVerify &&
         !options?.skipVerify &&
-        (s.docsChecks?.checks.length ?? 0) > 0
+        checksToRun(s.docsChecks, s.checksSkip).length > 0
       if (verifying) s.checksStart('commit')
       try {
         const saved = await ipc.invoke('session:save', {
@@ -274,7 +293,9 @@ export function StepsPanel(): React.JSX.Element {
                 // Sin elección explícita se omite, y el main resuelve la rama por
                 // defecto del repositorio.
                 baseBranch: s.gitBaseBranch ?? undefined,
-                verify: verifying
+                verify: verifying,
+                // Lo desmarcado para este proyecto no se ejecuta (§20).
+                skipChecks: s.checksSkip
               }
             : undefined
         })
@@ -304,6 +325,13 @@ export function StepsPanel(): React.JSX.Element {
         // con los nombres de la anterior sin que nadie lo note. Se pregunta al
         // estrenar sesión, que es cuando la respuesta se conoce.
         if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
+        // Y la ficha del proyecto, que es lo que hay que tener delante ANTES de
+        // escribir la guía siguiente: con qué comandos se va a topar y cómo pide
+        // el repositorio que se redacte. Enterarse de eso al final —cuando el
+        // commit se bloquea— es justo lo que se quiere dejar de hacer.
+        if (useSession.getState().requirementsOnStart && useSession.getState().docsChecks) {
+          setPendingRequirements(true)
+        }
         void ipc.invoke('draft:clear')
       } catch (err) {
         useSession.getState().checksFinish()
@@ -398,15 +426,24 @@ export function StepsPanel(): React.JSX.Element {
     [toggleRecording]
   )
 
+  /** Cierra el menú y lo deja en su primer nivel para la próxima vez. */
+  const closeAddMenu = useCallback((): void => {
+    setAddOpen(false)
+    setAddView('main')
+  }, [])
+
   // El menú «Añadir» se cierra al pulsar fuera o con Escape, como el resto de
-  // desplegables de la app.
+  // desplegables de la app. Escape dentro del selector de tipo vuelve a la lista
+  // principal en vez de cerrarlo todo: es un paso atrás, no una cancelación.
   useEffect(() => {
     if (!addOpen) return
     const onDown = (e: MouseEvent): void => {
-      if (!addRef.current?.contains(e.target as Node)) setAddOpen(false)
+      if (!addRef.current?.contains(e.target as Node)) closeAddMenu()
     }
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') setAddOpen(false)
+      if (e.key !== 'Escape') return
+      if (addView === 'content') setAddView('main')
+      else closeAddMenu()
     }
     document.addEventListener('mousedown', onDown)
     document.addEventListener('keydown', onKey)
@@ -414,7 +451,7 @@ export function StepsPanel(): React.JSX.Element {
       document.removeEventListener('mousedown', onDown)
       document.removeEventListener('keydown', onKey)
     }
-  }, [addOpen])
+  }, [addOpen, addView, closeAddMenu])
 
   // El WebContentsView se pinta por encima del HTML del renderer, así que
   // cualquier superposición propia exige ocultarlo mientras esté abierta. Incluye
@@ -432,10 +469,11 @@ export function StepsPanel(): React.JSX.Element {
     branchPickerOpen ||
     helpOpen ||
     docusaurusIntroOpen ||
-    runnerReportOpen ||
     aiOpen ||
     aiContextOpen ||
     pendingDocsOpen ||
+    trashOpen ||
+    requirementsOpen ||
     capture !== null ||
     wideContentId !== null ||
     pasteProblem !== null ||
@@ -490,6 +528,37 @@ export function StepsPanel(): React.JSX.Element {
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [modalOpen, pasteFromEvent, pasteFromClipboard])
+
+  /**
+   * La franja «Deshacer» se retira sola: es un ofrecimiento para el instante en
+   * que uno se da cuenta de que ha borrado lo que no era, no un aviso que haya
+   * que cerrar. Lo quitado sigue en la papelera cuando la franja se va.
+   */
+  const undone = trash.find((entry) => entry.id === lastTrashId) ?? null
+  useEffect(() => {
+    if (!lastTrashId) return
+    const timer = setTimeout(() => dismissUndo(), 12000)
+    return () => clearTimeout(timer)
+  }, [lastTrashId, dismissUndo])
+
+  /**
+   * Cierra uno de los avisos de haber guardado y, si era el último que quedaba,
+   * enseña la ficha del proyecto (§20). Se encadena a mano y no con un efecto
+   * porque el orden es el que importa: primero lo que habla de la guía que se
+   * acaba de terminar, y solo después lo que prepara la siguiente.
+   */
+  const closeAfterSave = (what: 'result' | 'context'): void => {
+    if (what === 'result') setResult(null)
+    else setAskContext(false)
+    const otherPending = what === 'result' ? askContext : result !== null
+    if (otherPending || !pendingRequirements) return
+    setPendingRequirements(false)
+    setRequirementsOpen(true)
+  }
+
+  // Restaurar un elemento de un paso agrupado devuelve el paso: hay que rehacer
+  // su captura para que vuelva a señalar lo que acaba de recuperar.
+  const restore = (entryId: string): void => recaptureGroup(restoreTrash(entryId))
 
   const record = async (): Promise<void> => {
     setProblem(null)
@@ -669,9 +738,9 @@ export function StepsPanel(): React.JSX.Element {
           cancelLabel="Conservarlo"
           onConfirm={() => {
             setMeta({ aiContext: '' })
-            setAskContext(false)
+            closeAfterSave('context')
           }}
-          onCancel={() => setAskContext(false)}
+          onCancel={() => closeAfterSave('context')}
         />
       )}
 
@@ -693,6 +762,10 @@ export function StepsPanel(): React.JSX.Element {
         />
       )}
 
+      {trashOpen && <TrashModal onClose={() => setTrashOpen(false)} onRestore={restore} />}
+
+      {requirementsOpen && <RequirementsModal onClose={() => setRequirementsOpen(false)} />}
+
       {result && (
         <ConfirmDialog
           title="Documentación guardada"
@@ -710,9 +783,9 @@ export function StepsPanel(): React.JSX.Element {
           cancelLabel="Cerrar"
           onConfirm={() => {
             void ipc.invoke('shell:open-path', result.path)
-            setResult(null)
+            closeAfterSave('result')
           }}
-          onCancel={() => setResult(null)}
+          onCancel={() => closeAfterSave('result')}
         />
       )}
     </>
@@ -811,16 +884,16 @@ export function StepsPanel(): React.JSX.Element {
               className="btn"
               aria-expanded={addOpen}
               title={`Añadir algo que no se graba: una imagen pegada, una captura externa, un bloque de contenido o una sección. ${insertHint}`}
-              onClick={() => setAddOpen((v) => !v)}
+              onClick={() => (addOpen ? closeAddMenu() : setAddOpen(true))}
             >
               + Añadir ▾
             </button>
-            {addOpen && (
+            {addOpen && addView === 'main' && (
               <div className="add-menu-list" role="menu">
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     void pasteFromClipboard()
                   }}
                 >
@@ -830,7 +903,7 @@ export function StepsPanel(): React.JSX.Element {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     void ipc.invoke('clipboard:read').then((clip) => {
                       if (clip.file) setCapture({ mode: 'paste', file: clip.file })
                       // Sin imagen que ajustar se cae al selector de fuentes, que
@@ -845,27 +918,38 @@ export function StepsPanel(): React.JSX.Element {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     setCapture({ mode: 'source' })
                   }}
                 >
                   📷 Captura de pantalla…
                   <small>Otra ventana, el escritorio o una imagen del disco</small>
                 </button>
-                <button
-                  role="menuitem"
-                  onClick={() => {
-                    setAddOpen(false)
-                    addManualStep({ kind: 'content', title: '' })
-                  }}
-                >
-                  ▦ Bloque de contenido
-                  <small>Una tabla, código o pestañas de Docusaurus</small>
+                <button role="menuitem" aria-haspopup="menu" onClick={() => setAddView('content')}>
+                  ▦ Bloque de contenido ▸
+                  <small>Elige qué: tabla, código, pestañas, detalle o texto</small>
                 </button>
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
+                    // Una nota es un paso de contenido cuyo cuerpo ES la
+                    // admonition. Crearla desde aquí evita el rodeo de abrir un
+                    // bloque vacío y añadirle la nota al lado.
+                    addManualStep({
+                      kind: 'content',
+                      title: '',
+                      note: { type: 'note', body: '' }
+                    })
+                  }}
+                >
+                  📝 Nota destacada
+                  <small>Un aviso de Docusaurus: nota, consejo, info, aviso o peligro</small>
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    closeAddMenu()
                     addManualStep({ kind: 'group', title: '' })
                   }}
                 >
@@ -875,7 +959,7 @@ export function StepsPanel(): React.JSX.Element {
                 <button
                   role="menuitem"
                   onClick={() => {
-                    setAddOpen(false)
+                    closeAddMenu()
                     addManualStep({ kind: 'section', title: '' })
                   }}
                 >
@@ -884,7 +968,46 @@ export function StepsPanel(): React.JSX.Element {
                 </button>
               </div>
             )}
+            {/* Segundo nivel: qué clase de bloque. La tarjeta nace con el
+                esqueleto ya escrito —la misma plantilla que inserta la barra del
+                editor—, así que no hay que recordar la sintaxis de Docusaurus. */}
+            {addOpen && addView === 'content' && (
+              <div className="add-menu-list" role="menu">
+                <button
+                  role="menuitem"
+                  className="add-menu-back"
+                  onClick={() => setAddView('main')}
+                >
+                  ‹ Volver
+                </button>
+                {CONTENT_KINDS.map(({ kind, label, hint, template }) => (
+                  <button
+                    key={kind}
+                    role="menuitem"
+                    onClick={() => {
+                      closeAddMenu()
+                      addManualStep({ kind: 'content', title: '', content: template })
+                    }}
+                  >
+                    {label}
+                    <small>{hint}</small>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+
+          {/* Solo aparece cuando hay algo dentro: una papelera vacía en la barra
+              sería un botón que no lleva a ninguna parte. */}
+          {trash.length > 0 && (
+            <button
+              className="btn btn-trash"
+              title={`Papelera de la guía: ${trash.length} cosa(s) quitadas que todavía puedes restaurar`}
+              onClick={() => setTrashOpen(true)}
+            >
+              🗑 <em className="trash-count">{trash.length}</em>
+            </button>
+          )}
 
           {/* Solo se redactan los pasos que van al manual: pagar tokens por un paso
               excluido de la documentación no tendría sentido. Las secciones
@@ -926,6 +1049,25 @@ export function StepsPanel(): React.JSX.Element {
             />
             agrupar seguidos
           </label>
+        </div>
+      )}
+
+      {/* Lo que se acaba de quitar, con la vuelta atrás a un clic. Va aquí —entre
+          la barra y la lista— porque es donde estaba mirando quien borró. */}
+      {undone && (
+        <div className="undo-strip">
+          <span className="undo-what">⟲ Quitado: {undone.label}</span>
+          <button className="btn" onClick={() => restore(undone.id)}>
+            Deshacer
+          </button>
+          <button
+            className="icon-btn"
+            title="Ocultar este aviso (sigue en la papelera)"
+            aria-label="Ocultar el aviso de lo quitado"
+            onClick={dismissUndo}
+          >
+            ×
+          </button>
         </div>
       )}
 

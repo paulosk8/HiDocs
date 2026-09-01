@@ -23,14 +23,15 @@ const SECTIONS = [
   { id: 'pegar', label: 'Pegar imágenes y tablas' },
   { id: 'contenido', label: 'Bloques de contenido' },
   { id: 'notas', label: 'Notas destacadas' },
+  { id: 'papelera', label: 'Papelera y deshacer' },
   { id: 'estado', label: 'Estado del proyecto' },
   { id: 'rama', label: 'Rama de trabajo' },
   { id: 'git', label: 'Integración con Git' },
   { id: 'pendiente', label: 'Documentación sin registrar' },
   { id: 'docusaurus', label: 'Salida y Docusaurus' },
+  { id: 'requisitos', label: 'Requisitos del proyecto' },
   { id: 'comprobar', label: 'Comprobar el sitio' },
   { id: 'proyectos', label: 'Explorador de proyectos' },
-  { id: 'regenerar', label: 'Regenerar capturas' },
   { id: 'ia', label: 'Redactar con IA' },
   { id: 'interfaz', label: 'Panel y tema' },
   { id: 'atajos', label: 'Atajos y solución de problemas' }
@@ -101,19 +102,66 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <p>
                 DocRecorder documenta <b>paso a paso</b> los flujos de un sistema web al que solo
                 tienes acceso como usuario (sin su código fuente). Abres el sistema en un visor
-                integrado, grabas tu recorrido y cada interacción se convierte en un <b>paso</b> con
-                su captura de pantalla, el elemento resaltado y un selector reutilizable.
+                integrado, <a onClick={() => go('grabar')}>grabas tu recorrido</a> y cada
+                interacción se convierte en un <b>paso</b> con su captura de pantalla, el elemento
+                resaltado y un selector reutilizable.
               </p>
               <p>
-                El resultado es un paquete portable (JSON + imágenes) más la página del manual en{' '}
-                <b>MDX</b>, lista para que <b>Docusaurus</b> la renderice, y opcionalmente se
-                registra en Git como una rama lista para abrir un Pull Request.
+                El resultado es un paquete portable —el <code>session.json</code> con todo lo
+                grabado y sus imágenes— más la página del manual en <b>MDX</b>, lista para que{' '}
+                <a onClick={() => go('docusaurus')}>Docusaurus</a> la renderice y{' '}
+                <a onClick={() => go('git')}>registrada en Git</a> en la rama de su módulo, lista
+                para abrir un Pull Request.
               </p>
               <p>
-                Dos ayudas más, una vez grabado: la <a onClick={() => go('ia')}>redacción con IA</a>{' '}
-                propone el título y la descripción de cada paso, y el{' '}
-                <a onClick={() => go('regenerar')}>runner de regeneración</a> actualiza las capturas
-                cuando el sistema documentado cambia de interfaz.
+                Pero una guía de verdad no es solo lo que el motor puede grabar, así que el panel
+                deja completar el resto <b>a mano</b>, sin salir de la aplicación:
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Lo que pasa fuera del visor</b> ·{' '}
+                  <a onClick={() => go('captura')}>capturas de otra ventana</a>, del escritorio o de
+                  un archivo, e <a onClick={() => go('pegar')}>imágenes pegadas</a> del
+                  portapapeles, con recorte y recuadro para señalar.
+                </li>
+                <li>
+                  <b>Lo que no es una captura</b> ·{' '}
+                  <a onClick={() => go('contenido')}>bloques de contenido</a> (tablas, código,
+                  pestañas, desplegables) y <a onClick={() => go('notas')}>notas destacadas</a>, con
+                  vista previa de lo que se publicará.
+                </li>
+                <li>
+                  <b>Estructura</b> · <a onClick={() => go('secciones')}>secciones</a> para dividir
+                  una grabación larga en apartados, y{' '}
+                  <a onClick={() => go('carpetas')}>carpetas de capturas</a> para un paso que
+                  necesita varias imágenes.
+                </li>
+                <li>
+                  <b>Un paso del manual, varias acciones</b> ·{' '}
+                  <a onClick={() => go('agrupar')}>agrupar</a> une los controles seguidos del mismo
+                  tipo —los campos de un formulario, las pestañas, las casillas de una columna— y
+                  cualquier combinación que marques a mano.
+                </li>
+                <li>
+                  <b>Redacción con IA</b> · la <a onClick={() => go('ia')}>redacción con IA</a>{' '}
+                  propone el título y la descripción de cada paso a partir de lo que ocurrió en la
+                  pantalla.
+                </li>
+              </ul>
+              <p>
+                Y lo guardado no queda cerrado.{' '}
+                <a onClick={() => go('comprobar')}>Antes de registrar</a> se ejecutan los comandos
+                del proyecto de destino, así que un MDX que no compila no llega al historial, y la
+                guía recién guardada se abre en el navegador ya compilada y servida. La
+                documentación que está en el disco pero{' '}
+                <a onClick={() => go('pendiente')}>Git no tiene registrada</a> se ve, se registra o
+                se descarta; y una funcionalidad <a onClick={() => go('proyectos')}>ya publicada</a>{' '}
+                se trae de vuelta a la sesión para corregirla, reescribiendo su misma carpeta con un
+                commit encima.
+              </p>
+              <p>
+                Quitar tampoco es definitivo: todo lo que se quita del panel se puede devolver a su
+                sitio desde la <a onClick={() => go('papelera')}>papelera de la guía</a>.
               </p>
             </section>
 
@@ -181,6 +229,14 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>‹ › ↻</b> · atrás, adelante y recargar en el visor.
                 </li>
                 <li>
+                  <b>− 100 % +</b> · zoom del visor. El número dice a qué escala estás viendo el
+                  sistema, y pulsarlo vuelve al 100 %. También responde a <b>⌘/Ctrl</b> con <b>+</b>
+                  , <b>−</b> o <b>0</b> y a <b>⌘/Ctrl + rueda</b> dentro del visor: el porcentaje se
+                  actualiza igual, hagas lo que hagas. Ojo: <b>las capturas salen a esta escala</b>,
+                  así que alejarlo para ver una tabla entera cambia lo que se publica. Se recuerda
+                  entre usos.
+                </li>
+                <li>
                   <b>URL base</b> + <b>Abrir</b> · carga el sistema en el visor.
                 </li>
                 <li>
@@ -189,10 +245,6 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 </li>
                 <li>
                   <b>Proyectos…</b> · abre el explorador de repositorios ya usados.
-                </li>
-                <li>
-                  <b>Regenerar…</b> · actualiza las capturas de una funcionalidad ya documentada
-                  (ver <a onClick={() => go('regenerar')}>Regenerar capturas</a>).
                 </li>
                 <li>
                   <b>IA</b> · ajustes de la redacción con IA; muestra <b>✓</b> cuando hay clave
@@ -347,7 +399,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   publicarlo.
                 </li>
                 <li>
-                  <b>Arrastrar</b> para reordenar, <b>eliminar</b> para descartar.
+                  <b>Arrastrar</b> para reordenar, <b>✕</b> para quitar. Lo quitado se puede
+                  recuperar (ver <a onClick={() => go('papelera')}>Papelera y deshacer</a>).
                 </li>
               </ul>
               <p>
@@ -370,6 +423,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <a onClick={() => go('contenido')}>bloque de contenido</a> o una{' '}
                   <a onClick={() => go('secciones')}>sección</a>. Lo añadido se coloca detrás de la
                   tarjeta en la que estés trabajando.
+                </li>
+                <li>
+                  <b>🗑 N</b> · aparece en cuanto quitas algo: es la{' '}
+                  <a onClick={() => go('papelera')}>papelera de la guía</a>, con lo que todavía
+                  puedes restaurar.
                 </li>
                 <li>
                   <b>✨ Redactar todos</b> · redacta de una vez todos los pasos marcados como
@@ -523,10 +581,9 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 por separado: dirían que hay que hacer cuatro cosas donde solo se describe una.
               </p>
               <p>
-                La carpeta no tiene captura propia ni entra en <code>flow.json</code>, pero{' '}
+                La carpeta no tiene captura propia, pero{' '}
                 <b>lo que hay dentro sí conserva lo suyo</b>: un paso grabado metido en una carpeta
-                se sigue reproduciendo y <a onClick={() => go('regenerar')}>regenerando</a> como
-                cualquier otro.
+                mantiene su acción, su selector y su imagen, como cualquier otro.
               </p>
             </section>
 
@@ -576,9 +633,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 secciones se publica exactamente igual que antes.
               </p>
               <p>
-                Las secciones no se numeran, no llevan captura, no entran en <code>flow.json</code>{' '}
-                y <a onClick={() => go('regenerar')}>regenerar capturas</a> las salta: no hay nada
-                que reproducir en ellas.
+                Las secciones no se numeran y no llevan captura: son el título de un apartado, no un
+                paso que haya que hacer.
               </p>
             </section>
 
@@ -611,9 +667,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </ul>
               <p>
                 El paso resultante se comporta como cualquier otro: título, descripción, nota,
-                bloque de contenido, orden y publicación. La única diferencia es que{' '}
-                <a onClick={() => go('regenerar')}>regenerar capturas</a> no lo toca: esa imagen no
-                la produce el navegador, así que se conserva tal cual.
+                bloque de contenido, orden y publicación. La única diferencia es que su imagen no la
+                produce el navegador, así que no lleva selector ni chip de estrategia.
               </p>
               <p>
                 En <b>macOS</b>, la primera vez hay que autorizar la <b>grabación de pantalla</b> en
@@ -661,11 +716,6 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 tiene otro destino. Y si acabas de usar el visor, haz clic en el panel antes de
                 pegar: el sistema documentado y HiDocs son dos ventanas distintas para el teclado.
               </p>
-              <p>
-                Las imágenes pegadas <b>no se regeneran</b> (
-                <a onClick={() => go('regenerar')}>Regenerar capturas</a>): no las produce el
-                navegador, así que se conservan tal cual.
-              </p>
             </section>
 
             <section id="contenido" data-help-section>
@@ -682,6 +732,19 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   entre la descripción y la captura), y <b>+ Añadir → ▦ Bloque de contenido</b> crea
                   un paso que es <i>solo</i> contenido, para material que no pertenece a ninguna
                   acción concreta. Ese paso no consume número de paso en el manual.
+                </li>
+                <li>
+                  <b>Eliges qué bloque</b> · <b>+ Añadir → ▦ Bloque de contenido</b> pregunta de qué
+                  clase: <b>Tabla</b>, <b>Código</b>, <b>Pestañas</b>, <b>Detalle</b> o{' '}
+                  <b>Texto libre</b>. La tarjeta nace con ese esqueleto ya escrito, listo para
+                  sustituir por lo tuyo.
+                </li>
+                <li>
+                  <b>¿Querías una nota?</b> · está en el mismo menú, como{' '}
+                  <b>+ Añadir → 📝 Nota destacada</b>: crea un paso cuyo contenido es el recuadro de
+                  aviso, con su editor y sin el del bloque (ver{' '}
+                  <a onClick={() => go('notas')}>Notas destacadas</a>). Si más adelante quitas la
+                  nota, la tarjeta se convierte en un bloque de contenido normal.
                 </li>
                 <li>
                   <b>Pegar una tabla</b> · copia una tabla del sistema que estás documentando y
@@ -704,8 +767,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>🗑 Quitarlo</b> · el <b>▦</b> de la cabecera solo <i>abre y cierra</i> el
                   editor: lo escrito sigue ahí (y se publica) aunque lo cierres. Para deshacerte del
                   bloque usa el <b>🗑</b> del final de su barra, que pregunta antes si tiene texto.
-                  En un paso que <i>es</i> el bloque, quitarlo sería eliminar el paso: para eso está
-                  su <b>✕</b>.
+                  Lo quitado va a la <a onClick={() => go('papelera')}>papelera</a>. En un paso que{' '}
+                  <i>es</i> el bloque, quitarlo sería eliminar el paso: para eso está su <b>✕</b>.
                 </li>
               </ul>
               <p>
@@ -724,6 +787,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 <b>recalcar algo importante</b> de ese paso o del grupo. Se publica como un{' '}
                 <b>admonition de Docusaurus</b>, el mismo bloque coloreado con icono que ves en la
                 documentación.
+              </p>
+              <p>
+                Si lo que quieres es una nota <i>suelta</i>, que no cuelgue de ningún paso, créala
+                con <b>+ Añadir → 📝 Nota destacada</b>: es un paso cuyo contenido es el recuadro,
+                sin bloque de contenido al lado.
               </p>
               <ul className="help-defs">
                 <li>
@@ -747,12 +815,72 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>🗑 Quitarla</b> · el <b>📝</b> de la cabecera solo <i>abre y cierra</i> el
                   editor: la nota sigue ahí (y se publica) aunque lo cierres. Para deshacerte de
                   ella usa el <b>🗑</b> de la fila de tipos, que pregunta antes si ya has escrito
-                  algo.
+                  algo. Si te arrepientes, está en la <a onClick={() => go('papelera')}>papelera</a>
+                  .
                 </li>
               </ul>
               <p>
                 La nota aparece en el manual entre la descripción del paso y su captura. Si vacías
                 su contenido, deja de publicarse.
+              </p>
+            </section>
+
+            <section id="papelera" data-help-section>
+              <h3>Papelera y deshacer</h3>
+              <p>
+                Todo lo que quitas de la guía se puede <b>recuperar</b>. Quitar era la única acción
+                del panel sin vuelta atrás, y la más cara: un paso grabado se lleva consigo su
+                captura, su selector y lo que hubieras redactado, y volver a tenerlo obligaba a
+                repetir el proceso en el sistema real.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>⟲ Deshacer</b> · justo después de quitar algo aparece una franja azul encima de
+                  la lista con lo que acabas de quitar y un botón para devolverlo. Se retira sola a
+                  los pocos segundos; lo quitado sigue en la papelera.
+                </li>
+                <li>
+                  <b>🗑 N</b> · en la barra de herramientas del panel, con el número de cosas
+                  quitadas. Abre la <b>papelera de la guía</b>: la lista de todo lo que has quitado,
+                  de lo más reciente a lo más antiguo, con su captura y la hora.
+                </li>
+                <li>
+                  <b>Restaurar</b> · devuelve la tarjeta a la <b>posición que ocupaba</b>, no al
+                  final de la lista. Una carpeta de capturas vuelve con las suyas dentro.
+                </li>
+                <li>
+                  <b>Olvidar</b> y <b>Vaciar la papelera</b> · para lo que ya sabes que no quieres.
+                  A partir de ahí sí es definitivo.
+                </li>
+              </ul>
+              <p>La papelera recoge todas las formas de quitar:</p>
+              <ul className="help-defs">
+                <li>
+                  <b>✕</b> de una tarjeta (paso, captura, imagen pegada, sección o carpeta).
+                </li>
+                <li>
+                  <b>Eliminar</b> de la barra de selección, con varias tarjetas marcadas: se
+                  recuperan todas juntas, cada una en su sitio.
+                </li>
+                <li>
+                  <b>🗑</b> del bloque de contenido y de la nota destacada: vuelven al paso del que
+                  salieron.
+                </li>
+                <li>
+                  <b>✕</b> de un elemento de un paso agrupado: vuelve a su posición dentro del
+                  grupo, con la captura rehecha para volver a señalarlo.
+                </li>
+              </ul>
+              <p>
+                La papelera <b>no se publica</b>: lo que hay dentro está fuera del manual y del
+                paquete mientras siga ahí. Se guarda con el borrador —así que lo que quitaste ayer
+                se sigue pudiendo recuperar hoy— y se vacía al guardar la guía y empezar la
+                siguiente, al descartar una edición y al traer una funcionalidad ya publicada: es la
+                papelera de <i>esta</i> guía, no un historial general.
+              </p>
+              <p>
+                Si el paso al que pertenecía un bloque o una nota ya no está en la guía, su entrada
+                se queda a la vista pero apagada: no hay dónde devolverla. Restaura antes el paso.
               </p>
             </section>
 
@@ -887,7 +1015,7 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </ul>
               <p>
                 También aparece un paquete <b>ya commiteado y cambiado después</b> en el disco: es
-                la señal de que hay una regeneración de capturas o una edición a mano sin registrar.
+                la señal de que hay una reedición o una corrección a mano sin registrar.
               </p>
             </section>
 
@@ -901,8 +1029,7 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
     └── [<subcategoría>/]       (opcional; con su propio _category_.json)
         └── <funcionalidad>/
             ├── index.mdx      (la página del manual que Docusaurus muestra)
-            ├── session.json   (la sesión completa)
-            ├── flow.json      (acciones + selectores)
+            ├── session.json   (la sesión completa: pasos y selectores)
             └── img/paso-01.png …`}
               </pre>
               <p>
@@ -911,8 +1038,8 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 sin «incluir en docs» se omiten; las <a onClick={() => go('notas')}>notas</a> se
                 publican como admonitions. Si usas <b>subcategoría</b>, se añade un nivel de carpeta
                 con su propio <code>_category_.json</code>, y Docusaurus anida el sidebar solo. Los{' '}
-                <code>.json</code> conviven sin estorbar: Docusaurus solo renderiza <code>.md</code>{' '}
-                / <code>.mdx</code>.
+                <code>session.json</code> convive sin estorbar: Docusaurus solo renderiza{' '}
+                <code>.md</code> / <code>.mdx</code>.
               </p>
               <p>
                 Flujo completo: el repositorio de documentación <b>ya existe</b> y lo mantiene otra
@@ -935,6 +1062,42 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               </p>
             </section>
 
+            <section id="requisitos" data-help-section>
+              <h3>Requisitos del proyecto</h3>
+              <p>
+                Cada repositorio de documentación tiene sus reglas —cómo se redacta, qué se
+                comprueba antes de un PR— y hasta ahora vivían fuera de esta aplicación: te
+                enterabas de ellas cuando <code>lint:docs</code> bloqueaba el commit, con la guía ya
+                escrita. La ficha <b>Requisitos del proyecto</b> las pone delante <b>antes</b> de
+                empezar.
+              </p>
+              <ul className="help-defs">
+                <li>
+                  <b>Con qué se trabaja</b> · el proyecto Docusaurus, la carpeta de salida dentro de
+                  él y la rama en la que se registrará.
+                </li>
+                <li>
+                  <b>Qué se ejecutará antes de registrar</b> · los comandos del proyecto, cada uno
+                  con su casilla. Desmarca lo que no necesites en cada guardado (compilar el sitio,
+                  típicamente) y se recuerda para ese proyecto. Ver{' '}
+                  <a onClick={() => go('comprobar')}>Comprobar el sitio</a>.
+                </li>
+                <li>
+                  <b>Cómo se escribe aquí</b> · la guía de estilo del propio repositorio (
+                  <code>CONTRIBUTING.md</code>, <code>STYLEGUIDE.md</code>…), leída de su raíz o de
+                  la del repositorio, con un buscador por apartados: escribe <i>guion</i> o{' '}
+                  <i>emoji</i> y te deja solo lo que habla de eso. También puedes abrirla en tu
+                  editor. Si el repositorio no tiene ninguna, lo dice: la app no se inventa reglas.
+                </li>
+              </ul>
+              <p>
+                Aparece sola al <b>estrenar guía</b> —justo después de guardar la anterior, que es
+                cuando sirve de algo— y está siempre disponible en el botón{' '}
+                <b>Requisitos del proyecto</b>, al final del panel. Si te estorba, la casilla{' '}
+                <b>No mostrarla al empezar una guía</b> la calla para siempre sin quitar el botón.
+              </p>
+            </section>
+
             <section id="comprobar" data-help-section>
               <h3>Comprobar el sitio y vista previa</h3>
               <p>
@@ -951,10 +1114,26 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   si las tiene.
                 </li>
                 <li>
+                  <b>Las demás comprobaciones del repositorio</b> — cualquier script suyo que se
+                  llame <code>lint…</code> o <code>check…</code> (por ejemplo{' '}
+                  <code>lint:modelo</code>), en orden alfabético. Son las que su CI ejecuta en cada
+                  PR: dejarlas fuera solo retrasaba el fallo. Lo que <i>escribe</i> nunca se ejecuta
+                  (<code>lint:fix</code>, <code>format</code>, <code>write-…</code>): comprobar no
+                  puede cambiarte los archivos.
+                </li>
+                <li>
                   <code>npm run build</code> — la que de verdad importa: compila el sitio y falla si
-                  una etiqueta, un enlace o un componente rompen el MDX.
+                  una etiqueta, un enlace o un componente rompen el MDX. Va al final porque es la
+                  que tarda.
                 </li>
               </ul>
+              <p>
+                <b>Y eliges cuáles.</b> Cada comando tiene su casilla al final del panel (y en{' '}
+                <a onClick={() => go('requisitos')}>Requisitos del proyecto</a>): lo que desmarques
+                no se ejecuta, y la elección se recuerda <b>para ese proyecto</b>. Es lo que permite
+                comprobar el estilo en cada guardado —tarda segundos— sin pagar la compilación
+                entera cada vez.
+              </p>
               <p>
                 Se paran en el primero que falle. Si alguno falla, <b>no se comitea nada</b>, pero
                 el paquete <b>sí queda escrito</b> en el repositorio: el aviso te enseña el error
@@ -963,8 +1142,16 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                 verás en <a onClick={() => go('pendiente')}>⚠ N sin registrar</a>.
               </p>
               <p>
+                <b>Y te dice de quién es el problema.</b> Estos comandos revisan <b>toda</b> la
+                documentación del proyecto, así que una página ajena a medio escribir puede hacer
+                fallar la comprobación de una guía que no tiene nada malo. El aviso separa los
+                archivos del error: si ninguno es de la guía que acabas de guardar, lo dice en su
+                título y enumera los ajenos, para que registres con confianza y arregles eso aparte.
+              </p>
+              <p>
                 Compilar tarda: el aviso enseña la salida del comando según sale y se puede
-                cancelar. Si prefieres no esperar, desactiva{' '}
+                cancelar. Si prefieres no esperar por uno en concreto, desmárcalo; y para no
+                comprobar nada en ningún proyecto, desactiva{' '}
                 <b>Comprobar el sitio antes de registrar en Git</b> al final del panel; la
                 preferencia se recuerda. Si tu carpeta de salida no está dentro de un proyecto
                 Docusaurus con <code>package.json</code>, no hay nada que ejecutar y guardar no se
@@ -1022,38 +1209,6 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   disco.
                 </li>
               </ul>
-            </section>
-
-            <section id="regenerar" data-help-section>
-              <h3>Regenerar capturas</h3>
-              <p>
-                Cuando el sistema documentado <b>cambia de interfaz</b>, sus capturas quedan
-                desactualizadas. En vez de volver a grabar, el botón <b>Regenerar…</b> re-ejecuta el
-                flujo de una funcionalidad y actualiza sus capturas:
-              </p>
-              <ol className="help-steps">
-                <li>
-                  Abre el sistema en el visor e <b>inicia sesión</b> (el runner reutiliza esa
-                  sesión).
-                </li>
-                <li>
-                  Pulsa <b>Regenerar…</b> y elige la carpeta de la funcionalidad (la que contiene su{' '}
-                  <code>session.json</code>).
-                </li>
-                <li>
-                  El runner reproduce cada paso en el visor y vuelve a capturar. Localiza los
-                  elementos por sus selectores, con <b>fallback</b> a los alternativos.
-                </li>
-              </ol>
-              <p>
-                Si un paso ya no encuentra su elemento, se <b>marca como fallido</b> (conserva su
-                captura anterior) y el runner sigue con el resto. Las{' '}
-                <a onClick={() => go('captura')}>capturas externas</a> y los{' '}
-                <a onClick={() => go('contenido')}>bloques de contenido</a> se <b>saltan</b>: no
-                salen del navegador y no hay nada que reproducir en ellos. Al final, un informe
-                indica qué pasos se actualizaron y cuáles hay que revisar. Las capturas se
-                sobrescriben en disco; tú revisas y comiteas con el flujo de Git normal.
-              </p>
             </section>
 
             <section id="ia" data-help-section>
@@ -1142,6 +1297,11 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   tengas copiado (ver <a onClick={() => go('pegar')}>Pegar imágenes y tablas</a>).
                 </li>
                 <li>
+                  <b>Ctrl/Cmd + «+» / «−» / «0»</b> · dentro del visor, acercar, alejar y volver al
+                  100 %. El porcentaje de la barra lo sigue (ver{' '}
+                  <a onClick={() => go('barra')}>Barra superior</a>).
+                </li>
+                <li>
                   <b>Esc</b> · cerrar esta ayuda, el explorador o un diálogo abierto.
                 </li>
               </ul>
@@ -1166,6 +1326,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   <b>filas distintas</b> de una tabla, que nunca se agrupan—. Lo que viene después
                   empieza un grupo nuevo. Puedes documentarlo aparte o volver a grabar ese tramo
                   seguido.
+                </li>
+                <li>
+                  <b>Las capturas salen más grandes o más pequeñas de lo normal</b> · el visor tiene
+                  zoom. Mira el porcentaje de la barra superior y púlsalo para volver al 100 %.
                 </li>
                 <li>
                   <b>El corrector no subraya nada</b> · usa el diccionario del sistema operativo.

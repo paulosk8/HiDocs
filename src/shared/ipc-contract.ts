@@ -24,19 +24,19 @@ import type {
   GitCommitResult,
   GitRepoInfo,
   GitSaveOptions,
-  FlowAction,
   PendingDocInfo,
   PreviewResult,
   PreviewStatus,
   ProjectChecks,
   ProjectEntry,
-  RegenReport,
-  RegenStepResult,
+  ProjectGuide,
+  RecordedAction,
   SaveResult,
   SelectorCandidate,
   SessionMeta,
   StepAction,
   StepKind,
+  StepNote,
   Viewport
 } from './types'
 
@@ -106,8 +106,8 @@ export interface RecordedStep extends DocStep {
   /**
    * Campos fundidos en este paso, en orden. Es la fuente de verdad del grupo en
    * la GUI: de aquí se derivan `fields` (lo que se publica) y `mergedActions`
-   * (lo que reproduce el runner), y es lo que permite quitar un campo suelto sin
-   * dejar descuadrada su acción ni su resaltado.
+   * (con qué se vuelve a señalar cada elemento), y es lo que permite quitar un
+   * campo suelto sin dejar descuadrado su resaltado.
    */
   groupItems?: GroupedField[]
   /**
@@ -159,7 +159,7 @@ export interface CommitDocEdit {
 export interface GroupTarget {
   /** referencias del observador a ese elemento (enfocarlo y escribir son dos) */
   refs: number[]
-  /** selectores del paso, en orden de robustez, como los usa el runner */
+  /** selectores del paso, en orden de robustez */
   selectorCandidates: SelectorCandidate[]
 }
 
@@ -198,13 +198,89 @@ export interface GroupedField {
   /** valor introducido; vacío si solo se enfocó */
   value: string
   /**
-   * Acciones que lo produjeron (enfocar y escribir son dos), para que el runner
-   * reproduzca el paso igual que ocurrió.
+   * Acciones que lo produjeron (enfocar y escribir son dos): de sus selectores
+   * sale el modo de volver a localizar el elemento para señalarlo.
    */
-  actions: FlowAction[]
+  actions: RecordedAction[]
   /** referencias a su elemento en el observador, para volver a resaltarlo */
   refs: number[]
 }
+
+/**
+ * Algo que se quitó de la guía y todavía se puede recuperar (§19).
+ *
+ * Existe porque quitar es de las pocas acciones del panel que no tienen vuelta:
+ * un paso grabado se lleva consigo su captura, su selector y lo redactado, y
+ * volver a conseguirlo obliga a repetir el proceso en el sistema real. La
+ * papelera no cambia lo que se publica —lo quitado sigue fuera del manual y del
+ * paquete— sino que conserva lo suficiente para devolverlo a su sitio.
+ *
+ * Cada forma de quitar guarda lo suyo: `steps` para las tarjetas (una, o las
+ * marcadas de golpe), y `content`/`note`/`field` para lo que se quita DENTRO de
+ * una tarjeta, que no borra la tarjeta y por eso solo necesita a qué paso
+ * volver.
+ */
+interface TrashBase {
+  /** id de la entrada de la papelera (no el del paso) */
+  id: string
+  /** cuándo se quitó (ISO): ordena la lista y data cada entrada */
+  at: string
+  /** cómo se lee la entrada en la papelera («Paso 4: Pulsar «Guardar»») */
+  label: string
+}
+
+/** Tarjetas quitadas del panel: el ✕ de una, o «Eliminar» sobre las marcadas. */
+export interface TrashedSteps extends TrashBase {
+  kind: 'steps'
+  /** las tarjetas, tal como estaban, en el orden que tenían */
+  steps: RecordedStep[]
+  /**
+   * Posición que ocupaba cada una. Restaurar las devuelve a su sitio en vez de
+   * amontonarlas al final, que es lo que haría inútil recuperar el paso 3 de una
+   * grabación de cuarenta.
+   */
+  indexes: number[]
+  /**
+   * Capturas que colgaban de cada carpeta quitada: id de la carpeta → ids de sus
+   * capturas. Quitar una carpeta libera sus capturas en lugar de borrarlas
+   * (§16), así que restaurarla tiene que volver a meterlas dentro: sin esto la
+   * carpeta volvería vacía. Va por carpeta porque de una sola vez se pueden
+   * quitar varias (la barra de selección), y entonces cada captura tiene que
+   * saber a cuál vuelve.
+   */
+  members?: Record<string, string[]>
+}
+
+/** Bloque de contenido quitado con el 🗑 de su editor; el paso sigue ahí. */
+export interface TrashedContent extends TrashBase {
+  kind: 'content'
+  stepId: string
+  content: string
+}
+
+/** Nota destacada quitada con el 🗑 de su editor; el paso sigue ahí. */
+export interface TrashedNote extends TrashBase {
+  kind: 'note'
+  stepId: string
+  note: StepNote
+}
+
+/** Elemento quitado de un paso agrupado con el ✕ de su fila. */
+export interface TrashedField extends TrashBase {
+  kind: 'field'
+  stepId: string
+  /** el elemento, con sus acciones y sus referencias para volver a señalarlo */
+  item: GroupedField
+  /** posición que ocupaba dentro del grupo */
+  index: number
+  /**
+   * Los pasos originales del grupo, que quitar un elemento descarta (dejan de
+   * casar con lo que el grupo es). Restaurarlo devuelve también «⊟ Deshacer».
+   */
+  sources?: RecordedStep[]
+}
+
+export type TrashEntry = TrashedSteps | TrashedContent | TrashedNote | TrashedField
 
 /**
  * Borrador de la grabación en curso, persistido para poder cerrar la app y
@@ -224,6 +300,12 @@ export interface DraftPayload {
     messageOverride: string | null
     baseBranch: string | null
   }
+  /**
+   * Papelera de la guía (§19). Va con el borrador para que lo quitado ayer se
+   * pueda recuperar hoy: si no, cerrar la aplicación sería la manera silenciosa
+   * de perder para siempre lo que todavía se podía deshacer.
+   */
+  trash?: TrashEntry[]
   /** ISO; se muestra al ofrecer la restauración */
   savedAt: string
 }
@@ -297,6 +379,13 @@ export interface IpcInvokeMap {
   'viewport:back': () => void
   'viewport:forward': () => void
   'viewport:reload': () => void
+  /**
+   * Cambia la escala del contenido del visor (§18) y devuelve el factor que
+   * quedó, que es lo que la barra enseña en porcentaje. `set` fija uno concreto
+   * (lo usa la GUI al arrancar, con el valor recordado); `in`/`out` avanzan un
+   * paso de la escala y `reset` vuelve al 100 %.
+   */
+  'viewport:zoom': (args: { action: 'in' | 'out' | 'reset' | 'set'; factor?: number }) => number
   'engine:get-state': () => EngineState
   'recorder:start': () => EngineState
   'recorder:pause': () => EngineState
@@ -399,7 +488,7 @@ export interface IpcInvokeMap {
   'docusaurus:suggest-docs': (dir: string) => string | null
   /**
    * Qué comandos del proyecto de destino se pueden ejecutar para comprobar el
-   * sitio (§18), o `null` si la carpeta de salida no está en uno.
+   * sitio (§17), o `null` si la carpeta de salida no está en uno.
    */
   'checks:detect': (outputDir: string) => ProjectChecks | null
   /**
@@ -409,6 +498,12 @@ export interface IpcInvokeMap {
   'checks:run': (outputDir: string) => ChecksResult | null
   /** corta la tanda en marcha (la de guardar incluida) */
   'checks:cancel': () => void
+  /**
+   * La guía de estilo del repositorio de destino (§20), o `null` si no tiene
+   * ninguna. Es lo que hay que leer ANTES de escribir, no después de que
+   * `lint:docs` bloquee el commit.
+   */
+  'docs:guide': (outputDir: string) => ProjectGuide | null
   /**
    * Compila el sitio y lo sirve, y abre en el navegador la guía indicada.
    * `segments` son las carpetas de la guía (módulo/subcategoría/funcionalidad).
@@ -422,12 +517,6 @@ export interface IpcInvokeMap {
   'draft:load': () => DraftPayload | null
   /** descarta el borrador (al finalizar o al desecharlo) */
   'draft:clear': () => void
-  /**
-   * Regenera las capturas de una funcionalidad re-ejecutando su flujo en el visor
-   * autenticado. Sin `featureDir`, pide la carpeta con un selector; con él, la usa
-   * directamente. El progreso llega por el evento `runner:progress`.
-   */
-  'runner:regenerate': (featureDir?: string) => RegenReport
   /** configuración de IA y si cada proveedor tiene clave (nunca la clave en sí) */
   'ai:status': () => AiStatus
   /** guarda o borra (cadena vacía) la clave de un proveedor */
@@ -444,12 +533,17 @@ export interface IpcEventMap {
   /** el atajo global Ctrl+Shift+R pide alternar pausa */
   'recorder:toggle-shortcut': void
   'engine:log': { level: 'info' | 'warn' | 'error'; message: string }
-  /** progreso de la regeneración, un paso a la vez */
-  'runner:progress': RegenStepResult
   /** progreso de la redacción con IA, tras cada lote */
   'ai:progress': { done: number; total: number }
   /** progreso de la comprobación del sitio: qué comando y qué va escribiendo */
   'checks:progress': CheckProgress
+  /**
+   * El zoom del visor cambió sin pasar por los botones: con el teclado
+   * (⌘/Ctrl + `+`, `-`, `0`) o con ⌘/Ctrl + rueda dentro del visor. Sin esto la
+   * barra seguiría enseñando el porcentaje anterior, que es justo lo que esta
+   * función viene a arreglar.
+   */
+  'viewport:zoom-changed': number
 }
 
 export type IpcInvokeChannel = keyof IpcInvokeMap
@@ -462,6 +556,7 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'viewport:back',
   'viewport:forward',
   'viewport:reload',
+  'viewport:zoom',
   'engine:get-state',
   'recorder:start',
   'recorder:pause',
@@ -493,13 +588,13 @@ export const IPC_INVOKE_CHANNELS: IpcInvokeChannel[] = [
   'checks:detect',
   'checks:run',
   'checks:cancel',
+  'docs:guide',
   'preview:start',
   'preview:stop',
   'preview:status',
   'draft:save',
   'draft:load',
   'draft:clear',
-  'runner:regenerate',
   'ai:status',
   'ai:set-key',
   'ai:set-settings',
@@ -511,9 +606,9 @@ export const IPC_EVENT_CHANNELS: IpcEventChannel[] = [
   'recorder:step',
   'recorder:toggle-shortcut',
   'engine:log',
-  'runner:progress',
   'ai:progress',
-  'checks:progress'
+  'checks:progress',
+  'viewport:zoom-changed'
 ]
 
 /** Protocolo custom que sirve las capturas temporales al renderer. */

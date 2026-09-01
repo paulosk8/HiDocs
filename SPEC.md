@@ -12,24 +12,23 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
 2. Presiona "Grabar" y navega normalmente.
 3. Cada interacción relevante genera automáticamente una **tarjeta de paso** en un panel lateral: captura de pantalla con el elemento resaltado + selector detectado + campo editable de título/descripción.
 4. Puede editar, reordenar y eliminar pasos.
-5. Al guardar, exporta un paquete portable a disco: `steps.json` + capturas PNG + un `flow.json` reproducible.
+5. Al guardar, exporta un paquete portable a disco: `session.json` + capturas PNG + la página del manual en MDX.
 
 **Ya implementado tras el MVP:**
 
 - **Integración Git** (ramas, commits, explorador de repositorios). Se planificó como fuera de alcance, pero está construida; ver §10.
 - **Generación de MDX para Docusaurus**. Cada grabación produce, además del paquete JSON, la página del manual en `.mdx` (con su categoría de módulo) que Docusaurus renderiza directamente; ver §7 y §10.
-- **Runner de regeneración**. Re-ejecuta el `flow.json` de una funcionalidad en el visor autenticado y actualiza sus capturas cuando el sistema documentado cambia de interfaz; ver §12.
-- **Asistencia de IA para redactar los pasos**. Propone título y descripción de cada paso a partir de la acción grabada y de su captura; ver §14. Con esto se completa la lista de «fuera de alcance» del planteamiento inicial.
+- **Asistencia de IA para redactar los pasos**. Propone título y descripción de cada paso a partir de la acción grabada y de su captura; ver §13. Con esto se completa la lista de «fuera de alcance» del planteamiento inicial.
 
 ## 2. Stack técnico
 
 - **Electron** (última estable) con **electron-vite** como tooling.
 - **React 18 + TypeScript** en el renderer (GUI).
 - **`WebContentsView`** de Electron para el viewport embebido (NO iframe, NO `<webview>` tag deprecado).
-- **Playwright** (`playwright-core`) conectado al viewport vía **CDP**: Electron se lanza con `--remote-debugging-port`, y un módulo "motor" usa `chromium.connectOverCDP()` para adjuntarse al `WebContentsView` del sistema web. Playwright se usa desde ya para observar el DOM y generar selectores, de modo que en la etapa 3 (runner) los mismos selectores sean reproducibles sin conversión.
+- **Playwright** (`playwright-core`) conectado al viewport vía **CDP**: Electron se lanza con `--remote-debugging-port`, y un módulo "motor" usa `chromium.connectOverCDP()` para adjuntarse al `WebContentsView` del sistema web. Playwright se usa para observar el DOM y generar selectores.
 - **zustand** (o similar ligero) para estado del panel de pasos.
 - Persistencia simple en disco (JSON + PNG). Sin base de datos.
-- **SDK de cada proveedor de IA** para la redacción de los pasos (§14): `@anthropic-ai/sdk` (Claude) y `@google/genai` (Gemini). Ambos se usan **solo desde el proceso principal**.
+- **SDK de cada proveedor de IA** para la redacción de los pasos (§13): `@anthropic-ai/sdk` (Claude) y `@google/genai` (Gemini). Ambos se usan **solo desde el proceso principal**.
 
 ## 3. Arquitectura de procesos
 
@@ -76,17 +75,17 @@ Herramienta de escritorio para documentar paso a paso los módulos de un sistema
   - **Qué cuenta como campo:** no basta la etiqueta HTML. Se reconoce por tres vías, en este orden: el elemento **es** un control (`input`/`select`/`textarea` o un **rol ARIA** de campo — `FIELD_ROLES` en `recorder.ts`); es una **`<label>`** que acciona uno; o es el **envoltorio** de un control estilizado, que el observador detecta subiendo unos pocos niveles hasta un contenedor con **exactamente un** control (`fieldWrapperOf`). Ese último caso es el de los interruptores actuales, donde el `<input>` real está escondido y lo que se pulsa es un `<span>` **hermano** suyo. Un `button`, `a` o `[role=tab]` nunca cuenta como campo aunque esté junto a uno: debe cerrar el grupo.
   - **Un gesto, un paso:** un solo clic puede generar varios eventos —el navegador reenvía el clic de una `<label>` a su control, y un interruptor acciona por código el `<input>` que esconde—. El observador descarta los reenvíos: mismo gesto si llegan dentro de `SAME_GESTURE_MS` y, además, uno contiene al otro, comparten envoltorio de campo, o el segundo no es de confianza (`isTrusted`). Se documenta el primero, que es el visible y el que da mejor selector.
   - **Resaltado del grupo:** la captura de un paso agrupado marca **todos** sus campos, no solo el último. Al fundir, la GUI pide al motor una captura nueva (`recorder:capture-group`) con un recuadro por campo. Por eso el observador conserva las referencias a los elementos en vez de liberarlas al capturar, y recalcula los rectángulos en el momento de la captura (la página puede haber rodado).
-  - **Cuando la referencia ya no vale:** los frameworks actuales **reemplazan el nodo** al re-renderizar (guardar un formulario, redibujar una tabla). El campo sigue en la pantalla, pero es otro elemento y la referencia guardada apunta al viejo: el recuadro no aparecía. Cada elemento del grupo viaja ahora como `GroupTarget` —sus referencias **y** sus `selectorCandidates`—, y el motor localiza por selector (con `page.locator`, como el runner) los que ya no resuelven por referencia. Es lo que hace que se pueda agrupar a mano el formulario con el botón que lo cierra.
+  - **Cuando la referencia ya no vale:** los frameworks actuales **reemplazan el nodo** al re-renderizar (guardar un formulario, redibujar una tabla). El campo sigue en la pantalla, pero es otro elemento y la referencia guardada apunta al viejo: el recuadro no aparecía. Cada elemento del grupo viaja ahora como `GroupTarget` —sus referencias **y** sus `selectorCandidates`—, y el motor localiza por selector (con `page.locator`) los que ya no resuelven por referencia. Es lo que hace que se pueda agrupar a mano el formulario con el botón que lo cierra.
   - **Cuando lo marcado no se vería:** el observador devuelve, además de cuántos elementos marcó, cuántos están **tapados por algo opaco** (`blocked`), cuántos se están **desvaneciendo** (`fading`) y cuántos **ya no están** (`missing`). Tapado → limpiar, esperar ~350 ms y repetir una vez; si sigue tapado, se captura igual con los recuadros. Desvaneciéndose o ausente → **no se captura**: se conserva la imagen que el paso ya tiene, que es la única donde ese elemento se ve. Es lo que pasa al fundir «abrir el menú» con «elegir su opción»: cuando la GUI pide la captura del grupo, el menú ya se cerró, y la buena es la del clic.
   - **Nunca pisar una captura buena:** si la pantalla ya no es la del paso (`url` distinta), no se captura nada y el paso conserva su imagen. Antes se sustituía por una de la pantalla siguiente, que era peor que no rehacerla.
   - **Dentro de una tabla manda dónde está el control.** El observador sitúa cada elemento en la rejilla (`tableRef`, `rowRef`, `cellRef`, `colIndex` y el `colHeader` de su columna; identidades por `WeakMap`) y la GUI funde solo lo que significa algo en un manual: la **misma celda** y la **misma fila** (un registro que se edita en línea) y la **misma columna** en varias filas (la misma acción repetida sobre varios registros: marcar la casilla de cinco alumnos es un paso, no cinco). Lo que **no** se funde es lo que de verdad no tiene que ver: dos controles distintos de filas distintas, dos tablas distintas y una tabla con lo de fuera. El ámbito se comprueba contra **todos** los miembros del grupo, no solo el último, o un grupo de columna se «arrastraría» fuera de su columna paso a paso.
   - **Título por lo que es, no por un recuento:** «Rellenar el formulario», «Rellenar la fila», «Marcar «Estado» en 3 filas» (con el encabezado de la columna), «Ir a las pestañas «A» y «B»», «Pulsar «Guardar» y «Cerrar»». Se recalcula al fundir cada paso nuevo **solo mientras siga siendo el que generó la app**: si quien documenta ya escribió el suyo —el panel enfoca el título de cada paso nuevo, así que es lo normal—, el campo siguiente no se lo pisa. Y el MDX no repite en una lista lo que el título ya enumera.
   - **Deshacer también lo automático:** la fusión automática conserva los pasos originales en `groupSources`, igual que la manual, así que ⊟ devuelve cada uno con su captura sin tener que apagar el interruptor y volver a grabar.
-  - **Fuente de verdad:** en la GUI el grupo vive en `RecordedStep.groupItems` (etiqueta, valor, acciones y referencias por campo). De ahí se derivan `fields` y `mergedActions`, de modo que **quitar un campo** de la tarjeta se lleva también su acción del `flow.json` y su resaltado. No se permite vaciar el grupo: para eso está eliminar el paso.
-- **Agrupar a mano cualquier cosa** (selección múltiple en el panel). La agrupación automática solo puede unir lo que *sabe* que es un formulario, y hay muchos pasos que son UNO para quien lee y que ninguna heurística puede adivinar: dos botones, un selector con su opción, varias filas de una tabla, o una mezcla. El usuario marca la casilla de las tarjetas y pulsa **⊞ Agrupar**; el resultado es exactamente el mismo tipo de paso agrupado (mismos `groupItems`/`fields`/`mergedActions`), así que el resto de la app no distingue su origen.
+  - **Fuente de verdad:** en la GUI el grupo vive en `RecordedStep.groupItems` (etiqueta, valor, acciones y referencias por campo). De ahí se derivan `fields` y `mergedActions`, de modo que **quitar un campo** de la tarjeta se lleva también su acción y su resaltado. No se permite vaciar el grupo: para eso está eliminar el paso.
+- **Agrupar a mano cualquier cosa** (selección múltiple en el panel). La agrupación automática solo puede unir lo que _sabe_ que es un formulario, y hay muchos pasos que son UNO para quien lee y que ninguna heurística puede adivinar: dos botones, un selector con su opción, varias filas de una tabla, o una mezcla. El usuario marca la casilla de las tarjetas y pulsa **⊞ Agrupar**; el resultado es exactamente el mismo tipo de paso agrupado (mismos `groupItems`/`fields`/`mergedActions`), así que el resto de la app no distingue su origen.
   - **Etiqueta de cada elemento:** el nombre del campo si es un campo (así se lee un formulario), y el **título completo** del paso si no lo es («Clic en «Guardar»»), porque ahí el verbo es parte de la información.
   - **Título del grupo:** el caso frecuente no es agrupar cinco cosas cualesquiera, es **un formulario y la acción que lo cierra** —el motor deja el botón aparte porque es otra familia—. Ese grupo se titula «Rellenar el formulario y pulsar «Guardar»», no «… y 1 más»: el recuento no dice nada en el manual. Se conserva el recuento solo para las mezclas que no encajan en ningún patrón.
-  - **Solo pasos seguidos:** el grupo se reproduce como una secuencia; fundir el paso 2 con el 7 reordenaría el flujo real y el runner ejecutaría un orden que nunca ocurrió. La barra de selección **explica el motivo** cuando el botón no está disponible, en vez de quedarse apagada sin más. Tampoco se agrupan capturas externas ni bloques de contenido (§15): no son acciones.
+  - **Solo pasos seguidos:** el grupo cuenta un tramo del flujo; fundir el paso 2 con el 7 juntaría en una tarjeta cosas que nunca ocurrieron seguidas. La barra de selección **explica el motivo** cuando el botón no está disponible, en vez de quedarse apagada sin más. Tampoco se agrupan capturas externas ni bloques de contenido (§14): no son acciones.
   - **Deshacer:** el paso agrupado guarda los originales en `groupSources` (y el borrador copia también **sus** capturas), así que ⊟ devuelve cada paso con su propia imagen en vez de dejar pasos huérfanos compartiendo la del grupo. Quitar un elemento del grupo a mano retira esa posibilidad: restaurar lo que se acaba de quitar sería lo contrario de lo que se pidió.
   - **Captura:** al agrupar se rehace la captura señalando **todos** los elementos (`recorder:capture-group`, la misma pieza que la agrupación automática), incluidos los que el framework haya re-renderizado por el camino. Si la página ya cambió de pantalla, se conserva la que el paso traía.
 
@@ -102,7 +101,7 @@ Por cada paso, generar una lista ordenada de `selectorCandidates` (mínimo 2 cua
 4. Texto visible exacto → `text="Nueva matrícula"` (compatible con `page.getByText`).
 5. CSS estructural corto como último recurso (máx. 3 niveles, sin clases hasheadas).
 
-Guardar TODOS los candidatos en el paso; el primero es el preferido. Esto permite que el runner futuro haga fallback automático.
+Guardar TODOS los candidatos en el paso; el primero es el preferido. Los demás son el fallback con el que se vuelve a localizar el elemento cuando el framework reemplaza el nodo.
 
 ## 5. Consideraciones específicas por Next.js
 
@@ -129,16 +128,28 @@ interface DocSession {
 interface DocStep {
   id: string
   order: number
-  action: 'click' | 'fill' | 'select' | 'submit' | 'press' | 'navigate' | 'capture' | 'image' | 'content' | 'section' | 'group'
+  action:
+    | 'click'
+    | 'fill'
+    | 'select'
+    | 'submit'
+    | 'press'
+    | 'navigate'
+    | 'capture'
+    | 'image'
+    | 'content'
+    | 'section'
+    | 'group'
   kind?: 'interaction' | 'capture' | 'image' | 'content' | 'section' | 'group' // ausente = interaction (lo grabó el motor)
-  groupId?: string // carpeta de capturas a la que pertenece este paso (§17)
+  groupId?: string // carpeta de capturas a la que pertenece este paso (§16)
   title: string // editable por el usuario
   description: string // editable por el usuario
   selectorCandidates: SelectorCandidate[]
   value?: string // para fill/select ("***" si es password)
   fields?: { label: string; value: string }[] // lo agrupado en el paso (§3): campos de un formulario o acciones unidas a mano
-  mergedActions?: FlowAction[] // acciones individuales del paso agrupado, para que el runner lo reproduzca (§12)
-  note?: { // nota destacada → admonition de Docusaurus (§10)
+  mergedActions?: RecordedAction[] // acciones individuales del paso agrupado: con ellas se vuelve a señalar cada elemento
+  note?: {
+    // nota destacada → admonition de Docusaurus (§10)
     type: 'note' | 'tip' | 'info' | 'warning' | 'danger'
     title?: string
     body: string // Markdown/MDX
@@ -171,17 +182,17 @@ interface RecordedStep extends DocStep {
 }
 
 // Un campo dentro de un paso agrupado. De aquí se derivan `fields` (lo que se
-// publica) y `mergedActions` (lo que reproduce el runner), de modo que quitar un
-// campo no deje descuadrada ni su acción ni su resaltado.
+// publica) y `mergedActions` (con qué se vuelve a señalar cada elemento), de
+// modo que quitar un campo no deje descuadrado su resaltado.
 interface GroupedField {
   label: string
   value: string // vacío si solo se enfocó
-  actions: FlowAction[] // enfocar y escribir son dos
+  actions: RecordedAction[] // enfocar y escribir son dos
   refs: number[] // sus elementos, para volver a marcarlos en la captura
 }
 ```
 
-**Tipos de la asistencia de IA** (§14), en `src/shared/types.ts`. La clave **nunca** viaja al renderer: solo si existe o no.
+**Tipos de la asistencia de IA** (§13), en `src/shared/types.ts`. La clave **nunca** viaja al renderer: solo si existe o no.
 
 ```typescript
 type AiProvider = 'anthropic' | 'gemini'
@@ -265,8 +276,7 @@ interface ProjectEntry {
     └── [<subcategory>/]     # opcional (§8): nivel intermedio, con su propio _category_.json
         └── <feature>/
             ├── index.mdx    # página del manual que renderiza Docusaurus (§10)
-            ├── session.json # DocSession completa
-            ├── flow.json    # solo acciones + selectores (insumo del runner futuro)
+            ├── session.json # DocSession completa (pasos, selectores y metadatos)
             └── img/
                 ├── paso-01.png
                 ├── paso-02.png
@@ -281,24 +291,24 @@ Nomenclatura: kebab-case en carpetas, `paso-NN.png` con cero a la izquierda. Al 
 
 Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 440px).
 
-**Barra superior de sesión:** campos módulo/**subcategoría (opcional)**/funcionalidad/título/rol, URL base + botón "Abrir", selector de carpeta de salida, botón "Proyectos…" (explorador de repositorios), "Regenerar…" (runner, §12), "IA" (ajustes de redacción, §14; muestra ✓ cuando hay clave), interruptor de tema y ayuda, e indicador de estado (Listo / Grabando / Pausado).
+**Barra superior de sesión:** campos módulo/**subcategoría (opcional)**/funcionalidad/título/rol, URL base + botón "Abrir", **zoom del visor** (− / porcentaje / +, §18), selector de carpeta de salida, botón "Proyectos…" (explorador de repositorios), "IA" (ajustes de redacción, §13; muestra ✓ cuando hay clave), interruptor de tema y ayuda, e indicador de estado (Listo / Grabando / Pausado).
 
 **Subcategoría (opcional):** un nivel intermedio entre módulo y funcionalidad, para reproducir la anidación del sidebar de Docusaurus (p. ej. `administracion` → `institucion` → `registrar-institucion`). Vacía ⇒ estructura de dos niveles de siempre (retrocompatible). No es obligatoria para guardar. Al **elegir la rama de trabajo**, el selector muestra en **árbol** las categorías y subcategorías ya documentadas en ella (leídas del git, `git:branch-docs`); pulsar «＋ proceso» en una categoría/subcategoría deja la barra lista para grabar un proceso nuevo ahí (`pickCategory`), y pulsar un proceso lo retoma con sus metadatos.
 
-**Notas destacadas por paso:** cada tarjeta de paso tiene un botón 📝 que despliega el `NoteEditor` (§10): tipo de admonition (nota/consejo/info/aviso/peligro), título opcional, barra que aplica los *Markdown Features* (negrita, cursiva, resaltado `<mark>`, código, enlaces, listas, emojis) sobre la selección y **vista previa en vivo** con el aspecto real del recuadro. La nota viaja con el paso (borrador incluido) y se publica en el MDX.
+**Notas destacadas por paso:** cada tarjeta de paso tiene un botón 📝 que despliega el `NoteEditor` (§10): tipo de admonition (nota/consejo/info/aviso/peligro), título opcional, barra que aplica los _Markdown Features_ (negrita, cursiva, resaltado `<mark>`, código, enlaces, listas, emojis) sobre la selección y **vista previa en vivo** con el aspecto real del recuadro. La nota viaja con el paso (borrador incluido) y se publica en el MDX.
 
 **Controles:** ● Grabar, ⏸ Pausar, ■ Detener y guardar. Atajo global `Ctrl+Shift+R` para pausar/reanudar sin tocar el panel.
 
-**Encabezado del panel en dos filas.** Arriba, lo que **identifica** el panel (plegar, «Pasos», contador —que cuenta **pasos**, no secciones—) y los controles de grabación. Debajo, una **barra de herramientas** con lo que se **hace** con los pasos ya capturados: **«＋ Añadir»** (imagen pegada, captura de pantalla externa, bloque de contenido o **sección**, §15 y §16), **«✨ Redactar todos»** (§14) y el interruptor **«agrupar seguidos»** (§3, §17). Separarlas fue necesario al crecer: mezclado, ■ —la única salida del flujo— acababa rodeado de botones de edición o, con el panel estrecho, fuera de la vista. Ambas filas **envuelven** a propósito por el mismo motivo. Cuando hay pasos marcados, la segunda fila se convierte en la **barra de selección** (⊞ Agrupar / Eliminar / Cancelar, con el motivo si no se puede agrupar): las acciones son otras y mezclarlas confundía.
+**Encabezado del panel en dos filas.** Arriba, lo que **identifica** el panel (plegar, «Pasos», contador —que cuenta **pasos**, no secciones—) y los controles de grabación. Debajo, una **barra de herramientas** con lo que se **hace** con los pasos ya capturados: **«＋ Añadir»** (imagen pegada, captura de pantalla externa, bloque de contenido o **sección**, §14 y §15), **«✨ Redactar todos»** (§13) y el interruptor **«agrupar seguidos»** (§3, §16). Separarlas fue necesario al crecer: mezclado, ■ —la única salida del flujo— acababa rodeado de botones de edición o, con el panel estrecho, fuera de la vista. Ambas filas **envuelven** a propósito por el mismo motivo. Cuando hay pasos marcados, la segunda fila se convierte en la **barra de selección** (⊞ Agrupar / Eliminar / Cancelar, con el motivo si no se puede agrupar): las acciones son otras y mezclarlas confundía.
 
 **Al pulsar ■** hay dos comportamientos distintos, y la diferencia es deliberada:
 
 - **Falta un dato** (módulo, funcionalidad o carpeta de salida) o no hay pasos: la grabación **se detiene igualmente** y el aviso dice qué falta. Pulsar ■ significa «he terminado»; validar antes de detener hacía que el botón pareciese no responder. Los pasos se conservan (y el borrador se autoguarda): basta completar arriba y volver a pulsar.
 - **Git activo**: el aviso de confirmación aparece **antes** de detener, e informa de la rama y el mensaje. Eso no es un error sino una decisión —el commit cuesta deshacerlo y la documentación puede no estar completa—, así que cancelar debe dejar seguir grabando sin tener que reanudar.
 
-**Panel de pasos:** lista scrolleable de tarjetas. Cada tarjeta: **casilla de selección** (para agrupar, §3), miniatura clicable (abre la captura a tamaño real en modal), badge de número, título (input), descripción (textarea auto-resize), botón **✨** para redactarla con IA (§14), **▦** para su bloque de contenido y **📝** para su nota (§15, §10), chip con el selector preferido y su estrategia, toggle "incluir en docs", botones eliminar y arrastrar para reordenar (dnd-kit). Un paso agrupado lista además sus elementos, cada uno con un **✕** que lo quita del paso, y ofrece **⊟** para deshacer la agrupación (§3). Al llegar un paso nuevo durante la grabación, hacer scroll automático y enfocar el campo título para escribir la descripción al vuelo.
+**Panel de pasos:** lista scrolleable de tarjetas. Cada tarjeta: **casilla de selección** (para agrupar, §3), miniatura clicable (abre la captura a tamaño real en modal), badge de número, título (input), descripción (textarea auto-resize), botón **✨** para redactarla con IA (§13), **▦** para su bloque de contenido y **📝** para su nota (§14, §10), chip con el selector preferido y su estrategia, toggle "incluir en docs", botones eliminar y arrastrar para reordenar (dnd-kit). Un paso agrupado lista además sus elementos, cada uno con un **✕** que lo quita del paso, y ofrece **⊟** para deshacer la agrupación (§3). Al llegar un paso nuevo durante la grabación, hacer scroll automático y enfocar el campo título para escribir la descripción al vuelo.
 
-**Los pasos que no vienen del motor se distinguen de un vistazo** (`kind`): una captura externa lleva franja ámbar y el chip «captura ajena al visor» en lugar de selector; un bloque de contenido, franja azul, sin miniatura y con su editor desplegado. No tienen selector ni se regeneran, y confundirlos con un paso grabado llevaría a esperar de ellos algo que no pueden dar.
+**Los pasos que no vienen del motor se distinguen de un vistazo** (`kind`): una captura externa lleva franja ámbar y el chip «captura ajena al visor» en lugar de selector; un bloque de contenido, franja azul, sin miniatura y con su editor desplegado. No tienen selector, y confundirlos con un paso grabado llevaría a esperar de ellos algo que no pueden dar.
 
 **El número del paso vive solo en la GUI y en el MDX**, nunca dentro del PNG: el orden cambia al eliminar o reordenar y los píxeles ya no se pueden rehacer (§3).
 
@@ -310,7 +320,7 @@ Layout: viewport a la izquierda (flexible, ~70%), panel derecho fijo (mín. 440p
 
 **Sección Git** (dentro del panel, ver §10): aparece cuando la carpeta de salida está dentro de un repositorio. Casilla "Registrar en Git al guardar", campos de rama y mensaje (prerrellenados a partir de los metadatos), casilla de push (deshabilitada si no hay remoto `origin`), y avisos: si la rama ya existe o de qué rama nacerá, cambios sin guardar que impedirían el cambio de rama, o archivos ajenos ya indexados. El campo de rama edita el **mismo** estado que el selector de la franja. Cuando la carpeta **no** está en un repositorio, la sección lo explica en vez de desaparecer sin más.
 
-**Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite: usar otro proyecto para la sesión (cambia la carpeta de salida), **trabajar en una rama** del repositorio de la sesión (lo mismo que el selector de la franja), **previsualizar** la documentación de un commit (pulsándolo) —sus pasos y capturas, leídos de Git con `git show` sin checkout ni Docusaurus— y, desde esa vista previa, **volver a editarla** (§16). "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
+**Explorador de repositorios** (modal "Proyectos…"): tres columnas — repositorios ya usados → ramas → historial de commits — de **solo lectura** sobre el repositorio. Permite: usar otro proyecto para la sesión (cambia la carpeta de salida), **trabajar en una rama** del repositorio de la sesión (lo mismo que el selector de la franja), **previsualizar** la documentación de un commit (pulsándolo) —sus pasos y capturas, leídos de Git con `git show` sin checkout ni Docusaurus— y, desde esa vista previa, **volver a editarla** (§15). "Quitar de la lista" solo olvida la entrada del registro; no toca el repositorio en disco.
 
 **Borrador (continuar otro día)**: la grabación en curso se autoguarda en `userData/draft` (pasos + capturas durables), con retardo tras cada cambio. Al arrancar, si hay borrador, se ofrece continuar o descartarlo. Se descarta al guardar con éxito. Para las pruebas, el proceso principal acepta `DOCRECORDER_USER_DATA` y aísla todo el estado persistente en un `userData` propio, sin tocar el del usuario.
 
@@ -331,7 +341,7 @@ Diseño limpio, denso en información, con **modo claro y oscuro** (interruptor 
 - `contextIsolation: true`, `nodeIntegration: false` en todos los renderers; IPC solo por `contextBridge` con canales tipados (definir un archivo `ipc-contract.ts` compartido).
 - El viewport del sistema web NO recibe acceso a APIs de Node.
 - No persistir credenciales del sistema documentado; su sesión vive en la partición del `WebContentsView` (`session.fromPartition('persist:target-app')`, para conservar el login entre usos).
-- **Clave de la API de IA** (§14): se guarda en `userData/settings.json` cifrada con `safeStorage` (llavero del sistema operativo), **nunca** en el repositorio de documentación. No sale del proceso principal: el renderer solo puede guardarla y preguntar si existe. Si el sistema no ofrece cifrado, se guarda en claro y la GUI lo advierte.
+- **Clave de la API de IA** (§13): se guarda en `userData/settings.json` cifrada con `safeStorage` (llavero del sistema operativo), **nunca** en el repositorio de documentación. No sale del proceso principal: el renderer solo puede guardarla y preguntar si existe. Si el sistema no ofrece cifrado, se guarda en claro y la GUI lo advierte.
 - **Llamadas a la IA desde el proceso principal**, como las de Git: la clave no pasa por el renderer y las capturas se leen del disco allí.
 - `shell:open-external` solo acepta `http`/`https`: el canal existe para abrir la consola del proveedor de IA, no para que el renderer lance `file://` ni esquemas del sistema.
 - TypeScript estricto. ESLint + Prettier.
@@ -401,7 +411,7 @@ Detalles que hacen que el build de Docusaurus no falle:
 - **Sin enlaces rotos**: solo se referencia la captura de un paso si el archivo se llegó a escribir; una imagen inexistente abortaría el build.
 - **`_category_.json`** por nivel con carpeta propia (módulo y, si la hay, subcategoría) para la etiqueta de la barra lateral, creado **solo si falta** (no se pisa la personalización del mantenedor). Con subcategoría, el sidebar de Docusaurus anida solo (categoría → subcategoría → páginas).
 - **Notas destacadas**: la `note` de un paso se publica entre su descripción y su captura como un **admonition** de Docusaurus (`:::note`/`:::tip`/`:::info`/`:::warning`/`:::danger`), con su título opcional en `[...]`. Se redacta con un editor de barra + vista previa (`NoteEditor.tsx`), sin dependencias nuevas.
-- **Bloques de contenido** (`DocStep.content`, §15): Markdown/MDX escrito por el usuario —tablas, bloques de código, pestañas, `<details>`— publicado entre los campos del paso y su nota. Un paso de tipo `content` es material de apoyo, no una acción: **no consume número de paso** (se titula con `###`) y no aparece en `flow.json`.
+- **Bloques de contenido** (`DocStep.content`, §14): Markdown/MDX escrito por el usuario —tablas, bloques de código, pestañas, `<details>`— publicado entre los campos del paso y su nota. Un paso de tipo `content` es material de apoyo, no una acción: **no consume número de paso** (se titula con `###`).
 - **Saneado del contenido escrito a mano** (`src/shared/mdx-content.ts`, compartido por el generador y la vista previa): el cuerpo de notas y bloques pasa por `sanitizeContent`, que escapa `<` y `{`/`}` **salvo** en las etiquetas de una **lista blanca** que estén **bien cerradas** y **salvo dentro del código** (vallas ``` y `código en línea`, donde MDX no interpreta nada y donde escapar además rompería lo que se muestra, porque Markdown no descodifica entidades dentro de código). `>` no se escapa: MDX no le da significado y en Markdown abre una cita. Una etiqueta desconocida o sin cerrar se publica **como texto visible**, nunca activa, y el editor lo avisa. Este es el contrato que hace imposible que lo que escriba el usuario tumbe el build del mantenedor.
 - **Imports automáticos**: si algún bloque usa `<Tabs>`/`<TabItem>`, las líneas `import` que Docusaurus exige se añaden **una sola vez** tras el frontmatter (`contentImports`). El usuario no tiene que saberlo.
 
@@ -409,7 +419,7 @@ La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o 
 
 ### Canales IPC (todos de solo lectura salvo el guardado)
 
-`git:inspect` (repo de la carpeta de salida), `git:branches`, `git:commits`, `git:branch-docs` (lo documentado en una rama), `git:commit-docs`, `git:commit-doc-edit` (una funcionalidad commiteada traída a la sesión, §16: lo único que escribe son sus PNG temporales), `git:doc-image`, `git:pending-docs` (lo escrito y sin registrar), `projects:list`, `projects:forget`. El commit ocurre dentro de `session:save`; los únicos canales de escritura fuera del guardado son `git:commit-pending` (registra un paquete ya escrito) y `git:discard-pending` (lo descarta). Ante cualquier fallo, los canales de lectura devuelven vacío en vez de propagar el error: la vista queda sin datos, que es un estado inocuo.
+`git:inspect` (repo de la carpeta de salida), `git:branches`, `git:commits`, `git:branch-docs` (lo documentado en una rama), `git:commit-docs`, `git:commit-doc-edit` (una funcionalidad commiteada traída a la sesión, §15: lo único que escribe son sus PNG temporales), `git:doc-image`, `git:pending-docs` (lo escrito y sin registrar), `projects:list`, `projects:forget`. El commit ocurre dentro de `session:save`; los únicos canales de escritura fuera del guardado son `git:commit-pending` (registra un paquete ya escrito) y `git:discard-pending` (lo descarta). Ante cualquier fallo, los canales de lectura devuelven vacío en vez de propagar el error: la vista queda sin datos, que es un estado inocuo.
 
 ## 11. Criterios de aceptación
 
@@ -442,25 +452,13 @@ La carpeta de salida debería ser la carpeta `docs/` del proyecto Docusaurus (o 
 19. Un botón que abre su menú en `pointerdown` (y cuya capa de descarte se traga el `pointerup`) genera su paso, con su nombre, no un «clic en `<body>`».
 20. Marcar la casilla de dos filas de una tabla produce **dos** pasos, no un formulario agrupado.
 
-**Asistencia de IA (§14):**
+**Asistencia de IA (§13):**
 
 21. Sin clave configurada, redactar avisa de lo que falta en vez de fallar; la clave nunca vuelve al renderer y se guarda cifrada.
 22. Cada proveedor guarda su propia clave y su propio modelo.
 23. Redactar un paso no altera los demás, y «Redactar todos» omite los excluidos de la documentación.
 
-## 12. Runner de regeneración
-
-Cuando el sistema documentado cambia de interfaz, las capturas quedan desactualizadas. El runner (`src/main/engine/runner.ts`) re-ejecuta el flujo de una funcionalidad y **actualiza sus capturas** sin volver a grabar a mano.
-
-- **Autenticación:** reutiliza la **sesión del visor**. El usuario inicia sesión en el sistema (visor) y luego lanza «Regenerar…»; el runner conduce esa misma página autenticada, así que hereda el login. No es un proceso aparte.
-- **Entrada:** una carpeta de funcionalidad con su `session.json` (elegida con un selector). El runner navega a `baseUrl` y re-ejecuta cada paso.
-- **Reproducibilidad:** cada paso se localiza probando sus `selectorCandidates` en orden (fallback). Un paso de formulario agrupado se re-ejecuta como sus acciones individuales (`DocStep.mergedActions`, que también expande `flow.json`) y captura **una** imagen tras completarlas.
-- **Fallo:** si ningún selector encuentra el elemento, el paso se **marca como fallido**, conserva su captura anterior y el runner **sigue** con el resto. Al final, un informe por paso (regenerado / fallido).
-- **Salida:** sobrescribe los `img/paso-NN.png` en disco; el usuario revisa y comitea con el flujo de Git normal (no se re-commitea solo).
-- **UX:** el replay ocurre en el visor **visible** (para que las capturas salgan con el tamaño correcto); el informe se muestra al terminar.
-- **Efecto secundario útil:** como rehace las imágenes con el motor actual, regenerar una funcionalidad antigua le aplica también las mejoras de captura posteriores a su grabación (sin el número quemado, con el grupo entero resaltado, sin el elemento apagado bajo un modal).
-
-## 13. Sugerencia de plan de implementación (para el agente)
+## 12. Sugerencia de plan de implementación (para el agente)
 
 1. Scaffold electron-vite + React + TS, ventana con layout dividido y `WebContentsView` navegable.
 2. Conexión CDP: lanzar con remote debugging, adjuntar Playwright al target del viewport, verificar `page.title()`.
@@ -470,7 +468,7 @@ Cuando el sistema documentado cambia de interfaz, las capturas quedan desactuali
 6. Guardado a disco + renombrado de imágenes + validaciones.
 7. Pruebas manuales contra un sitio Next.js real; ajustar esperas y portales.
 
-## 14. Asistencia de IA para redactar los pasos
+## 13. Asistencia de IA para redactar los pasos
 
 El motor titula cada paso de forma mecánica (`Clic en «Guardar»`) y deja la descripción vacía. La asistencia de IA propone un **título** y una **descripción** mejores, que el usuario edita y acepta. Nada se escribe en la documentación hasta el guardado normal.
 
@@ -489,14 +487,14 @@ El motor titula cada paso de forma mecánica (`Clic en «Guardar»`) y deja la d
 - **Pruebas:** la variable de entorno `DOCRECORDER_AI_FAKE` sustituye la llamada al proveedor por una respuesta determinista, después de comprobar que hay clave. Así el smoke recorre el circuito completo (ajustes → IPC → aplicar en el panel) sin red ni clave real. El prompt **sí se arma** en ese camino, y la respuesta simulada anota si traía material de referencia: es lo que permite comprobar que el contexto pegado llega hasta él sin enviar nada a ningún proveedor.
 - **Estado de verificación:** el camino de **Gemini está probado contra la API real** (con y sin captura; los modelos ofrecidos se confirmaron existentes con `models.list`). El de **Claude solo está comprobado por tipos**: no había clave de Anthropic disponible. Si aparece una, conviene ejercitarlo con una sonda desechable antes de fiarse, porque es el proveedor por defecto.
 
-## 15. Pasos que no graba el motor: capturas externas, imágenes pegadas y bloques de contenido
+## 14. Pasos que no graba el motor: capturas externas, imágenes pegadas y bloques de contenido
 
 Un manual real no cabe entero dentro del navegador. Documentando el sistema de verdad aparecieron dos huecos que ninguna mejora del motor puede tapar, porque no ocurren en la página:
 
 1. Parte del procedimiento pasa por **archivos y ventanas ajenas**: una plantilla de Excel que hay que rellenar, un PDF que hay que revisar, el correo que llega después.
 2. Parte de la información **no es una pantalla**: la tabla de valores admitidos de un campo, un fragmento de código, lo que cambia según el rol.
 
-Ambos se resuelven con el mismo mecanismo —un paso más de la lista, con su título, su descripción, su nota, su orden y su publicación— distinguido por `DocStep.kind`. Todo lo que no es `interaction` comparte tres reglas: **no aporta acciones a `flow.json`**, el **runner lo salta** (`status: 'skipped'`, que no es un fallo) y **no se puede agrupar**.
+Ambos se resuelven con el mismo mecanismo —un paso más de la lista, con su título, su descripción, su nota, su orden y su publicación— distinguido por `DocStep.kind`. Todo lo que no es `interaction` comparte dos reglas: **no aporta ninguna acción del flujo** y **no se puede agrupar**.
 
 ### Capturas externas (`kind: 'capture'`)
 
@@ -531,13 +529,15 @@ Que la regla sea una sola es lo que la hace predecible: grabando de corrido la t
 ### Bloques de contenido (`DocStep.content`, y `kind: 'content'` cuando el paso es solo eso)
 
 - **Dónde:** cualquier paso puede llevar uno (botón ▦), y «＋ Añadir» crea un paso que es únicamente contenido, para material que no pertenece a ninguna acción concreta.
+- **Se elige QUÉ bloque antes de crearlo.** «＋ Añadir → ▦ Bloque de contenido» abre un segundo nivel con los tipos —**Tabla**, **Código**, **Pestañas**, **Detalle**, **Texto libre**— y la tarjeta nace con ese esqueleto ya escrito (la misma plantilla que inserta la barra del editor, en `src/renderer/src/content-templates.ts`, compartida por los dos caminos). Antes el menú creaba un bloque genérico y vacío: quien quería otra cosa —una nota, típicamente— acababa rellenando el bloque **y** la nota en la misma tarjeta, y el manual publicaba dos apartados donde se pedía uno.
+- **La nota destacada es una entrada propia del menú** («📝 Nota destacada»): crea un paso `kind: 'content'` con su `note` y **sin** cuerpo de bloque, así que la tarjeta abre solo el editor de la nota. Quitar esa nota no deja una tarjeta muda: el paso pasa a ser un bloque de contenido normal, con su editor abierto.
 - **Qué se escribe:** Markdown/MDX de Docusaurus — tablas, bloques de código con `title=`, `<Tabs>`, `<details>`, admonitions, encabezados, listas, citas y formato en línea. La barra los inserta; no hay que recordar la sintaxis.
 - **Pegar una tabla del sistema documentado** la convierte a tabla Markdown (`html-to-markdown.ts`, con `DOMParser`): es el atajo que evita teclear a mano las columnas de algo que ya está en pantalla.
 - **La vista previa es el contrato:** `renderMarkdown` (renderer) renderiza **el mismo texto saneado** que se escribe en el `.mdx` (`sanitizeContent`, §10). Lo que aquí se ve escapado, allí se publica escapado. Sin esa garantía, «pásale el código y velo» sería una promesa que la app no puede cumplir. Con **⤢** se edita a pantalla completa, con el código y el resultado lado a lado (el panel es estrecho a propósito y una tabla de cinco columnas no se corrige a ciegas).
 - **No numera:** un bloque de contenido no es un paso que nadie ejecute, así que no consume número; se publica con un encabezado `###` subordinado al paso anterior.
 - **Se puede quitar** (`onRemove` en `ContentEditor`/`NoteEditor`): ▦ y 📝 solo abren y cierran el editor, así que un bloque o una nota escritos por error se seguían publicando y la única forma de deshacerse de ellos era vaciar el texto a mano. El **🗑** de cada barra los quita de verdad y cierra su editor; con texto escrito pregunta antes, y la confirmación es **en línea** y no un diálogo, porque el visor nativo se pinta sobre el HTML y taparía cualquier superposición que no lance el panel. En un paso que **es** el bloque (`kind: 'content'`) no se ofrece: quitarlo sería eliminar el paso, y para eso está su ✕.
 
-## 16. Secciones y reedición de lo ya publicado
+## 15. Secciones y reedición de lo ya publicado
 
 Dos huecos que aparecieron al documentar procesos reales del sistema: una grabación larga no se puede leer ni mover por partes, y lo ya commiteado no se podía corregir sin volver a grabarlo entero.
 
@@ -546,7 +546,7 @@ Dos huecos que aparecieron al documentar procesos reales del sistema: una grabac
 Agrupar (§3) une varios pasos en **uno**. Una sección hace lo contrario: los deja como están y les pone un **apartado** encima. Un proceso real tiene fases («preparación», «registro», «cierre») y treinta pasos seguidos no se manejan ni se leen.
 
 - **Modelo:** un paso más de la lista, con `kind: 'section'`. Su pertenencia es **posicional** —le cuelgan los pasos que van detrás hasta la sección siguiente— y no un campo `sectionId` en cada paso: así reordenar, eliminar o deshacer una agrupación no puede dejar referencias huérfanas, y el modelo persistido no gana un campo que haya que mantener coherente.
-- **No es un paso:** no se numera (`renumber` la salta), no lleva captura, no aporta acciones a `flow.json`, el runner la marca `skipped`, no se agrupa y no se manda a redactar con IA (su título lo pone quien decide la estructura).
+- **No es un paso:** no se numera (`renumber` la salta), no lleva captura, no aporta ninguna acción del flujo, no se agrupa y no se manda a redactar con IA (su título lo pone quien decide la estructura).
 - **Panel:** tarjeta propia (`SectionCard`), con lo poco que tiene sentido en ella —plegar, título, recuento de pasos, entradilla opcional y quitar—. Colar los controles de un paso apagados solo haría ruido. Los pasos que le cuelgan van **sangrados**: sin ese escalón la sección parece un separador suelto y no se ve dónde acaba el apartado.
 - **Plegar** (`collapsedSections`) es **estado de la vista**: no viaja al paquete ni al borrador. Si un paso nuevo cae dentro de una sección plegada, se despliega sola: un paso que llega y no se ve parecería que la grabación dejó de funcionar.
 - **Arrastrar una sección la mueve con sus pasos** (`reorderSteps` detecta el bloque). Es su razón de ser: reordenar un apartado de doce pasos era doce arrastres.
@@ -564,27 +564,28 @@ La vista previa de un commit termina, casi siempre, en «esto hay que corregirlo
 - **Avisa antes de pisar:** si hay una grabación en curso, cargar sustituye los pasos y el borrador; se confirma primero.
 - **Cambiar de rama con el paquete ya escrito** (`checkoutKeepingOurFiles`): Git aborta un `checkout` si en el árbol hay archivos **sin seguimiento** que la rama de destino también tiene, y eso es exactamente lo que ocurre al reescribir una funcionalidad ya documentada estando en otra rama (el paquete se escribe primero, §7). La salida es apartar **solo nuestros archivos** —los que ese guardado acaba de escribir—, cambiar de rama y volver a ponerlos encima; se reponen siempre, también si el checkout falla. Un archivo ajeno sigue abortando el cambio de rama con el mensaje de Git, que es lo correcto: no es nuestro. Esto afectaba también a regrabar una funcionalidad existente desde otra rama, así que el arreglo vive en `commitDocs` y no en el camino de la reedición.
 
-## 17. Carpetas de capturas (`kind: 'group'`)
+## 16. Carpetas de capturas (`kind: 'group'`)
 
-Un paso del manual necesita a veces **varias imágenes**: las tres pantallas de un asistente, lo que se ve antes y después de guardar, la pantalla del sistema junto al correo que llega. Hasta aquí había dos herramientas y ninguna servía: **agrupar** (§3) funde acciones y deja **una** captura —y exige pasos seguidos del flujo, y rechaza las capturas externas y las imágenes pegadas—, y una **sección** (§16) no es un paso, es un apartado. La carpeta es la tercera pieza: **un paso del manual cuyas ilustraciones son las de los pasos que se meten dentro**.
+Un paso del manual necesita a veces **varias imágenes**: las tres pantallas de un asistente, lo que se ve antes y después de guardar, la pantalla del sistema junto al correo que llega. Hasta aquí había dos herramientas y ninguna servía: **agrupar** (§3) funde acciones y deja **una** captura —y exige pasos seguidos del flujo, y rechaza las capturas externas y las imágenes pegadas—, y una **sección** (§15) no es un paso, es un apartado. La carpeta es la tercera pieza: **un paso del manual cuyas ilustraciones son las de los pasos que se meten dentro**.
 
 - **Modelo:** un paso más de la lista, con `kind: 'group'`. Su contenido es **explícito**: cada miembro lleva `groupId` con el id de la carpeta. Aquí la pertenencia **no** es posicional —al revés que en las secciones— porque una carpeta es un bloque cerrado: si dependiera de la posición, el paso siguiente que se grabara entraría dentro sin que nadie lo pidiera.
 - **Invariante:** `regroup()` se aplica en **toda** renumeración, así que cada carpeta va siempre seguida de sus miembros y nadie apunta a una carpeta que no existe (quitarla libera sus pasos, no los pierde). Al ser una invariante y no una comprobación puntual, el resto del código —dibujar, mover, publicar— puede dar el bloque por contiguo venga de donde venga: arrastrar, grabar en medio, un borrador de ayer o un commit.
 - **Meter y sacar.** Meter es **arrastrar la tarjeta a la zona de la carpeta** (`useDroppable`, id `group-drop:<id>`), con una detección de colisiones propia: la zona gana solo si el **puntero está dentro** de ella (`pointerWithin`), y en cualquier otro sitio se reordena como siempre (`closestCenter`). Sin esa separación no habría forma de mover un paso por delante de una carpeta sin meterlo dentro. Sacar es el botón **⤴**, o arrastrar el miembro fuera del bloque: si al soltarlo ya no tiene delante ni su carpeta ni un compañero, deja de pertenecer a ella. Meter **no** ocurre por posición, o cualquier paso soltado detrás del bloque acabaría dentro.
-- **Lo que se añade con la carpeta marcada entra dentro**, al final de lo que ya guarda: se la está llenando. Con una captura suya marcada, lo nuevo va justo detrás de ella, como en el resto del panel (§15). Una sección o una carpeta nunca se anidan.
+- **Lo que se añade con la carpeta marcada entra dentro**, al final de lo que ya guarda: se la está llenando. Con una captura suya marcada, lo nuevo va justo detrás de ella, como en el resto del panel (§14). Una sección o una carpeta nunca se anidan.
 - **Numeración:** la carpeta consume número; sus capturas no (`renumber` las salta). En el panel se rotulan `5·1`, `5·2`…, y el recuento del encabezado no las suma: son las ilustraciones de un paso, no pasos.
-- **Dentro se sigue trabajando igual:** cada miembro conserva su título —que se publica como **pie** de su imagen—, su descripción, su recorte, su nota y su bloque de contenido. Y **conserva lo suyo como paso**: un paso grabado metido en una carpeta sigue aportando su acción a `flow.json` y el runner lo regenera como cualquier otro. La carpeta, en cambio, no tiene captura propia, no aporta acciones y el runner la marca `skipped`.
+- **Dentro se sigue trabajando igual:** cada miembro conserva su título —que se publica como **pie** de su imagen—, su descripción, su recorte, su nota y su bloque de contenido. Y **conserva lo suyo como paso**: un paso grabado metido en una carpeta conserva su acción y su selector como cualquier otro. La carpeta, en cambio, no tiene captura propia ni aporta ninguna acción.
 - **Panel:** tarjeta propia (`GroupCard`) con plegado, título, descripción, recuento, ▦/📝/✨ y la zona de soltar; sus miembros se dibujan **debajo, sangrados** y con el mismo borde de color, porque siguen siendo tarjetas normales del panel (arrastrables y editables). Plegada, enseña sus capturas **en miniatura**: es lo que permite trabajar con una lista larga sin abrirla para recordar qué había dentro.
 - **En el MDX:** la carpeta sale como un paso numerado con su título y su descripción, y debajo van sus imágenes en orden, cada una precedida de su pie en negrita. Si la carpeta se excluye de la documentación, sus capturas se van con ella: sacarlas sueltas convertiría un paso en cuatro.
-- **Se agrupa lo que no se puede agrupar:** una carpeta admite capturas externas, imágenes pegadas, bloques de contenido y pasos grabados que no están al lado. `selectionProblem` sigue rechazando ⊞ Agrupar sobre ellos y ahora lo dice: para juntar *capturas*, la herramienta es la carpeta.
+- **Se agrupa lo que no se puede agrupar:** una carpeta admite capturas externas, imágenes pegadas, bloques de contenido y pasos grabados que no están al lado. `selectionProblem` sigue rechazando ⊞ Agrupar sobre ellos y ahora lo dice: para juntar _capturas_, la herramienta es la carpeta.
 
-## 18. Comprobar el sitio antes de registrar, y vista previa servida
+## 17. Comprobar el sitio antes de registrar, y vista previa servida
 
 La vista previa del panel enseña cómo **queda** el MDX; no dice si Docusaurus lo puede **compilar**. Una etiqueta que MDX no acepta, un enlace roto, un componente sin importar o una regla de estilo del propio repositorio no se ven hasta que alguien ejecuta `npm run build` en el proyecto de destino, y hasta aquí ese alguien era el usuario, un rato después y con el commit ya hecho. Esta fase mete esos comandos dentro del circuito de guardado.
 
 - **No se inventa ningún comando.** Se lee el `package.json` del proyecto de destino y se ofrecen solo los que tenga, de tres conocidos y en este orden (`src/main/checks.ts`): `typecheck` → `lint:docs` → `build`. Se ejecutan **en secuencia y se para en el primero que falle**: si los tipos no cuadran, compilar el sitio entero solo haría esperar para decir lo mismo. Un proyecto que no tenga ninguno no comprueba nada, y se dice en el panel en vez de callar.
 - **La raíz se busca subiendo** (`findProjectRoot`, en `docusaurus.ts`): la carpeta de salida es `<proyecto>/docs` y al reeditar puede ser más honda, mientras que los comandos hay que ejecutarlos donde están el `package.json` **y** el `docusaurus.config.*`. Se exigen los dos: con solo el `package.json` se podría estar en un repositorio cualquiera y ejecutar un `build` que no tiene nada que ver con la documentación.
 - **Cuándo:** dentro de `saveSession`, **después de escribir el paquete y antes de commitear**. El orden es el único posible: lo que se compila es justo lo que se acaba de escribir. Si algo falla, `commitDocs` no llega a ejecutarse y el `SaveResult` vuelve con `checks` y sin `git`.
+- **De quién es el fallo.** Los comandos miran **toda** la documentación del proyecto, así que una página ajena a medio escribir bloquea el commit de una guía que no tiene nada malo, y el aviso parecía culpar a lo recién guardado. `citedFiles` (en `checks.ts`) recoge las rutas que cita la salida del comando y las reparte en `ownFiles` / `otherFiles` según caigan dentro de la carpeta de la guía o fuera; el diálogo lo dice en su título («el problema no es de tu guía») y enumera los archivos. Es lo que convierte «Registrar de todos modos» en una decisión informada en vez de un salto de fe. No se intenta entender el formato de cada herramienta: se buscan rutas con extensión de documentación, y un falso positivo solo añade un archivo de más a la lista.
 - **Qué pasa si falla:** **no hay commit**, pero el paquete **sí queda escrito**. La sesión no se estrena, el borrador sigue vivo y el diálogo enseña la **salida real del comando** —el error de Docusaurus dice archivo y línea, que es lo único con lo que se arregla un MDX—, con dos salidas: corregir y volver a pulsar ■, o **«Registrar de todos modos»** (vuelve a guardar con `verify: false`). El paquete sin registrar aparece además en «⚠ N sin registrar» (§10), así que no se pierde de vista.
 - **Se ve mientras corre.** Compilar tarda minutos: el progreso viaja por el evento `checks:progress` (comando actual + cada línea según sale) y el diálogo lo enseña como una terminal, con **Cancelar**. Los procesos se lanzan en su propio grupo (`detached`) y se matan en grupo: matar solo a `npm` dejaría vivo el `docusaurus` que lanzó.
 - **`PATH` de una app de escritorio:** un proceso abierto desde el Finder o el Dock hereda un `PATH` mínimo y `npm` «no existe». Se añaden las rutas habituales (`/opt/homebrew/bin`, `/usr/local/bin`) y, si aun así no aparece, el error lo dice en esos términos en vez de fallar de forma opaca.
@@ -593,3 +594,36 @@ La vista previa del panel enseña cómo **queda** el MDX; no dice si Docusaurus 
 **Vista previa servida** (`src/main/preview.ts`): `npm run build && npm run serve`, no `npm run start`. Con un buscador local instalado —el caso del repositorio de destino, `@easyops-cn/docusaurus-search-local`— el modo de desarrollo **no indexa**: la lupa aparece y no encuentra nada, así que lo único fiel es servir la compilación. Se levanta en un puerto libre que presta el sistema (fijar 3000 chocaría con el suyo) y se abre en el **navegador del usuario**, no en el visor: el visor es el sistema que se está documentando y perder su sesión abierta para mirar el manual sería un mal cambio. La dirección de la guía recién guardada se **busca** dentro de `build/` por su `index.html` en vez de calcularla: depende de `baseUrl` y `routeBasePath` del proyecto ajeno, y leer su configuración para adivinarla se rompería en silencio; el sitio ya compilado, en cambio, dice la verdad. El servidor se para desde el panel y al cerrar la app.
 
 **Mirar sin estorbar:** `git status` refresca el índice y para eso toma `.git/index.lock`, así que la relectura periódica del repositorio hacía fallar el `git add` que el usuario estuviera ejecutando en su terminal en ese mismo instante. Las lecturas de fondo usan `--no-optional-locks` (§10: escribimos en un repositorio ajeno).
+
+## 18. Zoom del visor
+
+Chromium ya deja acercar y alejar el sistema documentado con ⌘/Ctrl + `+`/`−`, y el visor lo heredaba. El problema no era poder hacerlo, sino **no saber en qué escala se está**: las capturas salen a esa escala, así que un zoom olvidado explica —a posteriori— por qué una guía tiene las imágenes más grandes que la siguiente. La barra superior lleva ahora **`−` / porcentaje / `+`**, y el porcentaje es a la vez indicador y botón (pulsarlo vuelve al 100 %).
+
+- **Una sola escala** (`src/shared/zoom.ts`, compartida por main y renderer): los pasos de Chromium (25 % → 300 %), no una progresión propia, para que un salto dentro del visor sea el mismo salto que en el navegador de siempre. El renderer solo **enseña** el número; quien aplica el zoom es main sobre el `WebContentsView` (`TargetViewport.setZoom`), y devuelve el factor que quedó. Así el porcentaje no puede desmentir a la vista.
+- **Teclado y rueda pasan por el mismo sitio.** El menú por omisión de Electron ya traía ⌘+/⌘−/⌘0, pero cambia la escala por su cuenta y la barra no se enteraría —es decir, seguiría sin decir el porcentaje, que es justo lo que se venía a arreglar—. Se interceptan con `before-input-event` sobre el `webContents` del visor: su `preventDefault()` **también anula el atajo del menú** (está documentado), así que no hay doble salto. La rueda (⌘/Ctrl + rueda) llega por `zoom-changed` y se rehace con nuestro paso. Solo dentro del visor: con la GUI enfocada las teclas siguen haciendo lo de siempre.
+- **Se reaplica en cada carga.** El zoom de Chromium es **por origen**: al navegar a otro dominio la página nueva arranca al 100 % y el porcentaje pasaría a mentir. La vista lo vuelve a fijar en `did-navigate` y `did-frame-finish-load`, que es lo que hace que el ajuste sea del _visor_ y no de la página que toque estar viendo.
+- **Se recuerda** (`docrecorder.viewportZoom`): documentar una tarde entera al 80 % y tener que volver a bajarlo en cada arranque sería un incordio. La vista nativa nace siempre al 100 %, así que es la GUI la que pide el zoom recordado al montar.
+- **Fuera del 100 % el porcentaje se marca en color**, y la ayuda lo dice en dos sitios (barra superior y solución de problemas): las capturas salen a esta escala.
+
+**Lo que no se puede probar en el smoke:** las teclas. Un `Input.dispatchKeyEvent` por CDP —lo que hace Playwright— entra por el renderer y **no dispara `before-input-event`**, que vive en el proceso de navegador; se verificó con una sonda desechable que inyectaba la tecla desde main con `webContents.sendInputEvent` (un solo salto por pulsación, y la barra al día). El smoke cubre los botones, el efecto real sobre la página (`window.innerWidth`), la supervivencia a la recarga y la persistencia.
+
+## 19. Papelera de la guía
+
+Quitar era la única acción del panel sin vuelta atrás, y la más cara de todas: un paso grabado se lleva consigo su captura, su selector, su nota y lo que se hubiera redactado, y recuperarlo obligaba a **repetir el proceso en el sistema real** —cuando aún se puede: la pantalla que se documentó puede depender de un dato que ya se guardó—. La papelera no cambia lo que se publica: lo quitado sigue fuera del manual y del paquete; solo conserva lo justo para devolverlo a su sitio.
+
+- **Dos tiempos, una sola papelera.** La franja **⟲ Deshacer** aparece encima de la lista al quitar algo y se retira sola a los doce segundos: cubre el arrepentimiento inmediato, el de darse cuenta al ver el hueco. El botón **🗑 N** de la barra de herramientas abre la **papelera** con todo lo quitado en esta guía, de lo más reciente a lo más antiguo: cubre el otro, el de dos horas después. Es el mismo material visto de dos maneras, no dos mecanismos.
+- **Todo lo que se quita entra.** El ✕ de una tarjeta (paso, captura externa, imagen pegada, sección o carpeta), «Eliminar» sobre varias marcadas —una entrada, todas juntas—, el 🗑 del bloque de contenido y el de la nota destacada, y el ✕ de un elemento de un paso agrupado. Un bloque o una nota **en blanco** no dejan entrada: no hay nada que echar de menos.
+- **Vuelve a su sitio, no al final.** Cada tarjeta guarda el índice que ocupaba (`indexes`) y se reinserta ahí; restaurar el paso 3 de una grabación de cuarenta lo devuelve al 3. Una **carpeta** recuerda además qué capturas colgaban de ella (`members`, por carpeta: de una vez se pueden quitar varias): quitarla las libera sueltas (§16), así que restaurarla tiene que volver a meterlas, o volvería vacía. Solo readopta las que sigan sueltas: si mientras tanto se metieron en otra carpeta, manda lo último que pidió el usuario.
+- **Lo que se quitó dentro de una tarjeta vuelve a esa tarjeta**, y por eso puede quedarse sin destino: si el paso se quitó después, la entrada se queda a la vista pero **apagada**, diciendo por qué, en lugar de ofrecer un botón que no haría nada. Restaurando antes el paso, vuelve a poder restaurarse. Un elemento de grupo devuelve también los `groupSources` que quitarlo descartó, así que recupera «⊟ Deshacer» con él, y el panel **rehace su captura** para volver a señalarlo (`recaptureGroup`, como al quitarlo).
+- **Sobrevive al cierre.** Las entradas viajan en el borrador (`DraftPayload.trash`) y `saveDraft` copia las capturas de lo quitado a `draft/img` igual que las de los pasos: una papelera que mañana devolviera tarjetas sin imagen no serviría para lo único que justifica su existencia. Tope de **25 entradas**, porque cada una arrastra su captura.
+- **Es la papelera de _esta_ guía.** Se vacía al guardar y estrenar sesión, al descartar una edición, al traer una funcionalidad ya publicada y al vaciar el panel. Conservarla ofrecería devolver pasos de una grabación a otra que no tiene nada que ver.
+- **Salida definitiva:** «Olvidar» una entrada y «Vaciar la papelera», con la confirmación **en línea** dentro de la propia ventana (un diálogo encima del diálogo tendría que volver a negociar quién oculta el `WebContentsView`, §14).
+
+## 20. Requisitos del proyecto de destino
+
+Un repositorio de documentación tiene reglas propias —cómo se redacta, qué se comprueba antes de un PR— y hasta aquí vivían **fuera** de esta aplicación. El resultado, repetido: se documentaba una guía entera y el commit se bloqueaba porque `lint:docs` aplica reglas de redacción que están escritas en el `CONTRIBUTING.md` del repositorio (sin guion largo, sin emojis, trato de tú) y que nadie había leído. Enterarse al final es lo caro: corregir una guía terminada cuesta mucho más que haberlo sabido al empezar.
+
+- **La ficha, antes y no después.** `RequirementsModal` junta las dos mitades de «qué necesito saber para hacerlo bien aquí»: los **datos del proyecto** (raíz, carpeta de salida dentro de él, rama en la que se registrará, comandos que se ejecutarán) y **cómo pide el repositorio que se escriba**. Sale sola al **estrenar guía** —encadenada detrás del aviso de guardado y de la pregunta del contexto, no apilada sobre ellos— y está siempre en el botón «Requisitos del proyecto» del panel. Interruptor persistido `docrecorder.requirementsOnStart`.
+- **Las reglas se leen del repositorio, no se inventan.** `readProjectGuide` busca `CONTRIBUTING.md` (y `STYLEGUIDE.md`, `GUIA-DE-ESTILO.md`, `CONVENCIONES.md`) desde la raíz del proyecto **hacia arriba**, parando al llegar al repositorio (`.git`): en un monorepo la guía vive en la raíz y el sitio en un subdirectorio. Se muestra con el mismo Markdown de las vistas previas y se **busca por apartados** (partida por encabezados, sin tildes ni mayúsculas): un documento de cuatrocientas líneas se consulta, no se lee. Si el proyecto no tiene ninguna, la ficha lo dice y sugiere escribirla ahí, que es donde la ve quien documenta.
+- **Una casilla por comando** (`skipChecks`, recordado **por proyecto** en `docrecorder.skipChecks`). El interruptor de §17 seguía siendo todo o nada: o se ejecutaban los tres comandos o ninguno, y como compilar el sitio tarda minutos, la tentación era apagarlo entero y perder también las comprobaciones que tardan segundos. Se guarda lo **desmarcado** y no lo elegido, para que un comando que el proyecto añada mañana entre solo. `saveSession` filtra con esa lista y el contador del progreso cuenta solo lo que se va a ejecutar.
+- **Se ofrecen todas las comprobaciones del repositorio, no tres nombres.** `discoverChecks` toma `typecheck`, `lint:docs`, **cualquier script `lint…`/`check…`** del proyecto (alfabético) y `build` al final. El repositorio real tiene `lint:docs`, `lint:modelo` y `lint:cadena` y su CI ejecuta los tres: quedarse con el primero no evitaba el fallo, solo lo retrasaba hasta el PR. **Nunca se ejecuta lo que escribe** (`fix`, `format`, `write`): comprobar antes de commitear no puede significar modificarle los archivos a nadie.

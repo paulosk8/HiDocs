@@ -1,9 +1,9 @@
 import { ipc } from '../ipc'
 import { featureSegments } from '../../../shared/naming'
-import { useSession } from '../store'
+import { checksToRun, useSession } from '../store'
 
 /**
- * Comprobación del sitio y vista previa (§18).
+ * Comprobación del sitio y vista previa (§17).
  *
  * Vive debajo de la sección Git porque habla de lo mismo: qué pasa al pulsar ■.
  * No se inventa ningún comando: enumera los que el `package.json` del proyecto
@@ -15,6 +15,9 @@ export function DocsChecksSection(): React.JSX.Element | null {
   const project = useSession((s) => s.docsChecks)
   const verify = useSession((s) => s.gitVerify)
   const setGit = useSession((s) => s.setGit)
+  const checksSkip = useSession((s) => s.checksSkip)
+  const toggleCheck = useSession((s) => s.toggleCheck)
+  const setRequirementsOpen = useSession((s) => s.setRequirementsOpen)
   const meta = useSession((s) => s.meta)
   const previewUrl = useSession((s) => s.previewUrl)
   const busy = useSession((s) => s.checksRun !== null)
@@ -34,6 +37,8 @@ export function DocsChecksSection(): React.JSX.Element | null {
       </section>
     )
   }
+
+  const willRun = checksToRun(project, checksSkip)
 
   const preview = async (): Promise<void> => {
     checksStart('preview')
@@ -58,6 +63,9 @@ export function DocsChecksSection(): React.JSX.Element | null {
 
   return (
     <section className="git-section">
+      {/* El resumen dice CUÁNTOS comandos, no cuáles: los nombres están en la
+          lista de abajo y con cinco de ellos la línea se cortaba a media
+          palabra. */}
       <label className="git-toggle">
         <input
           type="checkbox"
@@ -69,7 +77,9 @@ export function DocsChecksSection(): React.JSX.Element | null {
           Comprobar el sitio antes de registrar en Git
           {project.checks.length ? (
             <em title={project.projectRoot}>
-              {project.checks.map((c) => `npm run ${c.script}`).join(' · ')}
+              {willRun.length
+                ? `${willRun.length} de ${project.checks.length} comando(s) de este proyecto`
+                : 'no has dejado marcado ninguno'}
             </em>
           ) : (
             <em>este proyecto no tiene ninguno de los comandos conocidos</em>
@@ -77,13 +87,47 @@ export function DocsChecksSection(): React.JSX.Element | null {
         </span>
       </label>
 
+      {/* Una casilla por comando (§20). El interruptor de arriba es el «no
+          comprobar nada»; aquí se elige qué merece la pena en ESTE proyecto:
+          compilar el sitio entero cuesta minutos y no siempre hace falta
+          pagarlos en cada guardado, mientras que el estilo y los tipos tardan
+          segundos. La elección se recuerda por proyecto. */}
       {verify && project.checks.length > 0 && (
+        <ul className="req-checks git-checks">
+          {project.checks.map((check) => (
+            <li key={check.script}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={!checksSkip.includes(check.script)}
+                  onChange={() => toggleCheck(check.script)}
+                />
+                <span>
+                  <code>npm run {check.script}</code> · {check.label}
+                </span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {verify && willRun.length > 0 && (
         <p className="git-note">
-          Se ejecutan en orden y se para en el primero que falle. Si algo falla,{' '}
+          Se ejecutan en ese orden y se para en el primero que falle. Si algo falla,{' '}
           <strong>no se comitea</strong>: el paquete queda escrito y se puede corregir y volver a
           guardar.
         </p>
       )}
+
+      <div className="git-preview">
+        <button
+          className="btn"
+          title="Qué proyecto, qué rama, qué se ejecutará antes de registrar y cómo pide el repositorio que se escriba"
+          onClick={() => setRequirementsOpen(true)}
+        >
+          Requisitos del proyecto
+        </button>
+      </div>
 
       <div className="git-preview">
         {previewUrl ? (
