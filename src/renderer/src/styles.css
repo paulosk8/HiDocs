@@ -1093,6 +1093,11 @@ select {
   gap: 8px;
 }
 
+/* Tres salidas: con los nombres de rama dentro, no caben en una fila. */
+.next-branch .dialog-actions {
+  flex-wrap: wrap;
+}
+
 .btn.primary {
   background: var(--blue);
   border-color: var(--blue);
@@ -1130,6 +1135,105 @@ select {
 }
 
 /* ---------- integración Git ---------- */
+
+/* ---------- pie del panel: Git y comprobaciones, plegable (§21) ---------- */
+
+.git-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+  background: var(--tint);
+}
+
+.git-panel-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 6px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.git-panel-bar:hover {
+  background: var(--chip);
+}
+
+.git-panel-bar > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-panel-bar code {
+  font-family: var(--mono);
+  background: var(--chip);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+
+.git-panel-bar .muted {
+  color: var(--muted);
+}
+
+.git-panel-bar .warn {
+  color: var(--warn-text);
+}
+
+.git-panel-caret {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+/* Desplegado tampoco se come la lista: a partir de algo menos de media ventana
+   se desplaza por dentro. */
+.git-panel-body {
+  max-height: 45vh;
+  overflow-y: auto;
+}
+
+.git-panel-body .git-section:first-child {
+  border-top: 0;
+}
+
+.git-mode {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.git-mode > button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  border-radius: 10px;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+.git-mode > button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.git-mode em {
+  font-style: normal;
+  margin-left: 4px;
+}
 
 .git-section {
   flex: 0 0 auto;

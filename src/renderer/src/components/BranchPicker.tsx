@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { suggestBranchName, titleCase, validateBranchName } from '../../../shared/naming'
 import type { BranchDocInfo, GitBranchInfo } from '../../../shared/types'
 import { ipc } from '../ipc'
-import { useSession } from '../store'
+import { targetBranch, useSession } from '../store'
 
 /** Un módulo con sus procesos directos y sus subcategorías, para el árbol. */
 interface CategoryNode {
@@ -65,6 +65,7 @@ export function BranchPicker({
   const setBranchDocs = useSession((s) => s.setBranchDocs)
   const setGitBranch = useSession((s) => s.setGitBranch)
   const setGitBaseBranch = useSession((s) => s.setGitBaseBranch)
+  const mode = useSession((s) => s.gitBranchMode)
 
   const [filter, setFilter] = useState('')
   const [newName, setNewName] = useState<string | null>(null)
@@ -74,7 +75,7 @@ export function BranchPicker({
   const box = useRef<HTMLDivElement>(null)
 
   const root = repo?.root
-  const current = chosen ?? suggestBranchName(meta.module)
+  const current = targetBranch({ gitBranchOverride: chosen, gitBranchMode: mode, meta })
   const exists = branches?.some((b) => b.name === current) ?? false
   const docKey = `${root ?? ''}\0${current}`
   const docs = docData?.key === docKey ? docData.items : null
@@ -99,12 +100,10 @@ export function BranchPicker({
   // aún no se ha creado no hay nada que leer.
   useEffect(() => {
     if (!root || !exists || docData?.key === docKey) return
-    void ipc
-      .invoke('git:branch-docs', { repoRoot: root, branch: current })
-      .then((items) => {
-        setDocData({ key: docKey, items })
-        setBranchDocs(items)
-      })
+    void ipc.invoke('git:branch-docs', { repoRoot: root, branch: current }).then((items) => {
+      setDocData({ key: docKey, items })
+      setBranchDocs(items)
+    })
   }, [root, current, exists, docKey, docData?.key, setBranchDocs])
 
   const pick = async (name: string): Promise<void> => {
@@ -116,7 +115,10 @@ export function BranchPicker({
     adoptBranch(name, items[0] ?? null)
   }
 
-  const proposed = newName ?? suggestBranchName(meta.module)
+  // Sin funcionalidad todavía, el nombre por guía está a medias (`docs/x-…`):
+  // para estrenar una rama AHORA se propone el del módulo, que es completo.
+  const proposed =
+    newName ?? suggestBranchName(meta.module, meta.feature, meta.feature.trim() ? mode : 'module')
   const nameError = validateBranchName(proposed)
   const collides = branches?.some((b) => b.name === proposed) ?? false
   const base = baseBranch ?? repo?.defaultBranch ?? repo?.branch ?? ''
@@ -226,7 +228,8 @@ export function BranchPicker({
                           <span className="cat-chevron">{modOpen ? '▾' : '▸'}</span>
                           <span className="cat-name">{titleCase(node.module)}</span>
                           <span className="cat-count">
-                            {node.directDocs.length + node.subs.reduce((n, s) => n + s.docs.length, 0)}
+                            {node.directDocs.length +
+                              node.subs.reduce((n, s) => n + s.docs.length, 0)}
                           </span>
                         </button>
                         <button
@@ -272,7 +275,9 @@ export function BranchPicker({
                                       ＋ proceso
                                     </button>
                                   </div>
-                                  {subOpen && <ul className="cat-docs">{sub.docs.map(docButton)}</ul>}
+                                  {subOpen && (
+                                    <ul className="cat-docs">{sub.docs.map(docButton)}</ul>
+                                  )}
                                 </li>
                               </ul>
                             )

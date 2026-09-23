@@ -544,12 +544,40 @@ try {
 
   await gui.locator('.git-section input[type="checkbox"]').first().check()
   await gui.waitForSelector('.git-fields', { timeout: 5000 })
+  // De fábrica, una rama por guía (§21): terminar una no deja la siguiente encima.
+  const suggestedGuide = await gui.locator('.git-fields .field input').first().inputValue()
+  check(
+    suggestedGuide === 'docs/matriculas-crear-matricula',
+    'Git: rama sugerida de fábrica = una por guía (docs/<módulo>-<funcionalidad>)',
+    suggestedGuide
+  )
+  // El resto de la prueba documenta por módulo: se cambia desde la propia sección.
+  await gui.locator('.git-mode button', { hasText: 'módulo' }).click()
   const suggested = await gui.locator('.git-fields .field input').first().inputValue()
   check(
-    suggested === 'docs/matriculas',
-    'Git: rama sugerida = una por módulo (docs/<módulo>)',
+    suggested === 'docs/matriculas' &&
+      (await gui.evaluate(() => localStorage.getItem('docrecorder.branchMode'))) === 'module',
+    'Git: «una rama por módulo» sugiere docs/<módulo> y se recuerda',
     suggested
   )
+
+  // El pie de Git se pliega a una línea que sigue diciendo adónde va el commit,
+  // y la lista de pasos gana el sitio que ocupaba.
+  const bodyBefore = await gui.evaluate(() => document.querySelector('.panel-body').clientHeight)
+  await gui.click('.git-panel-bar')
+  await gui.waitForSelector('.git-section', { state: 'detached', timeout: 5000 })
+  const folded = {
+    bar: await gui.locator('.git-panel-bar').innerText(),
+    body: await gui.evaluate(() => document.querySelector('.panel-body').clientHeight),
+    saved: await gui.evaluate(() => localStorage.getItem('docrecorder.gitPanelCollapsed'))
+  }
+  check(
+    folded.bar.includes('docs/matriculas') && folded.body > bodyBefore && folded.saved === '1',
+    'Pie de Git: plegado deja una línea con la rama y agranda la lista de pasos',
+    `${folded.bar.replace(/\s+/g, ' ')} · lista ${bodyBefore}→${folded.body}px`
+  )
+  await gui.click('.git-panel-bar')
+  await gui.waitForSelector('.git-fields', { timeout: 5000 })
   const suggestedMsg = await gui.locator('.git-fields .field input').nth(1).inputValue()
   check(
     suggestedMsg === 'docs(matriculas): Crear una matrícula',
@@ -1145,6 +1173,22 @@ try {
   // El diálogo de resultado de la Etapa 6 sigue abierto y oculta el visor, así
   // que se cierra antes de seguir manejando la GUI.
   await gui.getByRole('button', { name: 'Cerrar', exact: true }).click()
+
+  // Con una rama por módulo, la guía siguiente caería en la misma rama: se
+  // pregunta en vez de montarla encima en silencio (§21).
+  const nextAsk = await gui
+    .waitForSelector('.next-branch', { timeout: 5000 })
+    .then((n) => n.innerText())
+    .catch(() => '')
+  check(
+    /siguiente guía/i.test(nextAsk) && nextAsk.includes('docs/matriculas'),
+    'Rama: al estrenar guía en la misma rama se pregunta dónde va la siguiente',
+    nextAsk.split('\n')[0] || '(no se preguntó)'
+  )
+  await gui
+    .locator('.next-branch')
+    .getByRole('button', { name: /^Seguir en/ })
+    .click()
   await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
 
   // --- Selector de rama de trabajo: retomar una rama sin reescribir la cabecera ---
@@ -3419,6 +3463,21 @@ try {
       g('status --porcelain') === treeBeforeDiscard ? 'igual que antes' : 'cambiado'
     }`
   )
+  // La edición fijó la rama de su commit y seguiría fijada: también se pregunta.
+  const discardAsk = await gui
+    .waitForSelector('.next-branch', { timeout: 5000 })
+    .then((n) => n.innerText())
+    .catch(() => '')
+  check(
+    /edición que descartaste/.test(discardAsk),
+    'Rama: al descartar una edición se pregunta dónde va lo siguiente',
+    discardAsk.split('\n')[1] || '(no se preguntó)'
+  )
+  await gui
+    .locator('.next-branch')
+    .getByRole('button', { name: /^Seguir en/ })
+    .click()
+  await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
 
   // Se vuelve a cargar para comprobar lo otro: que guardar sí reescribe SU
   // carpeta (no crea una nueva) y apila un commit encima.
@@ -3455,6 +3514,19 @@ try {
   )
   const reeditReport = await gui.locator('.dialog p').innerText()
   await gui.getByRole('button', { name: 'Cerrar' }).click()
+  // La edición fijó la rama del commit: la guía siguiente iría a ella, y se
+  // pregunta. Aquí se elige estrenar una por guía.
+  await gui.waitForSelector('.next-branch', { timeout: 5000 })
+  await gui.locator('.next-branch').getByRole('button', { name: 'Rama nueva para la guía' }).click()
+  await gui.waitForSelector('.overlay', { state: 'detached', timeout: 5000 })
+  const nextChip = await gui.locator('.branch-chip code').textContent()
+  check(
+    nextChip === 'docs/matriculas-…' &&
+      (await gui.locator('.status-tag').count()) === 0 &&
+      (await gui.evaluate(() => localStorage.getItem('docrecorder.branchMode'))) === 'guide',
+    'Rama: «Rama nueva para la guía» olvida la elegida y pasa a una rama por guía',
+    nextChip
+  )
   const reeditedMdx = g('show docs/matriculas:matriculas/crear-matricula/index.mdx')
   check(
     Number(g('rev-list --count docs/matriculas')) === commitsBefore + 1 &&
@@ -3999,7 +4071,7 @@ try {
   check(
     ficha.datos[0].endsWith(site.split('/').pop()) &&
       ficha.datos[1] === 'docs' &&
-      ficha.datos[2] === 'docs/publicacion' &&
+      ficha.datos[2] === (await gui.locator('.branch-chip code').textContent()) &&
       ficha.marcados.join(',') === 'true,true,true,false',
     'Requisitos: la ficha dice proyecto, carpeta, rama y qué se ejecutará',
     `${ficha.datos.join(' · ')} · marcados ${ficha.marcados.join(',')}`

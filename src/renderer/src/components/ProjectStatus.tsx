@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
-import { suggestBranchName } from '../../../shared/naming'
 import { ipc } from '../ipc'
-import { useSession } from '../store'
+import { targetBranch, useSession } from '../store'
 import { invalidateBranches, useBranches } from '../useBranches'
 import { BranchPicker } from './BranchPicker'
 
@@ -24,6 +23,7 @@ export function ProjectStatus(): React.JSX.Element {
   const setOutputDir = useSession((s) => s.setOutputDir)
   const baseBranch = useSession((s) => s.gitBaseBranch)
   const branchOverride = useSession((s) => s.gitBranchOverride)
+  const mode = useSession((s) => s.gitBranchMode)
   const pickerOpen = useSession((s) => s.branchPickerOpen)
   const setPickerOpen = useSession((s) => s.setBranchPickerOpen)
   const projectsOpen = useSession((s) => s.projectsOpen)
@@ -98,7 +98,7 @@ export function ProjectStatus(): React.JSX.Element {
   const clean = pending === 0
   // Rama donde irá el commit: la elegida, o la sugerida por el módulo mientras
   // no se elija ninguna.
-  const target = branchOverride ?? suggestBranchName(meta.module)
+  const target = targetBranch({ gitBranchOverride: branchOverride, gitBranchMode: mode, meta })
   // Mientras las ramas no han llegado no se puede afirmar que la rama no exista,
   // y decir «nacerá de main» sobre una rama que sí existe confunde más que callar.
   const isNew = branches !== null && !branches.some((b) => b.name === target)

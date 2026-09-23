@@ -31,6 +31,7 @@ import { ConfirmDialog } from './ConfirmDialog'
 export function PendingDocsModal({ onClose }: { onClose: () => void }): React.JSX.Element {
   const repo = useSession((s) => s.gitRepo)
   const loadBranchDoc = useSession((s) => s.loadBranchDoc)
+  const mode = useSession((s) => s.gitBranchMode)
   const [docs, setDocs] = useState<PendingDocInfo[] | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [done, setDone] = useState<Record<string, string>>({})
@@ -64,10 +65,10 @@ export function PendingDocsModal({ onClose }: { onClose: () => void }): React.JS
       const result = await ipc.invoke('git:commit-pending', {
         repoRoot: root,
         dir: doc.dir,
-        // La rama de un módulo es la que dicta la convención del proyecto, no la
-        // que esté ahora en HEAD: este paquete pertenece a su módulo aunque el
+        // La rama es la que dicta la convención elegida (por guía o por módulo,
+        // §21), no la que esté ahora en HEAD: este paquete es suyo aunque el
         // repositorio se haya quedado en otra rama.
-        branch: suggestBranchName(doc.module),
+        branch: suggestBranchName(doc.module, doc.feature, mode),
         message: suggestCommitMessage(doc.module, doc.feature, doc.title),
         // Nunca se sube desde aquí: subir a un repositorio ajeno se pide a mano.
         push: false
@@ -147,7 +148,7 @@ export function PendingDocsModal({ onClose }: { onClose: () => void }): React.JS
                     >
                       {busy === doc.dir
                         ? 'Registrando…'
-                        : `Registrar en ${suggestBranchName(doc.module)}`}
+                        : `Registrar en ${suggestBranchName(doc.module, doc.feature, mode)}`}
                     </button>
                     <button
                       className="btn"

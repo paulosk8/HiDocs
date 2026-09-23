@@ -919,9 +919,10 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
                   carpeta).
                 </li>
                 <li>
-                  <b>Rama nueva</b> · escribe el nombre (se propone <code>docs/&lt;módulo&gt;</code>
-                  ) y elige de qué rama <b>nace</b>. Si el nombre ya existe, se te avisa: el commit
-                  se añadirá encima en vez de crear nada.
+                  <b>Rama nueva</b> · escribe el nombre (se propone el automático, ver{' '}
+                  <a onClick={() => go('git')}>Integración con Git</a>) y elige de qué rama{' '}
+                  <b>nace</b>. Si el nombre ya existe, se te avisa: el commit se añadirá encima en
+                  vez de crear nada.
                 </li>
               </ul>
               <p>
@@ -942,14 +943,32 @@ export function HelpModal({ onClose }: { onClose: () => void }): React.JSX.Eleme
               <h3>Integración con Git (GitHub Flow)</h3>
               <p>
                 Al guardar con <b>«Registrar en Git al guardar»</b> activo, la documentación se
-                comitea en el repositorio que contiene la carpeta de salida. Cada funcionalidad
-                genera su propia rama, pensada para un Pull Request independiente.
+                comitea en el repositorio que contiene la carpeta de salida. Cada guía genera su
+                propia rama, pensada para un Pull Request independiente.
+              </p>
+              <p>
+                Estas opciones y las comprobaciones viven en el pie <b>Registro</b> del panel de
+                pasos. Pulsa su barra para <b>plegarlo</b> y dejar sitio a las capturas: plegado
+                sigue diciendo a qué rama irá el commit y cuántos comandos se comprobarán.
               </p>
               <ul className="help-defs">
                 <li>
-                  <b>Rama</b> · se sugiere <code>docs/&lt;módulo&gt;</code>, una por módulo: todas
-                  las funcionalidades del mismo módulo se acumulan en su rama (un PR por módulo).
-                  Puedes escribir otra aquí o elegirla en el selector de la franja superior (ver{' '}
+                  <b>Una rama por guía o por módulo</b> · con <b>guía</b> (de fábrica) cada guía
+                  estrena <code>docs/&lt;módulo&gt;-&lt;funcionalidad&gt;</code>, nacida de{' '}
+                  <code>main</code>: un PR por guía. Con <b>módulo</b> se sugiere{' '}
+                  <code>docs/&lt;módulo&gt;</code> y las guías del módulo se acumulan en ella. Se
+                  elige en la sección Git y se recuerda.
+                </li>
+                <li>
+                  <b>Al estrenar guía</b> · si la siguiente fuera a caer en la misma rama que la que
+                  acabas de terminar (porque la elegiste a mano o documentas por módulo), la app
+                  pregunta: <b>rama nueva para la guía</b>, <b>seguir</b> en la misma o{' '}
+                  <b>elegir otra</b>. Funcionalidad y título se vacían al estrenar.
+                </li>
+                <li>
+                  <b>Rama</b> · la automática, o la que escribas aquí o elijas en el selector de la
+                  franja superior; «volver al nombre automático» olvida la elegida. Puedes escribir
+                  otra aquí o elegirla en el selector de la franja superior (ver{' '}
                   <a onClick={() => go('rama')}>Rama de trabajo</a>); es el mismo dato. La nota de
                   debajo dice si esa rama ya existe (el commit se añade encima) o si va a nacer, y
                   de dónde.

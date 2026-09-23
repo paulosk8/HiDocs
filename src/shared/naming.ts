@@ -47,16 +47,39 @@ export function featureSegments(module: string, subcategory: string, feature: st
 }
 
 /**
- * Rama sugerida: `docs/<modulo>`, una por módulo.
+ * Rama sugerida cuando no se ha elegido ninguna.
  *
- * Todas las funcionalidades de un mismo módulo se acumulan en su rama (la app
- * reutiliza una rama existente y añade el commit encima), de modo que el módulo
- * es la unidad de PR. La categorización del manual la da la estructura de
- * carpetas `<modulo>/<funcionalidad>/`, no la rama.
+ * Por módulo (`docs/<modulo>`), todas las funcionalidades de un módulo se
+ * acumulan en su rama (la app reutiliza una rama existente y añade el commit
+ * encima) y el módulo es la unidad de PR. Por guía, cada guía estrena la suya.
+ * En los dos casos la categorización del manual la da la estructura de carpetas
+ * `<modulo>/<funcionalidad>/`, no la rama.
  */
-export function suggestBranchName(module: string): string {
-  return `docs/${slug(module) || 'sesion'}`
+export function suggestBranchName(
+  module: string,
+  feature = '',
+  mode: BranchMode = 'module'
+): string {
+  const base = `docs/${slug(module) || 'sesion'}`
+  if (mode === 'module') return base
+  // Por guía: `docs/<módulo>-<funcionalidad>`. Con guion y no con barra, porque
+  // Git no admite `docs/matriculas` y `docs/matriculas/x` a la vez (una es
+  // archivo y la otra carpeta en `.git/refs`), y hay repositorios que ya tienen
+  // las ramas por módulo. Mientras no se escriba la funcionalidad, el nombre se
+  // enseña a medias: no es una rama que se vaya a usar (sin funcionalidad no se
+  // puede guardar), y ofrecer `docs/<módulo>` diría que va a una que quizá existe.
+  const feat = slug(feature)
+  return feat ? `${base}-${feat}` : `${base}-…`
 }
+
+/**
+ * Cómo se pone el nombre automático de la rama (§21):
+ *
+ * - `guide`: una rama por guía, que nace de la rama por defecto. Cada guía es su
+ *   propia PR y terminar una no deja la siguiente encima de ella.
+ * - `module`: una rama por módulo, donde se acumulan las guías de ese módulo.
+ */
+export type BranchMode = 'guide' | 'module'
 
 /**
  * Git rechaza estos patrones en `check-ref-format`; se avisa antes de intentarlo.

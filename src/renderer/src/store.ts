@@ -30,6 +30,7 @@ import {
   type Viewport
 } from '../../shared/types'
 import { DEFAULT_ZOOM, clampZoom } from '../../shared/zoom'
+import { suggestBranchName, type BranchMode } from '../../shared/naming'
 
 /**
  * De dónde salió la documentación que hay en el panel, cuando no la ha grabado
@@ -161,6 +162,16 @@ interface SessionState {
    */
   gitBranchOverride: string | null
   gitMessageOverride: string | null
+  /**
+   * Cómo se nombra la rama mientras no se elige ninguna: una por guía o una por
+   * módulo (§21). Es preferencia del usuario y se recuerda.
+   */
+  gitBranchMode: BranchMode
+  /**
+   * El pie del panel (Git + comprobaciones) está plegado a una línea de
+   * resumen. Desplegado ocupa media columna y deja poco sitio para las capturas.
+   */
+  gitPanelCollapsed: boolean
   /**
    * Lo que ya documenta la rama de trabajo (leído de git). Alimenta el
    * autocompletado de módulo/subcategoría en la barra superior y el árbol del
@@ -346,6 +357,13 @@ interface SessionState {
   setGitBranch: (value: string | null) => void
   setGitMessage: (value: string | null) => void
   setGitBaseBranch: (value: string | null) => void
+  setGitBranchMode: (mode: BranchMode) => void
+  /**
+   * La guía siguiente estrena rama (§21): se olvida la elegida y la base, y el
+   * nombre pasa a ser el automático por guía.
+   */
+  branchPerGuide: () => void
+  toggleGitPanel: () => void
   /**
    * Retoma una rama ya existente: fija la rama de trabajo y, con la última
    * funcionalidad documentada en ella, rellena los metadatos que estén vacíos.
@@ -404,6 +422,8 @@ const VERIFY_KEY = 'docrecorder.verifyBeforeCommit'
 /** Comandos desmarcados, POR proyecto: cada repositorio tiene su ritmo (§20). */
 const SKIP_CHECKS_KEY = 'docrecorder.skipChecks'
 const REQUIREMENTS_KEY = 'docrecorder.requirementsOnStart'
+const BRANCH_MODE_KEY = 'docrecorder.branchMode'
+const GIT_PANEL_KEY = 'docrecorder.gitPanelCollapsed'
 
 /** Líneas de salida que se guardan del comando en marcha, para enseñar el final. */
 const CHECK_LINES = 60
@@ -472,6 +492,47 @@ function initialRequirementsOnStart(): boolean {
   } catch {
     return true
   }
+}
+
+/**
+ * Una rama por guía salvo que el usuario haya elegido una por módulo: con una
+ * PR por guía, terminar una no deja la siguiente montada encima (§21).
+ */
+function initialBranchMode(): BranchMode {
+  try {
+    return localStorage.getItem(BRANCH_MODE_KEY) === 'module' ? 'module' : 'guide'
+  } catch {
+    return 'guide'
+  }
+}
+
+/** El pie de Git se abre desplegado hasta que el usuario lo pliega una vez. */
+function initialGitPanelCollapsed(): boolean {
+  try {
+    return localStorage.getItem(GIT_PANEL_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+function remember(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // sin persistencia vale para esta sesión
+  }
+}
+
+/**
+ * Rama donde irá el próximo commit: la elegida, o la automática. En un solo
+ * sitio porque la enseñan la franja, el pie del panel y el aviso de ■, y la usa
+ * el guardado: si dos de ellos la calcularan distinto, el aviso prometería una
+ * rama y el commit iría a otra.
+ */
+export function targetBranch(
+  s: Pick<SessionState, 'gitBranchOverride' | 'gitBranchMode' | 'meta'>
+): string {
+  return s.gitBranchOverride ?? suggestBranchName(s.meta.module, s.meta.feature, s.gitBranchMode)
 }
 
 /**
@@ -1011,6 +1072,8 @@ export const useSession = create<SessionState>((set) => ({
   previewUrl: null,
   gitBranchOverride: null,
   gitMessageOverride: null,
+  gitBranchMode: initialBranchMode(),
+  gitPanelCollapsed: initialGitPanelCollapsed(),
   branchDocs: [],
   gitBaseBranch: null,
   branchPickerOpen: false,
@@ -1701,10 +1764,14 @@ export const useSession = create<SessionState>((set) => ({
     })),
 
   // Tras guardar una funcionalidad se limpia la lista y se estrena sesión, listo
-  // para documentar la siguiente (que irá a su rama). Los metadatos se conservan
-  // para que el usuario solo cambie funcionalidad/título.
+  // para documentar la siguiente. Módulo, subcategoría, rol y URL base se
+  // conservan —son de la categoría—; funcionalidad y título se vacían, como al
+  // descartar una edición: son de la guía terminada, y conservarlos hacía que la
+  // siguiente, guardada sin cambiarlos, reescribiera su carpeta y heredara su
+  // rama por guía (§21).
   startFreshSession: () =>
-    set({
+    set((s) => ({
+      meta: { ...s.meta, feature: '', title: '' },
       steps: [],
       focusStepId: null,
       activeStepId: null,
@@ -1716,7 +1783,7 @@ export const useSession = create<SessionState>((set) => ({
       sessionId: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       gitMessageOverride: null
-    }),
+    })),
 
   // Detectar un repositorio activa la integración por defecto, pero nunca el
   // push: subir cambios al repositorio de otra persona se pide a mano.
@@ -1750,6 +1817,19 @@ export const useSession = create<SessionState>((set) => ({
   setGitBranch: (gitBranchOverride) => set({ gitBranchOverride }),
   setGitMessage: (gitMessageOverride) => set({ gitMessageOverride }),
   setGitBaseBranch: (gitBaseBranch) => set({ gitBaseBranch }),
+  setGitBranchMode: (gitBranchMode) => {
+    remember(BRANCH_MODE_KEY, gitBranchMode)
+    set({ gitBranchMode })
+  },
+  branchPerGuide: () => {
+    remember(BRANCH_MODE_KEY, 'guide')
+    set({ gitBranchMode: 'guide', gitBranchOverride: null, gitBaseBranch: null })
+  },
+  toggleGitPanel: () =>
+    set((s) => {
+      remember(GIT_PANEL_KEY, s.gitPanelCollapsed ? '0' : '1')
+      return { gitPanelCollapsed: !s.gitPanelCollapsed }
+    }),
 
   // Elegir una rama existente es la forma de «seguir donde lo dejé»: los
   // metadatos con los que se documentó esa rama vienen de su último
@@ -1881,7 +1961,6 @@ export const useSession = create<SessionState>((set) => ({
     set({ requirementsOnStart: on })
   },
 
-
   checksStart: (purpose) =>
     set((s) => ({
       checksReport: null,
@@ -1892,9 +1971,10 @@ export const useSession = create<SessionState>((set) => ({
         // Los desmarcados no se ejecutan, así que tampoco cuentan: un «1 de 3»
         // que en realidad son dos haría esperar un comando que no va a venir.
         // La vista previa siempre compila y sirve, pase lo que pase aquí.
-        total: (purpose === 'preview'
-          ? s.docsChecks?.checks.length
-          : checksToRun(s.docsChecks, s.checksSkip).length) || 1,
+        total:
+          (purpose === 'preview'
+            ? s.docsChecks?.checks.length
+            : checksToRun(s.docsChecks, s.checksSkip).length) || 1,
         lines: []
       }
     })),
