@@ -20,7 +20,14 @@ import type { RecordedStep } from '../../../shared/ipc-contract'
 import type { SaveResult } from '../../../shared/types'
 import { ipc } from '../ipc'
 import { CONTENT_KINDS } from '../content-templates'
-import { checksToRun, groupSize, sectionSize, selectionProblem, useSession } from '../store'
+import {
+  checksToRun,
+  groupSize,
+  sectionSize,
+  selectionProblem,
+  targetBranch,
+  useSession
+} from '../store'
 import { invalidateBranches } from '../useBranches'
 import { GROUP_DROP_PREFIX, GroupCard } from './GroupCard'
 import { SectionCard } from './SectionCard'
@@ -32,13 +39,19 @@ import { TrashModal } from './TrashModal'
 import { RequirementsModal } from './RequirementsModal'
 import { ConfirmDialog } from './ConfirmDialog'
 import { ChecksModal } from './ChecksModal'
-import { GitSection } from './GitSection'
-import { DocsChecksSection } from './DocsChecksSection'
-import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
+import { GitPanel } from './GitPanel'
+import { NextBranchDialog } from './NextBranchDialog'
+import { suggestCommitMessage } from '../../../shared/naming'
 import { useAiDraft } from '../useAiDraft'
 import { useGroupCapture } from '../useGroupCapture'
 import { usePasteStep } from '../usePasteStep'
 import { isEditable } from '../paste-step'
+
+/** Lo que se pregunta al estrenar guía, detrás del aviso de guardado. */
+type AfterSave =
+  | { kind: 'branch'; previous: string; finished: boolean }
+  | { kind: 'context' }
+  | { kind: 'requirements' }
 
 /** Pasos que tiene sentido mandar a redactar: los que se publican y se ejecutan. */
 function draftable(step: RecordedStep): boolean {
@@ -136,16 +149,13 @@ export function StepsPanel(): React.JSX.Element {
   /** confirmación de «descartar la edición» (no registra nada) */
   const [discardEdit, setDiscardEdit] = useState(false)
   /**
-   * Se acaba de estrenar sesión con material de referencia puesto: hay que
-   * preguntar si sigue valiendo. Ver el diálogo, más abajo.
+   * Lo que hay que preguntar o enseñar al estrenar guía, en orden, detrás del
+   * aviso de guardado: a qué rama va la siguiente (§21), si el material de
+   * referencia sigue valiendo y la ficha del proyecto (§20). Se enseñan de uno
+   * en uno —se lee uno, se cierra, sale el siguiente—: abiertos a la vez serían
+   * tres superposiciones apiladas sobre el mismo momento.
    */
-  const [askContext, setAskContext] = useState(false)
-  /**
-   * Hay que enseñar la ficha del proyecto en cuanto el usuario termine con los
-   * avisos de haber guardado (§20). No se abre a la vez que ellos: se encadena,
-   * o serían tres superposiciones apiladas sobre el mismo momento.
-   */
-  const [pendingRequirements, setPendingRequirements] = useState(false)
+  const [afterSave, setAfterSave] = useState<AfterSave[]>([])
   const [result, setResult] = useState<SaveResult | null>(null)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -285,7 +295,7 @@ export function StepsPanel(): React.JSX.Element {
           git: s.gitEnabled
             ? {
                 enabled: true,
-                branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
+                branch: targetBranch(s),
                 message:
                   s.gitMessageOverride ??
                   suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
@@ -319,19 +329,26 @@ export function StepsPanel(): React.JSX.Element {
         // siguiente funcionalidad. Se estrena ANTES de borrar el archivo para que
         // un autoguardado pendiente no vuelva a crear el borrador.
         startFreshSession()
+        const next = useSession.getState()
+        const queue: AfterSave[] = []
+        // Si la guía siguiente fuera a caer en la misma rama que esta —una rama
+        // elegida a mano sigue elegida, y por módulo es la misma—, se pregunta:
+        // sin decirlo se montaba encima de la anterior y salían en la misma PR.
+        if (saved.git && targetBranch(next) === saved.git.branch) {
+          queue.push({ kind: 'branch', previous: saved.git.branch, finished: true })
+        }
         // El material de referencia describe el proceso que se acaba de terminar.
         // Conservarlo es lo correcto documentando varios procesos del mismo módulo,
         // y un estorbo cuando la siguiente guía es de otra cosa: la IA redactaría
         // con los nombres de la anterior sin que nadie lo note. Se pregunta al
         // estrenar sesión, que es cuando la respuesta se conoce.
-        if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
+        if (next.meta.aiContext?.trim()) queue.push({ kind: 'context' })
         // Y la ficha del proyecto, que es lo que hay que tener delante ANTES de
         // escribir la guía siguiente: con qué comandos se va a topar y cómo pide
         // el repositorio que se redacte. Enterarse de eso al final —cuando el
         // commit se bloquea— es justo lo que se quiere dejar de hacer.
-        if (useSession.getState().requirementsOnStart && useSession.getState().docsChecks) {
-          setPendingRequirements(true)
-        }
+        if (next.requirementsOnStart && next.docsChecks) queue.push({ kind: 'requirements' })
+        setAfterSave(queue)
         void ipc.invoke('draft:clear')
       } catch (err) {
         useSession.getState().checksFinish()
@@ -403,7 +420,7 @@ export function StepsPanel(): React.JSX.Element {
 
     if (s.gitEnabled) {
       setPendingCommit({
-        branch: s.gitBranchOverride ?? suggestBranchName(s.meta.module),
+        branch: targetBranch(s),
         message:
           s.gitMessageOverride ?? suggestCommitMessage(s.meta.module, s.meta.feature, s.meta.title),
         untitled: s.steps.filter((step) => !step.title.trim()).length
@@ -478,7 +495,7 @@ export function StepsPanel(): React.JSX.Element {
     wideContentId !== null ||
     pasteProblem !== null ||
     discardEdit ||
-    askContext ||
+    afterSave.length > 0 ||
     checksRun !== null ||
     checksReport !== null ||
     aiError !== null
@@ -547,14 +564,22 @@ export function StepsPanel(): React.JSX.Element {
    * porque el orden es el que importa: primero lo que habla de la guía que se
    * acaba de terminar, y solo después lo que prepara la siguiente.
    */
-  const closeAfterSave = (what: 'result' | 'context'): void => {
-    if (what === 'result') setResult(null)
-    else setAskContext(false)
-    const otherPending = what === 'result' ? askContext : result !== null
-    if (otherPending || !pendingRequirements) return
-    setPendingRequirements(false)
-    setRequirementsOpen(true)
+  const advance = (rest: AfterSave[]): void => {
+    // La ficha es un diálogo del store, no de esta cola: al llegarle el turno se
+    // abre y sale de ella (siempre es la última).
+    if (rest[0]?.kind === 'requirements') {
+      setRequirementsOpen(true)
+      rest = rest.slice(1)
+    }
+    setAfterSave(rest)
   }
+  const closeResult = (): void => {
+    setResult(null)
+    advance(afterSave)
+  }
+  const closeAsk = (): void => advance(afterSave.slice(1))
+  // Lo que toca preguntar ahora: nada mientras siga abierto el aviso de guardado.
+  const ask = result ? undefined : afterSave[0]
 
   // Restaurar un elemento de un paso agrupado devuelve el paso: hay que rehacer
   // su captura para que vuelva a señalar lo que acaba de recuperar.
@@ -712,7 +737,15 @@ export function StepsPanel(): React.JSX.Element {
           onConfirm={() => {
             setDiscardEdit(false)
             discardEditing()
-            if (useSession.getState().meta.aiContext?.trim()) setAskContext(true)
+            // La edición fijó la rama de su commit, y sigue fijada: sin preguntar,
+            // lo siguiente que se grabe iría a parar a ella.
+            const next = useSession.getState()
+            const queue: AfterSave[] = []
+            if (next.gitRepo && next.gitBranchOverride) {
+              queue.push({ kind: 'branch', previous: next.gitBranchOverride, finished: false })
+            }
+            if (next.meta.aiContext?.trim()) queue.push({ kind: 'context' })
+            advance(queue)
             // El borrador guardaba esta edición: sin borrarlo, al abrir la app
             // mañana se ofrecería continuar lo que se acaba de descartar.
             void ipc.invoke('draft:clear')
@@ -721,10 +754,14 @@ export function StepsPanel(): React.JSX.Element {
         />
       )}
 
-      {/* Sesión nueva con el contexto de la anterior todavía puesto. Va después
-          del aviso de guardado (`!result`) para no encadenar dos diálogos: se
-          lee uno, se cierra, y entonces aparece este. */}
-      {askContext && !result && (
+      {/* Lo que se pregunta al estrenar guía, de uno en uno y detrás del aviso
+          de guardado (`ask` es nada mientras ese siga abierto). */}
+      {ask?.kind === 'branch' && (
+        <NextBranchDialog previous={ask.previous} finished={ask.finished} onClose={closeAsk} />
+      )}
+
+      {/* Sesión nueva con el contexto de la anterior todavía puesto. */}
+      {ask?.kind === 'context' && (
         <ConfirmDialog
           title="¿Sigue valiendo el contexto para la IA?"
           body={[
@@ -738,9 +775,9 @@ export function StepsPanel(): React.JSX.Element {
           cancelLabel="Conservarlo"
           onConfirm={() => {
             setMeta({ aiContext: '' })
-            closeAfterSave('context')
+            closeAsk()
           }}
-          onCancel={() => closeAfterSave('context')}
+          onCancel={closeAsk}
         />
       )}
 
@@ -783,9 +820,9 @@ export function StepsPanel(): React.JSX.Element {
           cancelLabel="Cerrar"
           onConfirm={() => {
             void ipc.invoke('shell:open-path', result.path)
-            closeAfterSave('result')
+            closeResult()
           }}
-          onCancel={() => closeAfterSave('result')}
+          onCancel={closeResult}
         />
       )}
     </>
@@ -1123,8 +1160,7 @@ export function StepsPanel(): React.JSX.Element {
         </DndContext>
       </div>
 
-      <GitSection />
-      <DocsChecksSection />
+      <GitPanel />
 
       {dialogs}
     </aside>

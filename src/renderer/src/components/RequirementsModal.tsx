@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ipc } from '../ipc'
 import { renderMarkdown } from '../markdown'
-import { checksToRun, useSession } from '../store'
+import { checksToRun, targetBranch, useSession } from '../store'
 import type { ProjectGuide } from '../../../shared/types'
 
 /**
@@ -50,7 +50,9 @@ export function RequirementsModal({ onClose }: { onClose: () => void }): React.J
   const outputDir = useSession((s) => s.outputDir)
   const project = useSession((s) => s.docsChecks)
   const repo = useSession((s) => s.gitRepo)
-  const branchOverride = useSession((s) => s.gitBranchOverride)
+  // La rama es la de destino, la misma que dice la franja: la de HEAD puede ser
+  // la de la guía anterior, que es justo la confusión que hay que evitar.
+  const branch = useSession((s) => targetBranch(s))
   const verify = useSession((s) => s.gitVerify)
   const setGit = useSession((s) => s.setGit)
   const checksSkip = useSession((s) => s.checksSkip)
@@ -129,7 +131,7 @@ export function RequirementsModal({ onClose }: { onClose: () => void }): React.J
             <div>
               <dt>Rama de trabajo</dt>
               <dd>
-                <code>{branchOverride ?? repo?.branch ?? '(sin repositorio)'}</code>
+                <code>{repo ? branch : '(sin repositorio)'}</code>
               </dd>
             </div>
           </dl>

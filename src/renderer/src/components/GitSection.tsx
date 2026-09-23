@@ -1,5 +1,5 @@
-import { suggestBranchName, suggestCommitMessage } from '../../../shared/naming'
-import { useSession } from '../store'
+import { suggestCommitMessage } from '../../../shared/naming'
+import { targetBranch, useSession } from '../store'
 import { useBranches } from '../useBranches'
 
 /**
@@ -21,6 +21,8 @@ export function GitSection(): React.JSX.Element | null {
   const setGit = useSession((s) => s.setGit)
   const setGitBranch = useSession((s) => s.setGitBranch)
   const setGitMessage = useSession((s) => s.setGitMessage)
+  const mode = useSession((s) => s.gitBranchMode)
+  const setGitBranchMode = useSession((s) => s.setGitBranchMode)
 
   // La inspección del repositorio vive en App (useRepoInspection), no aquí: esta
   // sección se desmonta al colapsar el panel y dejaría sin datos a la franja de
@@ -46,12 +48,14 @@ export function GitSection(): React.JSX.Element | null {
     ) : null
   }
 
-  const branch = branchOverride ?? suggestBranchName(meta.module)
+  const branch = targetBranch({ gitBranchOverride: branchOverride, gitBranchMode: mode, meta })
+  // Por guía y sin funcionalidad escrita, el nombre está a medias (`docs/x-…`).
+  const pendingName = branchOverride === null && branch.endsWith('…')
   const message = messageOverride ?? suggestCommitMessage(meta.module, meta.feature, meta.title)
   const switching = repo.branch !== branch
   // Mientras la lista no ha llegado no se afirma nada: decir que una rama que sí
   // existe «nacerá de main» es peor que esperar un instante a saberlo.
-  const isNew = branches !== null && !branches.some((b) => b.name === branch)
+  const isNew = !pendingName && branches !== null && !branches.some((b) => b.name === branch)
 
   return (
     <section className="git-section">
@@ -71,6 +75,39 @@ export function GitSection(): React.JSX.Element | null {
 
       {enabled && (
         <div className="git-fields">
+          {/* Cómo se llama la rama mientras no se elija una (§21). Elegir una
+              concreta —aquí, en la franja o en el explorador— manda sobre esto
+              hasta que se vuelva al nombre automático. */}
+          <div className="git-mode" role="radiogroup" aria-label="Nombre automático de la rama">
+            <span>Una rama por</span>
+            {(['guide', 'module'] as const).map((value) => (
+              <button
+                key={value}
+                role="radio"
+                aria-checked={mode === value && branchOverride === null}
+                className={mode === value && branchOverride === null ? 'on' : ''}
+                onClick={() => {
+                  setGitBranchMode(value)
+                  setGitBranch(null)
+                }}
+                title={
+                  value === 'guide'
+                    ? 'Cada guía estrena su rama (docs/<módulo>-<funcionalidad>): una PR por guía'
+                    : 'Las guías de un módulo se acumulan en docs/<módulo>: una PR por módulo'
+                }
+              >
+                {value === 'guide' ? 'guía' : 'módulo'}
+              </button>
+            ))}
+            {branchOverride !== null && (
+              <em>
+                elegida a mano ·{' '}
+                <button className="link" onClick={() => setGitBranch(null)}>
+                  volver al nombre automático
+                </button>
+              </em>
+            )}
+          </div>
           <label className="field">
             <span>Rama</span>
             {/* Escribe en el MISMO estado que el selector de la franja superior
@@ -114,11 +151,17 @@ export function GitSection(): React.JSX.Element | null {
               añade encima. Ahora se sabe cuál de los dos casos es, porque la
               lista de ramas está cacheada y no cuesta un `git` por tecla. */}
           <p className="git-note">
-            {isNew ? (
+            {pendingName ? (
+              <>
+                El nombre se completa con la funcionalidad y nacerá de{' '}
+                <code>{baseBranch ?? repo.defaultBranch ?? repo.branch}</code>.{' '}
+              </>
+            ) : isNew ? (
               <>
                 <code>{branch}</code> aún no existe: nacerá de{' '}
                 <code>{baseBranch ?? repo.defaultBranch ?? repo.branch}</code>
-                {!baseBranch && !repo.defaultBranch && ' (no se encontró la rama por defecto)'}.{' '}
+                {!baseBranch && !repo.defaultBranch && ' (no se encontró la rama por defecto)'}
+                .{' '}
               </>
             ) : (
               <>
@@ -129,7 +172,7 @@ export function GitSection(): React.JSX.Element | null {
               Elegir rama…
             </button>
           </p>
-          {switching && (
+          {switching && !pendingName && (
             <p className="git-note">
               Se cambiará de <code>{repo.branch}</code> a <code>{branch}</code>
               {repo.dirtyPaths.length > 0 &&
